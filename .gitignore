@@ -1,0 +1,12 @@
+node_modules/
+prototype/captures/
+prototype/src/terminal-bundle.js
+prototype/src/terminal.css
+desktop/lib/
+desktop/src-gen/
+desktop/.browser_modules/
+desktop/esbuild.mjs
+desktop/captures/
+desktop/gen-esbuild.*.mjs
+out/
+desktop/dist/

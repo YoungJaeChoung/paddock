@@ -1,0 +1,55 @@
+/* 창 배치는 위젯 수명 주기로 관리하고 공통 조작 요소의 스타일을 확장한다. */
+.herdr-shell { color: #d9e0e2; background: #0d1115; font: 13px -apple-system, BlinkMacSystemFont, sans-serif; }
+.herdr-shell .activity-rail { min-width: 52px; max-width: 52px; }
+.herdr-shell .sidebar { min-width: 246px; max-width: 246px; }
+.herdr-shell .tab-strip { min-height: 40px; max-height: 40px; }
+.herdr-shell .statusbar { min-height: 27px; max-height: 27px; }
+.herdr-shell #theia-main-content-panel { background: #0d1115; }
+.herdr-shell .terminal-container { padding: 24px 30px; }
+.herdr-shell .herdr-welcome { padding: 52px; background: #0d1115; }
+.herdr-shell .herdr-welcome h1 { font-size: 26px; color: #e5eeeb; }
+.herdr-shell .herdr-welcome p { color: #8e9da2; line-height: 1.8; }
+.herdr-shell .herdr-welcome .primary-button { margin-right: 10px; }
+.herdr-shell .herdr-file-children { padding-left: 12px; }
+.herdr-shell .extension-card { margin: 12px; padding: 14px; }
+.herdr-shell .extension-card small { color: #8e9da2; }
+.herdr-shell .sidebar-actions { padding: 16px; display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* 탭과 창 제어를 한 줄에 두고 빈 부분으로 창을 이동한다. */
+.herdr-shell .herdr-tabbar { display: flex; align-items: center; min-height: 40px; max-height: 40px; background: #141b1f; border-bottom: 1px solid #263036; -webkit-app-region: drag; }
+.herdr-shell .window-controls-space { display: none; }
+.herdr-shell.is-macos .window-controls-space { display: block; flex: 0 0 92px; height: 100%; }
+.herdr-shell .herdr-tabbar .tab-strip { flex: 0 1 auto; min-width: 0; height: 40px; min-height: 40px; max-height: 40px; align-items: flex-end; overflow-x: auto; border: 0; background: transparent; }
+.herdr-shell .herdr-tabbar .tab { flex: 0 0 180px; min-width: 130px; height: 34px; border-radius: 7px 7px 0 0; border-top: 0; margin-right: 3px; -webkit-app-region: no-drag; }
+.herdr-shell .herdr-tabbar .tab.is-active { background: #20302c; box-shadow: inset 0 -2px #97d4b4; }
+.herdr-shell .tab-select { white-space: nowrap; text-overflow: ellipsis; }
+.herdr-shell .tab-actions { display: flex; flex: none; align-items: center; padding: 0 6px; gap: 2px; -webkit-app-region: no-drag; }
+.herdr-shell .tab-actions button { width: 32px; height: 32px; border: 0; border-radius: 5px; color: #9aaca5; background: transparent; }
+.herdr-shell .tab-actions button:hover { background: #263830; color: #d6f1e1; }
+.herdr-shell .shell-picker { font-size: 20px; }
+.herdr-shell .window-drag-space { flex: 1 0 72px; height: 100%; }
+.herdr-shell #shell-menu { position: fixed; inset: 38px auto auto 0; margin: 0; min-width: 220px; padding: 6px; border: 1px solid #39534a; border-radius: 8px; background: #17211e; color: #d9e0e2; box-shadow: 0 12px 35px #0007; -webkit-app-region: no-drag; }
+.herdr-shell .shell-option { display: block; width: 100%; padding: 10px 12px; border: 0; border-radius: 4px; background: transparent; color: inherit; text-align: left; }
+.herdr-shell .shell-option:hover, .herdr-shell .shell-option:focus-visible { background: #2b4437; }
+.herdr-shell .sidebar-project { overflow: hidden; padding: 14px 19px 0; color: #a6c4b6; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 작업 상태와 안내는 실제 문서·프로세스 상태를 표시한다. */
+.herdr-shell button:disabled { opacity: .5; cursor: wait; }
+.herdr-shell .sidebar-header { min-height: 48px; font-size: 11px; font-weight: 650; color: #a8b7b3; }
+.herdr-shell .sidebar-project { padding-bottom: 14px; }
+.herdr-shell .sidebar-description { margin: 0; padding: 14px 19px; line-height: 1.7; }
+.herdr-shell .side-item, .herdr-shell .file-item { display: block; overflow: hidden; text-overflow: ellipsis; }
+.herdr-shell .file-item { padding-left: 18px; }
+.herdr-shell .herdr-file-children .file-item { padding-left: 18px; }
+.herdr-shell .extension-card { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 16px 19px; border-bottom: 1px solid #202a2f; }
+.herdr-shell .extension-card strong, .herdr-shell .extension-card small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.herdr-shell .extension-card small { font-size: 11px; }
+.herdr-shell .statusbar { background: #141e1a; border-color: #28382f; color: #91ac9e; }
+.herdr-shell #statusbar-right { display: flex; align-items: center; gap: 12px; }
+.herdr-shell .save-action { border: 0; padding: 2px 8px; border-radius: 3px; background: #284535; color: #c5ebd0; font: inherit; }
+.welcome-mark { display: grid; place-items: center; width: 48px; height: 48px; border: 1px solid #335146; border-radius: 12px; background: #1b3028; color: #a7d9bb; font: 22px ui-monospace, monospace; }
+.herdr-about { width: 360px; padding: 30px; border: 1px solid #39534a; border-radius: 12px; background: #141c20; color: #d9e0e2; }
+.herdr-about::backdrop { background: #0008; }
+.herdr-about h1 { font-size: 22px; margin-top: 22px; }
+.herdr-about p { color: #95a6a1; font-size: 13px; line-height: 1.7; }
+.herdr-about button { margin-top: 14px; }

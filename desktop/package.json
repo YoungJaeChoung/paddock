@@ -1,0 +1,102 @@
+{
+  "private": true,
+  "name": "herdr-terminal-desktop",
+  "version": "0.1.0",
+  "main": "lib/backend/electron-main.js",
+  "theia": {
+    "target": "electron",
+    "frontend": {
+      "config": {
+        "applicationName": "Herdr Terminal",
+        "defaultTheme": "dark",
+        "preferences": {
+          "workbench.colorTheme": "dark",
+          "window.titleBarStyle": "native",
+          "terminal.integrated.profiles.osx": {
+            "zsh": {
+              "path": "/bin/zsh",
+              "args": [
+                "-l"
+              ]
+            },
+            "bash": {
+              "path": "/bin/bash",
+              "args": [
+                "-l"
+              ]
+            }
+          },
+          "terminal.integrated.profiles.windows": {
+            "PowerShell": {
+              "path": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+              "args": [
+                "-NoLogo"
+              ]
+            },
+            "Command Prompt": {
+              "path": "C:\\Windows\\System32\\cmd.exe"
+            },
+            "Git Bash": {
+              "path": "C:\\Program Files\\Git\\bin\\bash.exe",
+              "args": [
+                "--login",
+                "-i"
+              ]
+            },
+            "WSL": {
+              "path": "C:\\Windows\\System32\\wsl.exe"
+            }
+          },
+          "terminal.integrated.defaultProfile.windows": "PowerShell"
+        },
+        "electron": {
+          "windowOptions": {
+            "width": 1380,
+            "height": 880,
+            "minWidth": 1000,
+            "minHeight": 650,
+            "titleBarStyle": "hiddenInset",
+            "trafficLightPosition": {
+              "x": 18,
+              "y": 17
+            }
+          }
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "@herdr/shell": "file:./herdr-shell",
+    "@theia/core": "1.75.0",
+    "@theia/editor": "1.75.0",
+    "@theia/electron": "1.75.0",
+    "@theia/filesystem": "1.75.0",
+    "@theia/monaco": "1.75.0",
+    "@theia/navigator": "1.75.0",
+    "@theia/plugin-ext": "1.75.0",
+    "@theia/plugin-ext-vscode": "1.75.0",
+    "@theia/preferences": "1.75.0",
+    "@theia/process": "1.75.0",
+    "@theia/terminal": "1.75.0",
+    "@theia/vsx-registry": "1.75.0",
+    "@theia/workspace": "1.75.0"
+  },
+  "devDependencies": {
+    "@theia/cli": "1.75.0",
+    "agentation": "3.0.2",
+    "electron": "42.8.1",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.28.2",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "scripts": {
+    "build": "theia build --mode development",
+    "rebuild": "theia rebuild:electron --cacheRoot .",
+    "start": "node scripts/start.cjs",
+    "feedback": "node scripts/prepare.cjs && node scripts/feedback.cjs",
+    "smoke:shell": "node scripts/smoke-shell.cjs",
+    "package:mac": "node scripts/package.cjs mac",
+    "package:win": "node scripts/package.cjs win"
+  }
+}

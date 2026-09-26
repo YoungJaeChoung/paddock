@@ -1,0 +1,58 @@
+# macOS·Windows 설치 파일을 각 운영체제 실행기에서 만든다.
+# Actions 탭에서 직접 실행하거나, v로 시작하는 태그(v0.1.0 등)나 package/로 시작하는 브랜치를 올리면 실행된다.
+# 결과는 실행 화면의 Artifacts에 올라간다. 태그로 실행되면 같은 이름의 GitHub 릴리스에도 올린다.
+name: Package
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+    branches: ['package/**']
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: mac
+            arch: arm64
+          # 인텔 맥용. 네이티브 모듈을 실행기의 CPU용으로 컴파일하므로 인텔 실행기에서 따로 만든다.
+          - os: macos-15-intel
+            target: mac
+            arch: x64
+          - os: windows-latest
+            target: win
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm run setup
+      - run: npm run package:${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: herdr-terminal-${{ matrix.target }}-${{ matrix.arch }}
+          path: |
+            desktop/dist/*.dmg
+            desktop/dist/*.exe
+          if-no-files-found: error
+
+  # README의 다운로드 링크(releases/latest/download/...)가 이 릴리스의 파일을 가리킨다.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+      - run: gh release create "$GITHUB_REF_NAME" installers/* --repo "$GITHUB_REPOSITORY" --title "Herdr Terminal $GITHUB_REF_NAME" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
