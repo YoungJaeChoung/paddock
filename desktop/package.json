@@ -96,7 +96,6 @@
   },
   "devDependencies": {
     "@theia/cli": "1.75.0",
-    "agentation": "3.0.2",
     "electron": "42.8.1",
     "electron-builder": "26.15.3",
     "esbuild": "0.28.2",
@@ -107,7 +106,6 @@
     "build": "theia build --mode development",
     "rebuild": "theia rebuild:electron --cacheRoot .",
     "start": "node scripts/start.cjs",
-    "feedback": "node scripts/prepare.cjs && node scripts/feedback.cjs",
     "smoke:shell": "node scripts/smoke-shell.cjs",
     "package:mac": "node scripts/package.cjs mac",
     "package:win": "node scripts/package.cjs win",

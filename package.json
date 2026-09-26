@@ -7,7 +7,6 @@
     "build": "npm --prefix desktop run build",
     "start": "npm --prefix desktop start --",
     "package:mac": "npm --prefix desktop run package:mac",
-    "package:win": "npm --prefix desktop run package:win",
-    "feedback": "npm --prefix desktop run feedback --"
+    "package:win": "npm --prefix desktop run package:win"
   }
 }

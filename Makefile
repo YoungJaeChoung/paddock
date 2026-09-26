@@ -1,7 +1,4 @@
-.PHONY: feedback feedback-product package-mac package-win release
-
-feedback feedback-product:
-	npm --prefix desktop run feedback --
+.PHONY: package-mac package-win release
 
 # 설치 파일은 desktop/dist/에 생긴다. 각 운영체제에서 실행한다(맥 → .dmg, Windows → .exe).
 # setup은 의존성 설치와 네이티브 모듈의 Electron용 컴파일을 맡는다. 이미 끝났으면 빠르게 지나간다.
