@@ -122,3 +122,62 @@ test('C-work-F3.5: 폴더 목록 이름을 바꾸면 그 이름을 쓰고, 비�
     assert.equal(model.folderLabel(state, 'file:///home/a'), null);
     assert.equal(model.folderLabel(model.restore(model.serialize(model.setFolderLabel(state, 'file:///home/a', 'x')), new Set()), 'file:///home/a'), 'x');
 });
+
+test('C-work-F8.1: 에이전트가 실행 중인 추가 터미널은 현재 폴더의 작업 터미널이 되고 이름은 에이전트 이름이다', () => {
+    const { state, promoted, added } = model.promoteAgentTerminals(model.empty(), [
+        { id: 't1', cwd: 'file:///home/me/repo/', program: 'claude', isAgent: true },
+    ]);
+    assert.deepEqual(promoted, ['t1']);
+    assert.deepEqual(added, ['file:///home/me/repo']);
+    assert.deepEqual(state.terminals.t1, { folder: 'file:///home/me/repo', name: 'claude' });
+});
+
+test('C-work-F8.2: 그 폴더가 이미 목록에 있으면 새 폴더를 만들지 않고 붙인다', () => {
+    const before = withTerminals('file:///repo', ['terminal']);
+    const { state, promoted, added } = model.promoteAgentTerminals(before, [
+        { id: 'x', cwd: 'file:///repo', program: 'codex', isAgent: true },
+    ]);
+    assert.deepEqual(promoted, ['x']);
+    assert.deepEqual(added, []);
+    assert.equal(state.folders.length, 1);
+    assert.deepEqual(model.terminalsOf(state, 'file:///repo'), ['t0', 'x']);
+});
+
+test('C-work-F8.3: 이미 작업 폴더에 속한 터미널은 다른 폴더에서 에이전트를 실행해도 옮기지 않는다', () => {
+    const before = withTerminals('file:///a', ['terminal']);
+    const { state, promoted } = model.promoteAgentTerminals(before, [
+        { id: 't0', cwd: 'file:///b', program: 'claude', isAgent: true },
+    ]);
+    assert.deepEqual(promoted, []);
+    assert.equal(state, before);
+});
+
+test('C-work-F8.4: 에이전트가 아니거나 현재 폴더를 모르는 터미널은 올리지 않는다', () => {
+    const { state, promoted } = model.promoteAgentTerminals(model.empty(), [
+        { id: 'shell', cwd: 'file:///a', program: 'bash', isAgent: false },
+        { id: 'unknown', cwd: undefined, program: 'claude', isAgent: true },
+    ]);
+    assert.deepEqual(promoted, []);
+    assert.equal(state.folders.length, 0);
+});
+
+test('C-work-F9.1: 탭 줄 행은 그 폴더의 터미널만, 같은 이름은 ·2·3을 붙여 사이드바와 같게 돌려준다', () => {
+    let state = withTerminals('file:///a', ['claude', 'terminal', 'claude']);
+    state = model.assignTerminal(state, 'other', 'file:///b', 'claude');
+    const rows = model.terminalRows(state, 'file:///a/');
+    assert.deepEqual(rows.map(row => [row.id, row.name, row.suffix]), [['t0', 'claude', ''], ['t1', 'terminal', ''], ['t2', 'claude', '·2']]);
+});
+
+test('C-work-F10.1: 탭 이동은 같은 줄 안에서 이전·다음은 끝에서 반대쪽으로 돌고, 처음·마지막은 양 끝으로 간다', () => {
+    const ids = ['a', 'b', 'c'];
+    assert.equal(model.tabTarget(ids, 'b', 'previous'), 'a');
+    assert.equal(model.tabTarget(ids, 'a', 'previous'), 'c');
+    assert.equal(model.tabTarget(ids, 'c', 'next'), 'a');
+    assert.equal(model.tabTarget(ids, 'b', 'first'), 'a');
+    assert.equal(model.tabTarget(ids, 'b', 'last'), 'c');
+});
+
+test('C-work-F10.2: 현재 터미널이 줄에 없거나 줄이 비면 이동하지 않는다', () => {
+    assert.equal(model.tabTarget(['a', 'b'], 'x', 'next'), null);
+    assert.equal(model.tabTarget([], 'x', 'first'), null);
+});

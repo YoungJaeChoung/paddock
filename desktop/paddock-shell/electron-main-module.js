@@ -19,7 +19,8 @@ const MAC_ONLY_WINDOW_OPTIONS = ['titleBarStyle', 'trafficLightPosition'];
  * 백엔드 프로세스는 이 환경 변수를 물려받는다. `PADDOCK_EXTENSIONS_DIR`·`PADDOCK_CONFIG_DIR`가 있으면
  * 그 경로를, 없으면 `~/.paddock/extensions`·`~/.paddock/config`를 만들어 쓴다.
  * 이전 이름으로 쓰던 `~/.herdr`가 있으면 기본 폴더를 만들기 전에 그 폴더를 옮겨 이어 쓴다.
- * 앱 폴더의 `plugins`(Source control 보기에 쓰는 VS Code 내장 git 확장)는 있을 때만 더한다.
+ * 앱 폴더의 `plugins`(Source control 보기에 쓰는 VS Code 내장 git 확장)와 `themes`(기본 색 테마 Mermaid Dark를 담은
+ * 테마 전용 확장, 저장소에 둔다)는 있을 때만 더한다.
  */
 function usePaddockDirectories() {
     if (!process.env.PADDOCK_EXTENSIONS_DIR && !process.env.PADDOCK_CONFIG_DIR) {
@@ -36,11 +37,43 @@ function usePaddockDirectories() {
     fs.mkdirSync(extensionDirectory, { recursive: true });
     fs.mkdirSync(configDirectory, { recursive: true });
     process.env.THEIA_CONFIG_DIR = configDirectory;
+    useWindowsFontsOnWsl(configDirectory);
     // Windows 경로(C:\...)도 확장 목록 주소로 읽히도록 /C:/... 형태로 바꿔 넘긴다.
     const extensionEntry = `local-dir:${pathToFileURL(extensionDirectory).pathname}`;
     const bundledDirectory = path.join(process.env.THEIA_APP_PROJECT_PATH || process.cwd(), 'plugins');
     const bundledEntry = fs.existsSync(bundledDirectory) ? `local-dir:${pathToFileURL(bundledDirectory).pathname}` : undefined;
-    process.env.THEIA_DEFAULT_PLUGINS = [process.env.THEIA_DEFAULT_PLUGINS, bundledEntry, extensionEntry].filter(Boolean).join(',');
+    const themesDirectory = path.join(process.env.THEIA_APP_PROJECT_PATH || process.cwd(), 'themes');
+    const themesEntry = fs.existsSync(themesDirectory) ? `local-dir:${pathToFileURL(themesDirectory).pathname}` : undefined;
+    process.env.THEIA_DEFAULT_PLUGINS = [process.env.THEIA_DEFAULT_PLUGINS, bundledEntry, themesEntry, extensionEntry].filter(Boolean).join(',');
+}
+
+// WSL에서 보이는 Windows 글꼴 폴더. Cursor 등 Windows 앱이 쓰는 Consolas·맑은 고딕이 여기 있다.
+const WINDOWS_FONTS_DIRECTORY = '/mnt/c/Windows/Fonts';
+
+/**
+ * WSL에서 실행되면 Windows 글꼴 폴더를 글꼴 목록에 더한다.
+ *
+ * WSL의 Linux에는 Consolas·맑은 고딕이 없어 터미널이 DejaVu Sans Mono와 중국어 글꼴(한글)로 그려져
+ * 같은 PC의 Windows 앱과 모양이 크게 달라진다. 시스템 설정을 포함한 글꼴 설정 파일을 `configDirectory`에 쓰고
+ * `FONTCONFIG_FILE`로 가리킨다. 이미 `FONTCONFIG_FILE`이 있거나 WSL이 아니면 아무것도 하지 않는다.
+ * 첫 실행 때 Windows 글꼴을 한 번 훑느라 약 2초 걸리고, 이후에는 글꼴 캐시를 쓴다.
+ */
+function useWindowsFontsOnWsl(
+    configDirectory,
+) {
+    if (process.platform === 'linux' && !process.env.FONTCONFIG_FILE && fs.existsSync(WINDOWS_FONTS_DIRECTORY)) {
+        const fontConfigPath = path.join(configDirectory, 'fonts.conf');
+        fs.writeFileSync(fontConfigPath, [
+            '<?xml version="1.0"?>',
+            '<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">',
+            '<fontconfig>',
+            '  <include ignore_missing="yes">/etc/fonts/fonts.conf</include>',
+            `  <dir>${WINDOWS_FONTS_DIRECTORY}</dir>`,
+            '</fontconfig>',
+            '',
+        ].join('\n'));
+        process.env.FONTCONFIG_FILE = fontConfigPath;
+    }
 }
 
 /** Paddock 설정을 적용한 뒤 Theia 데스크톱 앱을 시작한다. */

@@ -28,9 +28,6 @@ const model = require('./work-model');
 const usage = require('./usage-model');
 const agent = require('./agent-model');
 
-// 파일 구획에서 숨기는 이름. VS Code의 기본 files.exclude와 같다.
-const HIDDEN_FILES = new Set(['.git', '.DS_Store', 'Thumbs.db']);
-
 // 작업 목록을 남기는 저장 키. 폴더 목록과 터미널 소속을 JSON으로 둔다.
 const STORAGE_KEY = 'paddock.work-folders.v1';
 
@@ -51,9 +48,16 @@ const SOURCE_MARKS = {
 
 // 본문을 나누는 명령. 단축키는 VS Code의 새 터미널·터미널 분할과 같다.
 const PADDOCK_COMMANDS = {
-    splitDown: { id: 'paddock.work.splitDown', label: 'Paddock: New Work Terminal Below' },
-    splitRight: { id: 'paddock.work.splitRight', label: 'Paddock: New Work Terminal to the Side' },
+    splitDown: { id: 'paddock.work.splitDown', label: 'Paddock: New Terminal Below' },
+    splitRight: { id: 'paddock.work.splitRight', label: 'Paddock: New Terminal to the Side' },
+    previousTab: { id: 'paddock.tabs.previous', label: 'Paddock: Previous Terminal Tab' },
+    nextTab: { id: 'paddock.tabs.next', label: 'Paddock: Next Terminal Tab' },
+    firstTab: { id: 'paddock.tabs.first', label: 'Paddock: First Terminal Tab' },
+    lastTab: { id: 'paddock.tabs.last', label: 'Paddock: Last Terminal Tab' },
 };
+
+// 기본 셸 실행 파일이 없을 때 대신 여는 프로필. Windows 기본 셸은 Git Bash인데 Git이 없는 PC도 있다.
+const FALLBACK_PROFILE = 'PowerShell';
 
 function element(
     tag,
@@ -89,10 +93,11 @@ function button(
 }
 
 /**
- * 사이드바(Work·Source control·Extensions), 추가 터미널 줄, 본문 경로 줄, 상태 줄을 Theia 서비스와 잇는다.
+ * 사이드바(Work·Source control·Extensions), 추가 터미널 줄, 작업 폴더 탭 줄, 본문 경로 줄, 상태 줄을 Theia 서비스와 잇는다.
  *
- * 작업 폴더는 "지금 보고 있는 터미널의 현재 폴더"를 따라 생긴다. 폴더 선택 창은 없다.
- * 작업 폴더에 속한 터미널은 사이드바에, 속하지 않은 터미널은 위쪽 추가 터미널 줄에 나온다.
+ * 작업 폴더는 터미널에서 에이전트(claude·codex 등)가 실행될 때 그 터미널의 현재 폴더로 생긴다.
+ * 폴더 선택 창이나 등록 버튼은 없다. 작업 폴더에 속한 터미널은 사이드바와 본문 위 작업 폴더 탭 줄에,
+ * 속하지 않은 터미널은 맨 위 추가 터미널 줄에 나온다.
  */
 class PaddockWorkspace {
     constructor(
@@ -107,6 +112,8 @@ class PaddockWorkspace {
         this.expandedDirectories = new Set();
         this.n_sidebarRevision = 0;
         this.cwdCache = new Map();
+        // 작업 폴더 탭 줄이 보여 줄 폴더. 마지막으로 본 작업 터미널·파일의 폴더다.
+        this.selectedFolder = null;
         this.homePath = '';
         this.remote = { alive: false };
         // -- 에이전트 완료 알림 --
@@ -122,8 +129,12 @@ class PaddockWorkspace {
     registerCommands(
         commands,
     ) {
-        commands.registerCommand(PADDOCK_COMMANDS.splitDown, { execute: () => this.run(() => this.newWorkTerminal({ split: 'split-bottom' })) });
-        commands.registerCommand(PADDOCK_COMMANDS.splitRight, { execute: () => this.run(() => this.newWorkTerminal({ split: 'split-right' })) });
+        commands.registerCommand(PADDOCK_COMMANDS.splitDown, { execute: () => this.run(() => this.newTerminalHere({ split: 'split-bottom' })) });
+        commands.registerCommand(PADDOCK_COMMANDS.splitRight, { execute: () => this.run(() => this.newTerminalHere({ split: 'split-right' })) });
+        commands.registerCommand(PADDOCK_COMMANDS.previousTab, { execute: () => this.run(() => this.moveTab('previous')) });
+        commands.registerCommand(PADDOCK_COMMANDS.nextTab, { execute: () => this.run(() => this.moveTab('next')) });
+        commands.registerCommand(PADDOCK_COMMANDS.firstTab, { execute: () => this.run(() => this.moveTab('first')) });
+        commands.registerCommand(PADDOCK_COMMANDS.lastTab, { execute: () => this.run(() => this.moveTab('last')) });
     }
 
     registerKeybindings(
@@ -133,16 +144,24 @@ class PaddockWorkspace {
     }
 
     /**
-     * Theia 기본값(새 터미널을 아래 패널에 엶)을 걷어 내고 같은 키로 본문 칸을 나눈다.
-     * 다른 기능이 모두 키를 등록한 뒤에 불러야 덮어써지지 않는다.
+     * Paddock 단축키를 건다. Theia 기본값(새 터미널을 아래 패널에 엶)을 걷어 내고 같은 키로 본문 칸을 나누고,
+     * 터미널 탭 이동 키를 더한다. 다른 기능이 모두 키를 등록한 뒤에 불러야 덮어써지지 않는다.
+     *
+     * `Ctrl+Shift+C`(옆에 새 터미널)와 터미널 안 `Ctrl+방향키`(탭 이동)는 Cursor에서 쓰던 키 설정을 기본값으로 옮긴 것이다.
+     * 그 대가로 터미널의 `Ctrl+Shift+C` 복사와 셸의 `Ctrl+←→` 단어 이동은 쓸 수 없다(사용자 결정).
      */
-    bindSplitKeys() {
+    bindKeys() {
         for (const key of ['ctrl+shift+`', 'ctrlcmd+shift+5', 'ctrlcmd+\\']) {
             this.keybindings.unregisterKeybinding(key);
         }
         this.keybindings.registerKeybinding({ command: PADDOCK_COMMANDS.splitDown.id, keybinding: 'ctrl+shift+`' });
         this.keybindings.registerKeybinding({ command: PADDOCK_COMMANDS.splitRight.id, keybinding: 'ctrlcmd+shift+5' });
         this.keybindings.registerKeybinding({ command: PADDOCK_COMMANDS.splitRight.id, keybinding: 'ctrlcmd+\\' });
+        this.keybindings.registerKeybinding({ command: PADDOCK_COMMANDS.splitRight.id, keybinding: 'ctrl+shift+c' });
+        this.keybindings.registerKeybinding({ command: PADDOCK_COMMANDS.previousTab.id, keybinding: 'ctrl+left', when: 'terminalFocus' });
+        this.keybindings.registerKeybinding({ command: PADDOCK_COMMANDS.nextTab.id, keybinding: 'ctrl+right', when: 'terminalFocus' });
+        this.keybindings.registerKeybinding({ command: PADDOCK_COMMANDS.firstTab.id, keybinding: 'ctrl+up', when: 'terminalFocus' });
+        this.keybindings.registerKeybinding({ command: PADDOCK_COMMANDS.lastTab.id, keybinding: 'ctrl+down', when: 'terminalFocus' });
     }
 
     // -- 시작 --
@@ -178,6 +197,7 @@ class PaddockWorkspace {
         this.shell.onDidChangeActiveWidget(({ newValue }) => {
             if (newValue && this.shell.getAreaFor(newValue) === 'main') {
                 this.lastMainWidget = newValue;
+                this.selectedFolder = this.workFolderOf(newValue) || this.selectedFolder;
                 this.doneIds.delete(newValue.id);
                 this.refreshSoon();
             }
@@ -193,6 +213,7 @@ class PaddockWorkspace {
             if (target) this.run(() => this.showView(target.dataset.view));
         });
         this.shell.header.node.querySelector('.tab-add').addEventListener('click', () => this.run(() => this.newExtraTerminal()));
+        this.shell.folderBar.node.querySelector('.folder-tab-add').addEventListener('click', () => this.run(() => this.newWorkTerminal({ folderKey: this.shownFolder() })));
         const picker = this.shell.header.node.querySelector('.shell-picker');
         const menu = this.shell.header.node.querySelector('#shell-menu');
         menu.addEventListener('beforetoggle', (event) => {
@@ -256,28 +277,21 @@ class PaddockWorkspace {
                 await this.shell.addWidget(terminal, { area: 'main' });
             }
         }
-        if (!saved) {
-            // 첫 실행: Theia 기본 배치가 연 터미널을 추가 터미널로 두지 않고, 그 터미널이 열린 폴더의 작업 터미널로 둔다.
-            // 터미널이 열린 폴더가 곧 작업 폴더다(현재 폴더를 아직 모르면 홈).
-            for (const terminal of this.terminals.all) {
-                const key = (await this.readCwd(terminal)) || `file://${this.homePath}`;
-                this.state = model.assignTerminal(this.state, terminal.id, key, 'terminal');
-                this.cwdCache.set(terminal.id, key);
-            }
-            await this.save();
-        }
+        // 첫 실행에 Theia 기본 배치가 연 터미널은 추가 터미널로 둔다. 그 안에서 에이전트를 실행하면 작업 폴더가 된다.
         if (!this.shell.mainPanel.currentTitle) {
-            // 본문이 비었으면 작업 터미널 하나로 시작한다. 터미널이 열린 폴더가 곧 작업 폴더라서
-            // 첫 실행이면 홈이, 저장된 작업 폴더가 있으면 그 첫 폴더가 목록에 선다.
-            await this.newWorkTerminal({ folderKey: this.state.folders[0]?.key || `file://${this.homePath}` });
+            // 본문이 비었으면 터미널 하나로 시작한다. 저장된 작업 폴더가 있으면 그 첫 폴더의 작업 터미널, 없으면 추가 터미널이다.
+            const first = this.state.folders[0]?.key;
+            if (first) await this.newWorkTerminal({ folderKey: first });
+            else await this.newExtraTerminal();
         }
+        this.selectedFolder = this.workFolderOf(this.currentWidget()) || this.state.folders[0]?.key || null;
         for (const folder of this.state.folders) {
             this.openRepository(folder.key);
         }
         // 켜자마자 입력할 수 있게 본문에 보이는 터미널에 포커스를 준다.
         const shown = this.shell.mainPanel.currentTitle?.owner;
         if (this.isTerminal(shown)) await this.shell.activateWidget(shown.id);
-        this.bindSplitKeys();
+        this.bindKeys();
         this.layoutReady = true;
         this.refreshRemote();
         setInterval(() => this.run(() => this.tick()), REFRESH_INTERVAL);
@@ -310,6 +324,7 @@ class PaddockWorkspace {
 
     async refresh() {
         this.renderTabs();
+        this.renderFolderTabs();
         this.renderPathBars();
         this.renderStatus();
         this.renderViewBadge();
@@ -320,6 +335,7 @@ class PaddockWorkspace {
     async tick() {
         await Promise.all(this.terminals.all.map(terminal => this.readCwd(terminal)));
         await this.refreshPrograms();
+        await this.promoteAgents();
         this.checkAgents();
         await this.refresh();
         await this.refreshMemory();
@@ -370,6 +386,26 @@ class PaddockWorkspace {
             } catch {
                 // 원격 연결이 끊겼을 때 등. 다음 주기에 다시 묻는다.
             }
+        }
+    }
+
+    /**
+     * 에이전트가 실행 중인 추가 터미널을 그 폴더의 작업 터미널로 올린다.
+     * 에이전트를 띄운 곳이 곧 작업할 곳이라 작업 폴더는 이렇게만 생긴다. 한 번 올린 터미널은 에이전트가 끝나도 남는다.
+     */
+    async promoteAgents() {
+        const { state, promoted, added } = model.promoteAgentTerminals(this.state, this.terminals.all.map((terminal) => {
+            const program = this.programs.get(terminal.id);
+            return { id: terminal.id, cwd: this.cwdCache.get(terminal.id), program, isAgent: agent.isAgent(program) };
+        }));
+        if (promoted.length) {
+            this.state = state;
+            await this.save();
+            for (const key of added) {
+                this.openRepository(key);
+            }
+            const current = this.currentWidget();
+            if (current && promoted.includes(current.id)) this.selectedFolder = model.folderOf(this.state, current.id);
         }
     }
 
@@ -445,36 +481,55 @@ class PaddockWorkspace {
     }
 
     /**
-     * 새 작업 터미널이 열릴 폴더를 고른다.
-     *
-     * 지금 보는 것이 터미널이면 그 터미널의 현재 폴더, 편집기면 그 파일이 속한 작업 폴더,
-     * 둘 다 아니면 첫 작업 폴더, 목록이 비었으면 홈이다.
+     * 위젯이 속한 작업 폴더. 작업 터미널이면 그 폴더, 파일이면 그 파일을 품은 작업 폴더, 그 밖(추가 터미널 등)은 null.
      */
-    followFolder() {
-        const current = this.currentWidget();
+    workFolderOf(
+        widget,
+    ) {
         let folder = null;
-        if (this.isTerminal(current)) {
-            folder = this.cwdCache.get(current.id) || null;
-        } else if (current?.getResourceUri?.()) {
-            const uri = current.getResourceUri().toString();
-            folder = model.folderContaining(this.state, uri);
+        if (widget && this.isTerminal(widget)) {
+            folder = model.folderOf(this.state, widget.id);
+        } else if (widget?.getResourceUri?.()) {
+            folder = model.folderContaining(this.state, widget.getResourceUri().toString());
         }
-        return folder || this.state.folders[0]?.key || `file://${this.homePath}`;
+        return folder;
+    }
+
+    /** 작업 폴더 탭 줄에 보일 폴더: 지금 보는 것의 작업 폴더, 없으면 마지막으로 본 작업 폴더. 목록에서 빠졌으면 null. */
+    shownFolder() {
+        const key = this.workFolderOf(this.currentWidget()) || this.selectedFolder;
+        return key && this.state.folders.some(folder => folder.key === key) ? key : null;
+    }
+
+    /** 셸 프로필의 실행 파일이 절대 경로로 적혀 있는데 그 파일이 없으면 true. 이름만 적힌 셸은 PATH에서 찾으므로 false다. */
+    async isShellMissing(
+        profile,
+    ) {
+        const shellPath = profile instanceof ShellTerminalProfile ? profile.shellPath ?? '' : '';
+        let missing = false;
+        if (/^(\/|[A-Za-z]:[\\/])/.test(shellPath)) {
+            const executable = await this.files.resolve(URI.fromFilePath(shellPath)).catch(() => undefined);
+            missing = !executable?.isFile;
+        }
+        return missing;
     }
 
     async startTerminal(
         cwd,
-        profile = this.profiles.defaultProfile,
+        requested = this.profiles.defaultProfile,
     ) {
         let terminal;
+        let profile = requested;
+        // 기본 셸(Windows는 Git Bash)이 이 PC에 없으면 오류 대신 대체 프로필(PowerShell)로 연다. 사용자가 고른 셸은 바꾸지 않는다.
+        const fallback = this.profiles.getProfile(FALLBACK_PROFILE);
+        if (requested === this.profiles.defaultProfile && fallback && fallback !== requested && await this.isShellMissing(requested)) {
+            profile = fallback;
+        }
         if (profile && profile !== NULL_PROFILE && profile instanceof ShellTerminalProfile) {
             const selected = profile.modify({ cwd, title: profile.shellPath?.split(/[\\/]/).pop() });
             // 절대 경로(/bin/zsh, C:\...\pwsh.exe)만 미리 확인한다. 이름만 적힌 셸은 PATH에서 찾는다.
-            if (/^(\/|[A-Za-z]:[\\/])/.test(selected.shellPath ?? '')) {
-                const executable = await this.files.resolve(URI.fromFilePath(selected.shellPath)).catch(() => undefined);
-                if (!executable?.isFile) {
-                    throw new Error(`Cannot start shell: ${selected.shellPath}. Check the executable path.`);
-                }
+            if (await this.isShellMissing(profile)) {
+                throw new Error(`Cannot start shell: ${selected.shellPath}. Check the executable path.`);
             }
             terminal = await this.terminals.newTerminal(selected.options);
         } else if (profile && profile !== NULL_PROFILE) {
@@ -491,34 +546,76 @@ class PaddockWorkspace {
         return terminal;
     }
 
-    /** 작업 폴더와 무관한 추가 터미널을 위쪽 줄에 연다. */
-    async newExtraTerminal(
-        profile,
+    /** 터미널과 같은 탭 줄(작업 폴더 탭 줄 또는 맨 위 추가 터미널 줄)의 터미널 id. 줄에 보이는 순서다. */
+    siblingTerminals(
+        terminal,
     ) {
-        const terminal = await this.startTerminal(`file://${this.homePath}`, profile);
-        await this.terminals.open(terminal, { widgetOptions: { area: 'main' }, mode: 'activate' });
+        const folder = model.folderOf(this.state, terminal.id);
+        return folder
+            ? model.terminalRows(this.state, folder).map(row => row.id)
+            : this.terminals.all.filter(item => !model.folderOf(this.state, item.id)).map(item => item.id);
+    }
+
+    /** 지금 보는 터미널에서 같은 줄의 이전·다음·처음·마지막 탭으로 옮긴다. 터미널이 아니면 아무것도 하지 않는다. */
+    async moveTab(
+        target,
+    ) {
+        const current = this.currentWidget();
+        const id = this.isTerminal(current) ? model.tabTarget(this.siblingTerminals(current), current.id, target) : null;
+        if (id && id !== current.id) await this.shell.activateWidget(id);
+    }
+
+    /**
+     * 지금 보는 곳에서 새 터미널을 연다(나누기 버튼·단축키).
+     * 작업 폴더에 속한 것을 보고 있으면 그 폴더의 작업 터미널, 아니면 추가 터미널이다 — 작업 폴더는 에이전트만 만든다.
+     */
+    async newTerminalHere(
+        { split } = {},
+    ) {
+        const folderKey = this.workFolderOf(this.currentWidget());
+        if (folderKey) await this.newWorkTerminal({ folderKey, split });
+        else await this.newExtraTerminal({ split });
+    }
+
+    /** 나눠 열 때 기준 칸. 나누지 않으면 본문의 새 탭으로 연다. */
+    widgetOptions(
+        split,
+    ) {
+        const current = this.currentWidget();
+        return split && current ? { area: 'main', mode: split, ref: current } : { area: 'main' };
+    }
+
+    /**
+     * 작업 폴더와 무관한 추가 터미널을 맨 위 줄에 연다.
+     * 추가 터미널을 보다가 나누면 그 터미널의 현재 폴더에서, 그 밖에는 홈에서 연다.
+     */
+    async newExtraTerminal(
+        { profile, split } = {},
+    ) {
+        const current = this.currentWidget();
+        const nearby = split && this.isTerminal(current) ? await this.readCwd(current) : null;
+        const terminal = await this.startTerminal(nearby || `file://${this.homePath}`, profile);
+        await this.terminals.open(terminal, { widgetOptions: this.widgetOptions(split), mode: 'activate' });
         await this.refresh();
     }
 
     /**
-     * 새 작업 터미널을 연다. 폴더는 `followFolder()`, 또는 `folderKey`로 지정한다.
+     * 이미 목록에 있는 작업 폴더(`folderKey`)에 새 작업 터미널을 연다.
      * `split`이 있으면 지금 보는 칸을 아래(`split-bottom`)나 옆(`split-right`)으로 나눠 연다.
      */
     async newWorkTerminal(
-        { folderKey, split } = {},
+        { folderKey, split },
     ) {
-        const current = this.currentWidget();
-        if (this.isTerminal(current)) await this.readCwd(current);
-        const key = folderKey || this.followFolder();
-        const known = this.state.folders.some(folder => folder.key === key.replace(/\/+$/, ''));
-        const terminal = await this.startTerminal(key);
-        const n_existing = model.terminalsOf(this.state, key).length;
-        this.state = model.assignTerminal(this.state, terminal.id, key, n_existing ? `terminal ${n_existing + 1}` : 'terminal');
-        this.cwdCache.set(terminal.id, key);
+        if (!folderKey) {
+            throw new Error('Choose a work folder first. Run claude or codex in a terminal to add its folder.');
+        }
+        const terminal = await this.startTerminal(folderKey);
+        const n_existing = model.terminalsOf(this.state, folderKey).length;
+        this.state = model.assignTerminal(this.state, terminal.id, folderKey, n_existing ? `terminal ${n_existing + 1}` : 'terminal');
+        this.cwdCache.set(terminal.id, folderKey);
+        this.selectedFolder = model.folderOf(this.state, terminal.id);
         await this.save();
-        const widgetOptions = split && current ? { area: 'main', mode: split, ref: current } : { area: 'main' };
-        await this.terminals.open(terminal, { widgetOptions, mode: 'activate' });
-        if (!known) this.openRepository(key);
+        await this.terminals.open(terminal, { widgetOptions: this.widgetOptions(split), mode: 'activate' });
         this.view = 'work';
         await this.refresh();
     }
@@ -695,25 +792,17 @@ class PaddockWorkspace {
         if (this.workExpanded) {
             const list = element('div', 'work-list');
             if (!this.state.folders.length) {
+                // 작업 폴더는 에이전트를 실행하면 생긴다. 등록 버튼 대신 그 다음 행동을 알려 준다.
                 list.append(element('p', 'work-empty', 'No work folders yet.'));
                 const steps = element('ol', 'work-steps');
-                steps.append(element('li', '', 'In the terminal on the right, git clone or cd into a repo folder.'));
-                steps.append(element('li', '', 'Click ‘New work terminal’ below.'));
+                steps.append(element('li', '', 'In a terminal, cd into a project folder.'));
+                steps.append(element('li', '', 'Run claude or codex. The folder appears here with that terminal.'));
                 list.append(steps);
             }
             for (const row of rows) {
                 list.append(this.renderRow(row, currentId));
             }
             node.append(list);
-            const follow = this.followFolder();
-            const newRow = button([codicon('terminal'), element('span', 'new-work-text', 'New work terminal'), element('span', 'new-work-path', `in ${this.displayPath(follow)}`)], 'new-work', () => this.run(() => this.newWorkTerminal()));
-            newRow.title = `Open a work terminal in ${this.displayPath(follow)}`;
-            // 목록에 없는 폴더(방금 clone·cd한 레포)를 따라가면 눈에 띄게 한다.
-            const isListed = this.state.folders.some(folder => folder.key === follow.replace(/\/+$/, ''));
-            const isHome = new URI(follow).path.toString() === this.homePath;
-            newRow.classList.toggle('is-new-folder', !isListed && !isHome);
-            newRow.dataset.followFolder = follow;
-            node.append(newRow);
         }
         const filesFolder = this.filesFolder();
         if (filesFolder) {
@@ -733,14 +822,14 @@ class PaddockWorkspace {
     }
 
     /**
-     * 파일 구획이 보여 줄 폴더: 지금 보는 작업 터미널의 폴더, 없으면 따라갈 폴더.
-     * 작업 폴더가 없고 따라갈 폴더가 홈이면 구획을 숨긴다(홈 전체 목록은 쓸모가 없다).
+     * 파일 구획이 보여 줄 폴더: 작업 폴더 탭 줄의 폴더, 없으면 지금 보는 추가 터미널의 현재 폴더.
+     * 폴더를 모르거나 홈이면 구획을 숨긴다(홈 전체 목록은 쓸모가 없다).
      */
     filesFolder() {
         const current = this.currentWidget();
-        const key = (current && model.folderOf(this.state, current.id)) || this.followFolder();
-        const isHome = new URI(key).path.toString() === this.homePath;
-        return this.state.folders.length || !isHome ? key : null;
+        const key = this.shownFolder() || (this.isTerminal(current) ? this.cwdCache.get(current.id) : null) || null;
+        const isHome = key && new URI(key).path.toString() === this.homePath;
+        return key && !isHome ? key : null;
     }
 
     renderRow(
@@ -829,7 +918,8 @@ class PaddockWorkspace {
         } else if (!stat.children?.length) {
             parent.append(element('p', 'work-empty', 'Empty folder.'));
         }
-        const entries = [...(stat?.children || [])].filter(entry => !HIDDEN_FILES.has(entry.name)).sort((left, right) => Number(right.isDirectory) - Number(left.isDirectory) || left.name.localeCompare(right.name));
+        const hidden = this.hiddenNames();
+        const entries = [...(stat?.children || [])].filter(entry => !hidden.has(entry.name)).sort((left, right) => Number(right.isDirectory) - Number(left.isDirectory) || left.name.localeCompare(right.name));
         const current = this.currentWidget()?.getResourceUri?.()?.toString();
         for (const entry of entries) {
             const key = entry.resource.toString();
@@ -852,6 +942,20 @@ class PaddockWorkspace {
                 await this.appendDirectory(parent, entry.resource, depth + 1);
             }
         }
+    }
+
+    /**
+     * 파일 구획에서 숨길 이름. `files.exclude` 설정(기본값은 VS Code와 같은 `.git`·`.DS_Store` 등 + `__pycache__`)에서
+     * 켜진 패턴 중 이름 하나로 된 것을 모은다. 앞에 붙은 "모든 하위 폴더"(별표 둘 + 슬래시)는 떼고 본다.
+     * 와일드카드가 든 패턴(예: 모든 `.pyc` 파일)은 다루지 않는다.
+     */
+    hiddenNames() {
+        const patterns = this.preferences.get('files.exclude', {}) || {};
+        const names = Object.keys(patterns)
+            .filter(pattern => patterns[pattern] === true)
+            .map(pattern => pattern.replace(/^\*\*\//, ''))
+            .filter(name => !/[*?[\]{}/]/.test(name));
+        return new Set(names);
     }
 
     async openFile(
@@ -898,6 +1002,43 @@ class PaddockWorkspace {
         }
     }
 
+    // -- 본문 위 작업 폴더 탭 줄 --
+
+    /**
+     * 선택한 작업 폴더의 터미널을 탭으로 그린다. 이름은 사이드바와 같은 행(`terminalRows`)을 쓴다.
+     * 선택한 폴더가 없으면(첫 실행·추가 터미널만 봄·폴더를 뺌) 줄을 숨긴다.
+     */
+    renderFolderTabs() {
+        const bar = this.shell.folderBar;
+        const key = this.shownFolder();
+        bar.setHidden(!key);
+        if (key) {
+            const current = this.currentWidget();
+            bar.node.querySelector('.folder-bar-label').textContent = this.folderName(key);
+            bar.node.querySelector('.folder-bar-name').title = this.displayPath(key);
+            bar.node.dataset.folder = key;
+            const strip = bar.node.querySelector('.folder-tabs');
+            strip.replaceChildren();
+            for (const row of model.terminalRows(this.state, key)) {
+                const terminal = this.shell.getWidgetById(row.id);
+                const isActive = terminal === current;
+                const tab = element('div', `tab${isActive ? ' is-active' : ''}${this.doneIds.has(row.id) ? ' is-done' : ''}`);
+                const label = `${row.name}${row.suffix}`;
+                const select = button(label, 'tab-select', () => this.run(() => this.shell.activateWidget(row.id)));
+                select.setAttribute('role', 'tab');
+                select.setAttribute('aria-selected', String(isActive));
+                select.dataset.widgetId = row.id;
+                select.title = terminal ? `${label} · ${this.programOf(terminal)}` : label;
+                select.addEventListener('dblclick', () => this.run(() => this.renameTerminal(row.id)));
+                const close = button([codicon('close')], 'tab-close', () => this.run(() => this.closeWidget(terminal)));
+                close.setAttribute('aria-label', `Close ${label}`);
+                tab.append(select, close);
+                strip.append(tab);
+            }
+            bar.node.querySelector('.folder-tab-add').title = `New work terminal in ${this.displayPath(key)}`;
+        }
+    }
+
     renderShellMenu() {
         const menu = this.shell.header.node.querySelector('#shell-menu');
         menu.replaceChildren();
@@ -906,7 +1047,7 @@ class PaddockWorkspace {
                 const label = id === 'SHELL' ? 'Default shell' : id;
                 const item = button(label, 'shell-option', () => {
                     menu.hidePopover();
-                    this.run(() => this.newExtraTerminal(profile));
+                    this.run(() => this.newExtraTerminal({ profile }));
                 });
                 item.setAttribute('role', 'menuitem');
                 item.title = profile instanceof ShellTerminalProfile ? profile.shellPath || label : label;
@@ -942,14 +1083,14 @@ class PaddockWorkspace {
                 const actions = element('span', 'path-actions');
                 const down = button([codicon('split-vertical')], 'path-action', () => this.run(async () => {
                     await this.shell.activateWidget(widget.id);
-                    await this.newWorkTerminal({ split: 'split-bottom' });
+                    await this.newTerminalHere({ split: 'split-bottom' });
                 }));
-                down.title = 'New work terminal below (Ctrl+Shift+`)';
+                down.title = 'New terminal below (Ctrl+Shift+`)';
                 const right = button([codicon('split-horizontal')], 'path-action', () => this.run(async () => {
                     await this.shell.activateWidget(widget.id);
-                    await this.newWorkTerminal({ split: 'split-right' });
+                    await this.newTerminalHere({ split: 'split-right' });
                 }));
-                right.title = 'New work terminal to the side (Ctrl+Shift+5)';
+                right.title = 'New terminal to the side (Ctrl+Shift+5)';
                 const close = button([codicon('close')], 'path-action', () => this.run(() => this.closeWidget(widget)));
                 close.title = 'Close';
                 actions.append(down, right, close);

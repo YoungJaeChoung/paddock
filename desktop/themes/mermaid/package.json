@@ -1,0 +1,28 @@
+{
+  "name": "mermaid-theme",
+  "publisher": "paddock",
+  "displayName": "Mermaid Theme",
+  "description": "Mermaid Dark and Mermaid Light color themes, taken from the MIT-licensed Mermaid Chart extension (MermaidChart.vscode-mermaid-chart 2.8.1) without its diagram tools.",
+  "version": "2.8.1",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "categories": [
+    "Themes"
+  ],
+  "contributes": {
+    "themes": [
+      {
+        "label": "Mermaid Dark",
+        "uiTheme": "vs-dark",
+        "path": "./themes/mermaid-dark-color-theme.json"
+      },
+      {
+        "label": "Mermaid Light",
+        "uiTheme": "vs",
+        "path": "./themes/mermaid-light-color-theme.json"
+      }
+    ]
+  }
+}

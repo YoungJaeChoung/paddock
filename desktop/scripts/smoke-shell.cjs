@@ -92,6 +92,9 @@ async function main() {
     // 캡처 전에 보이는 터미널마다 셸 프롬프트가 떴는지 기다린다(빈 화면을 결함으로 오해하지 않게).
     const untilPrompts = () => until(`${shell}.widgets.filter(w => w.id.startsWith('terminal-') && w.isVisible).every(w => { const b = w.term.buffer.active; for (let i = 0; i < b.length; i++) { if (/[$%#>] *$/.test(b.getLine(i).translateToString(true))) return true; } return false; })`, 120);
     try {
+        // 새 시험 설정은 폴더 신뢰 확인 창부터 뜨고, 답하기 전에는 확장(Git 등)이 시작되지 않는다. 시험 폴더라 신뢰로 답한다.
+        await until('!!document.querySelector(".workspace-trust-dialog .theia-button.main")', 80);
+        await evaluate('document.querySelector(".workspace-trust-dialog .theia-button.main").click()');
         // Step 1: 창 틀 — 레일 없음, 보기 줄 3개, 추가 터미널 줄, 상태 줄 메모리.
         assert(await evaluate('!!document.querySelector(".paddock-shell")'));
         assert.equal(await evaluate('document.querySelectorAll(".activity-rail, .rail-button").length'), 0);
@@ -107,27 +110,41 @@ async function main() {
             assert.equal(meter.width, meter.percent);
             assert.match(meter.title, /% left/);
         }
-        // 첫 실행: 터미널이 열린 폴더(홈)가 곧 작업 폴더라 목록이 비어 있지 않고, 첫 터미널은 그 아래 작업 터미널이다.
-        await until(`document.querySelector('.folder-row[data-folder=${JSON.stringify(homeKey)}]')`);
-        await until('document.querySelector(".terminal-row.is-current")');
-        assert.equal(await evaluate('document.querySelectorAll(".work-empty").length'), 0);
-        assert.equal(await evaluate('document.querySelectorAll("#tab-strip [role=tab]").length'), 0);
+        // 첫 실행: 작업 폴더는 에이전트를 실행해야 생기므로 목록은 비어 있고 다음 행동을 안내한다.
+        // 첫 터미널은 맨 위 추가 터미널 줄에 있고, 작업 폴더 탭 줄은 숨어 있다.
+        await until('document.querySelector(".work-empty")?.textContent.includes("No work folders")');
+        await until('document.querySelector(".work-steps")?.textContent.includes("Run claude or codex")');
+        await until('document.querySelectorAll("#tab-strip [role=tab]").length === 1');
+        assert.equal(await evaluate('document.querySelector(".folder-bar").classList.contains("lm-mod-hidden")'), true);
         await untilPrompts();
         await capture('1-first-run');
 
-        // Step 2: 그 작업 터미널에서 레포로 cd → 새 작업 터미널이 그 폴더를 따라간다.
-        await until(`${shell}.currentWidget?.id?.startsWith('terminal-')`);
-        await evaluate(`${shell}.currentWidget.sendText(${JSON.stringify(`cd ${repo}\n`)})`);
-        await until(`document.querySelector(".new-work")?.dataset.followFolder === ${JSON.stringify(repoKey)}`);
-        await capture('2-follow-folder');
+        // Step 2: 추가 터미널에서 레포로 cd하고 에이전트를 실행하면 그 폴더가 작업 폴더가 되고 터미널이 그 아래로 옮겨진다.
+        // 실제 에이전트 대신 이름이 claude인 가짜 프로그램(Enter마다 7초 스피너 뒤 입력 대기)을 쓴다.
+        const workspace = service('PaddockWorkspace');
+        const fakeBin = await fs.mkdtemp(path.join(require('node:os').tmpdir(), 'paddock-fake-agent-'));
+        await fs.writeFile(path.join(fakeBin, 'claude'), '#!/bin/bash\necho ready\nwhile read -r line; do end=$((SECONDS+7)); while [ $SECONDS -lt $end ]; do printf "\\r working"; sleep 0.15; done; printf "\\r done\\n> "; done\n', { mode: 0o755 });
+        // 창이 OS 포커스 없이 떠 있으면(WSL 등) Theia의 활성 위젯이 비므로, 앱처럼 본문의 현재 항목을 지금 보는 터미널로 쓴다.
+        const current = `${workspace}.currentWidget()`;
+        await until(`${current}?.id?.startsWith('terminal-')`);
+        const firstTerminal = await evaluate(`${current}.id`);
         // 터미널 글자를 선택하면 바로 클립보드에 복사된다(terminal.integrated.copyOnSelection).
-        await evaluate(`${shell}.currentWidget.sendText('echo PADDOCK_COPY_CHECK\\n')`);
-        await until(`(() => { const b = ${shell}.currentWidget.term.buffer.active; for (let i = 0; i < b.length; i++) { if (b.getLine(i).translateToString(true) === 'PADDOCK_COPY_CHECK') { ${shell}.currentWidget.term.select(0, i, 16); return true; } } return false; })()`);
+        await evaluate(`${current}.sendText('echo PADDOCK_COPY_CHECK\\n')`);
+        await until(`(() => { const b = ${current}.term.buffer.active; for (let i = 0; i < b.length; i++) { if (b.getLine(i).translateToString(true) === 'PADDOCK_COPY_CHECK') { ${current}.term.select(0, i, 16); return true; } } return false; })()`);
         await until(`navigator.clipboard.readText().then(text => text === 'PADDOCK_COPY_CHECK')`);
-        await evaluate('document.querySelector(".new-work").click()');
-        await until(`document.querySelector('.folder-row[data-folder=${JSON.stringify(repoKey)}]')`);
-        await until('document.querySelector(".terminal-row.is-current")');
+        await evaluate(`${current}.sendText(${JSON.stringify(`cd ${repo}; export PATH=${fakeBin}:$PATH; claude\n`)})`);
+        await until(`document.querySelector('.folder-row[data-folder=${JSON.stringify(repoKey)}]')`, 80);
+        await until(`document.querySelector('.terminal-row[data-widget-id="${firstTerminal}"] .row-name')?.textContent === 'claude'`);
+        await until('document.querySelectorAll("#tab-strip [role=tab]").length === 0');
+        await until(`document.querySelector(".folder-bar")?.dataset.folder === ${JSON.stringify(repoKey)} && !document.querySelector(".folder-bar").classList.contains("lm-mod-hidden")`);
+        await until(`document.querySelector('.folder-tabs .tab.is-active [role=tab]')?.textContent === 'claude'`);
         await until('document.querySelector(".path-bar.is-active .path-branch")?.textContent.length > 0');
+        await capture('2-agent-promoted');
+
+        // 작업 폴더 탭 줄의 ＋는 그 폴더에서 새 작업 터미널을 연다.
+        await evaluate('document.querySelector(".folder-tab-add").click()');
+        await until('document.querySelectorAll(".folder-tabs [role=tab]").length === 2');
+        await until(`document.querySelector('.folder-tabs .tab.is-active [role=tab]')?.textContent === 'terminal 2'`);
         await untilPrompts();
         await capture('3-working');
 
@@ -137,8 +154,9 @@ async function main() {
         await until(`document.querySelectorAll(".path-bar").length === ${n_bars + 1}`);
         await key('Digit5', '5', 53);
         await until(`document.querySelectorAll(".path-bar").length === ${n_bars + 2}`);
-        // 홈 폴더의 첫 작업 터미널 1개 + 레포 폴더 3개.
+        // 레포 폴더에 claude·＋로 연 터미널·나눈 터미널 2개.
         assert.equal(await evaluate(`document.querySelectorAll('.terminal-row').length`), 4);
+        assert.equal(await evaluate(`document.querySelectorAll('.folder-tabs [role=tab]').length`), 4);
         await untilPrompts();
         await capture('4-5-split');
 
@@ -148,10 +166,10 @@ async function main() {
 
         // Step 5: 한 폴더에 터미널이 8개를 넘으면 8줄 + "Show N more"로 묶이고 현재 터미널은 보인다.
         for (let n_added = 0; n_added < 7; n_added += 1) {
-            await evaluate('document.querySelector(".new-work").click()');
-            await until(`document.querySelectorAll('.folder-row[data-folder=${JSON.stringify(repoKey)}] .row-meta')[0]?.textContent === '›_ ${4 + n_added}'`);
+            await evaluate('document.querySelector(".folder-tab-add").click()');
+            await until(`document.querySelectorAll('.folder-row[data-folder=${JSON.stringify(repoKey)}] .row-meta')[0]?.textContent === '›_ ${5 + n_added}'`);
         }
-        await until('document.querySelector(".more-row")?.textContent.includes("Show 1 more")');
+        await until('document.querySelector(".more-row")?.textContent.includes("Show 2 more")');
         assert(await evaluate('!!document.querySelector(".terminal-row.is-current")'));
         await untilPrompts();
         await capture('7-many-terminals');
@@ -179,7 +197,9 @@ async function main() {
         await capture('6-folder-menu');
         await evaluate(`[...document.querySelectorAll('.paddock-menu .menu-item')].find(n => n.textContent.includes('Rename in list')).click()`);
         await until('document.querySelector(".dialogBlock input")');
-        await evaluate(`(() => { const input = document.querySelector('.dialogBlock input'); input.value = 'paddock app'; input.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('.dialogBlock .theia-button.main').click(); })()`);
+        await evaluate(`(() => { const input = document.querySelector('.dialogBlock input'); input.value = 'paddock app'; input.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+        // 입력 검증이 끝나기 전의 클릭은 무시되므로 창이 닫힐 때까지 확인을 누른다.
+        await until(`(() => { document.querySelector('.dialogBlock .theia-button.main')?.click(); return !document.querySelector('.dialogBlock'); })()`);
         await until(`document.querySelector('.folder-row[data-folder=${JSON.stringify(repoKey)}] .row-name')?.textContent === 'paddock app'`);
         const before = await evaluate(n_terminals);
         await evaluate(`${folderAction}.click()`);
@@ -188,7 +208,9 @@ async function main() {
         await until('document.querySelector(".dialogBlock .theia-button.main")');
         await evaluate('document.querySelector(".dialogBlock .theia-button.main").click()');
         await until(`!document.querySelector('.folder-row[data-folder=${JSON.stringify(repoKey)}]')`);
-        await until(`${n_terminals} === ${before - 10}`);
+        await until(`${n_terminals} === ${before - 11}`);
+        // 선택한 폴더를 빼면 작업 폴더 탭 줄은 숨는다.
+        await until('document.querySelector(".folder-bar").classList.contains("lm-mod-hidden")');
 
         // 위쪽 ＋는 작업 목록에 들어가지 않는 추가 터미널을 연다.
         const n_rows = await evaluate(`document.querySelectorAll('.terminal-row').length`);
@@ -197,19 +219,17 @@ async function main() {
         assert.equal(await evaluate(`document.querySelectorAll('.terminal-row').length`), n_rows);
 
         // Step 7b: 보고 있지 않은 터미널의 에이전트가 오래 일하다 멈추면 소리와 완료 표시(초록 점)가 붙고, 그 터미널을 열면 지워진다.
-        // 실제 에이전트 대신 이름이 claude인 가짜 프로그램(7초 스피너 뒤 입력 대기)을 쓴다.
-        const fakeBin = await fs.mkdtemp(path.join(require('node:os').tmpdir(), 'paddock-fake-agent-'));
-        await fs.writeFile(path.join(fakeBin, 'claude'), '#!/bin/bash\necho ready\nwhile read -r line; do end=$((SECONDS+7)); while [ $SECONDS -lt $end ]; do printf "\\r working"; sleep 0.15; done; printf "\\r done\\n> "; done\n', { mode: 0o755 });
-        const workspace = service('PaddockWorkspace');
+        // 홈의 추가 터미널에서 에이전트를 실행하므로 홈도 작업 폴더로 올라간다.
         await evaluate(`(() => { window.__paddockRings = 0; const hw = ${workspace}; const play = hw.playDoneSound.bind(hw); hw.playDoneSound = () => { window.__paddockRings += 1; play(); }; })()`);
-        const firstTerminal = await evaluate(`${shell}.widgets.find(w => w.id.startsWith('terminal-') && w.isVisible).id`);
-        await evaluate(`${workspace}.newWorkTerminal({ folderKey: ${JSON.stringify(homeKey)} }).then(() => true)`);
+        const extraTerminal = await evaluate(`${shell}.widgets.find(w => w.id.startsWith('terminal-') && w.isVisible).id`);
+        await evaluate(`${workspace}.newExtraTerminal().then(() => true)`);
         const agentId = await evaluate(`${workspace}.currentWidget().id`);
         await evaluate(`${shell}.getWidgetById('${agentId}').sendText(${JSON.stringify(`export PATH=${fakeBin}:$PATH; claude\n`)})`);
         await until(`${workspace}.programOf(${shell}.getWidgetById('${agentId}')) === 'claude'`, 60);
+        await until(`document.querySelector('.folder-row[data-folder=${JSON.stringify(homeKey)}]')`, 60);
         // 사용자가 Enter를 친 것처럼 입력 이벤트도 낸다(sendText는 입력 이벤트를 거치지 않는다).
         await evaluate(`(() => { const t = ${shell}.getWidgetById('${agentId}'); t.sendText('fix the bug\\r'); t.onDataEmitter.fire('fix the bug\\r'); })()`);
-        await evaluate(`${shell}.activateWidget('${firstTerminal}').then(() => true)`);
+        await evaluate(`${shell}.activateWidget('${extraTerminal}').then(() => true)`);
         await until(`document.querySelector('.terminal-row[data-widget-id="${agentId}"]')?.classList.contains('is-done')`, 150);
         assert.equal(await evaluate('window.__paddockRings'), 1);
         await capture('12-agent-done');
@@ -222,7 +242,7 @@ async function main() {
         await until('document.querySelector(".quick-input-widget")?.style.display !== "none"');
         await capture('11-remote-pick');
         await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
-        console.log('PASS: 창 틀·메모리·AI 사용량 게이지, 첫 실행 작업 폴더, 폴더 따라가기, 드래그 복사, 작업 터미널, 분할 단축키, 파일 경로 줄, 많은 터미널 묶기, SCM·확장(추천·검색), 목록 이름 바꾸기·빼기, 추가 터미널, 에이전트 완료 알림, 원격 선택');
+        console.log('PASS: 창 틀·메모리·AI 사용량 게이지, 첫 실행 빈 목록 안내, 드래그 복사, 에이전트 실행 시 작업 폴더 승격, 작업 폴더 탭 줄 ＋, 분할 단축키, 파일 경로 줄, 많은 터미널 묶기, SCM·확장(추천·검색), 목록 이름 바꾸기·빼기, 추가 터미널, 에이전트 완료 알림, 원격 선택');
     } finally {
         socket.close();
     }

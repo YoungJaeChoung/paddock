@@ -11,14 +11,21 @@
 .paddock-shell.is-macos .window-controls-space { display: block; flex: 0 0 92px; height: 100%; }
 .paddock-shell .tab-strip-label { align-self: stretch; display: flex; align-items: center; padding: 0 12px; border-left: 1px solid #263036; border-right: 1px solid #263036; color: #8e9da2; font-size: 10px; white-space: nowrap; }
 .paddock-shell .paddock-tabbar .tab-strip { display: flex; flex: 0 1 auto; min-width: 0; height: 28px; align-items: flex-end; overflow-x: auto; border: 0; background: transparent; scrollbar-width: none; }
-.paddock-shell .paddock-tabbar .tab { display: flex; align-items: center; flex: 0 0 170px; min-width: 110px; height: 24px; padding: 0 6px 0 10px; border-radius: 5px 5px 0 0; background: #141c20; color: #8f9fa2; -webkit-app-region: no-drag; }
-.paddock-shell .paddock-tabbar .tab.is-active { background: #20302c; color: #e4eeea; box-shadow: inset 0 -2px #97d4b4; }
+.paddock-shell .paddock-tabbar .tab, .paddock-shell .folder-bar .tab { display: flex; align-items: center; flex: 0 0 170px; min-width: 110px; height: 24px; padding: 0 6px 0 10px; border-radius: 5px 5px 0 0; background: #141c20; color: #8f9fa2; -webkit-app-region: no-drag; }
+.paddock-shell .paddock-tabbar .tab.is-active, .paddock-shell .folder-bar .tab.is-active { background: #20302c; color: #e4eeea; box-shadow: inset 0 -2px #97d4b4; }
 .paddock-shell .tab-select { flex: 1; min-width: 0; overflow: hidden; border: 0; background: transparent; color: inherit; font-size: 12px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .paddock-shell .tab-close { display: grid; place-items: center; width: 18px; height: 18px; border: 0; border-radius: 4px; background: transparent; color: #708184; }
 .paddock-shell .tab-close:hover { background: #37413f; color: #ecf1ee; }
 .paddock-shell .tab-actions { display: flex; flex: none; align-items: center; align-self: center; padding: 0 6px; gap: 2px; -webkit-app-region: no-drag; }
 .paddock-shell .tab-actions button { display: grid; place-items: center; width: 24px; height: 22px; border: 0; border-radius: 5px; color: #9aaca5; background: transparent; }
 .paddock-shell .tab-actions button:hover { background: #263830; color: #d6f1e1; }
+/* 본문 바로 위 줄: 선택한 작업 폴더의 터미널 탭과 ＋. 맨 위 추가 터미널 줄과 같은 탭 모양에, 왼쪽 폴더 이름으로 어느 폴더의 탭인지 밝힌다. */
+.paddock-shell .folder-bar { display: flex; align-items: flex-end; min-height: 30px; max-height: 30px; background: #111719; border-bottom: 1px solid #263036; }
+.paddock-shell .folder-bar-name { display: flex; flex: 0 1 auto; align-items: center; align-self: stretch; gap: 6px; max-width: 200px; padding: 0 12px; color: #c5d3cf; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.paddock-shell .folder-bar-name .codicon { color: #a4dec0; }
+.paddock-shell .folder-bar-label { overflow: hidden; text-overflow: ellipsis; }
+.paddock-shell .folder-tabs { display: flex; flex: 0 1 auto; min-width: 0; height: 30px; align-items: flex-end; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+.paddock-shell .folder-bar .tab { flex-basis: 150px; height: 26px; }
 .paddock-shell .window-drag-space { flex: 1 0 72px; height: 100%; }
 .paddock-shell #shell-menu { position: fixed; inset: 28px auto auto 0; margin: 0; min-width: 220px; padding: 6px; border: 1px solid #39534a; border-radius: 8px; background: #17211e; color: #d9e0e2; box-shadow: 0 12px 35px #0007; -webkit-app-region: no-drag; }
 .paddock-shell .shell-option { display: block; width: 100%; padding: 8px 10px; border: 0; border-radius: 4px; background: transparent; color: inherit; text-align: left; }
@@ -53,9 +60,6 @@
 .paddock-shell .work-row:hover .row-action, .paddock-shell .row-action:focus-visible { display: grid; }
 .paddock-shell .row-action:hover { background: #2f463b; color: #d6f1e1; }
 .paddock-shell .more-row { gap: 6px; padding-left: 34px; color: #a6c4b6; font-size: 12px; }
-.paddock-shell .new-work { display: flex; flex-wrap: wrap; align-items: center; column-gap: 6px; width: 100%; padding: 6px 12px 6px 14px; border: 0; border-top: 1px solid #202a2f; background: transparent; color: #8e9da2; font-size: 12px; text-align: left; }
-.paddock-shell .new-work:hover { background: #1b2824; color: #d6f1e1; }
-.paddock-shell .new-work-path { flex-basis: 100%; padding-left: 20px; color: #637378; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .paddock-shell .work-empty { margin: 0; padding: 6px 14px; color: #8e9da2; font-size: 12px; }
 .paddock-shell .work-steps { margin: 0; padding: 0 14px 6px 32px; color: #8e9da2; font-size: 12px; line-height: 1.5; }
 .paddock-shell .file-list { padding: 4px 0; }
@@ -126,12 +130,67 @@
 .paddock-shell #statusbar-right { display: flex; align-items: center; gap: 12px; }
 .paddock-shell .save-action { border: 0; padding: 2px 8px; border-radius: 3px; background: #284535; color: #c5ebd0; font: inherit; }
 .paddock-shell button:disabled { opacity: .5; cursor: wait; }
-.paddock-shell .new-work.is-new-folder { margin: 4px 8px; width: calc(100% - 16px); border: 1px solid #39534a; border-radius: 5px; background: #1b2824; color: #d6f1e1; font-weight: 600; }
-.paddock-shell .new-work.is-new-folder .codicon { color: #a4dec0; }
-.paddock-shell .new-work.is-new-folder .new-work-path { color: #a6c4b6; font-weight: 400; }
 .paddock-shell .view-host.is-drop-target { outline: 2px dashed #6ca987; outline-offset: -4px; background: #16211d; }
 /* 에이전트가 끝났는데 아직 안 본 터미널: 줄·탭에 초록 점. 그 터미널을 열면 사라진다. */
 .paddock-shell .terminal-row.is-done .row-meta { color: #8ccfb0; }
 .paddock-shell .terminal-row.is-done .row-meta::before,
 .paddock-shell .tab.is-done .tab-select::after { content: ""; display: inline-block; width: 6px; height: 6px; margin: 0 5px 1px 0; border-radius: 50%; background: #8ccfb0; vertical-align: middle; }
 .paddock-shell .tab.is-done .tab-select::after { margin: 0 0 1px 6px; }
+
+/* Theia 팝업(확인·입력 창, 알림)을 폴더 메뉴와 같은 모양으로 맞춘다. 팝업은 창 틀 밖(body)에 붙으므로 body에서 색 변수를 덮어쓴다.
+   기본값은 VS Code 파랑(머리줄은 상태 줄 색을 빌려 씀)이라 Paddock의 초록 강조와 어긋난다. 버튼 색 변수는 확장 보기 등 앱 전체 버튼에도 같이 적용된다. */
+body {
+    --theia-button-background: #2f5c47;
+    --theia-button-hoverBackground: #3a6e56;
+    --theia-button-foreground: #ecf5f0;
+    --theia-button-secondaryBackground: #263036;
+    --theia-button-secondaryHoverBackground: #2f3b40;
+    --theia-button-secondaryForeground: #d9e0e2;
+    --theia-focusBorder: #6fb892;
+    --theia-textLink-foreground: #8ccfb0;
+    --theia-textLink-activeForeground: #a4dec0;
+    --theia-notifications-background: #17211e;
+    --theia-notifications-foreground: #d9e0e2;
+    --theia-notificationToast-border: #39534a;
+    --theia-notificationCenter-border: #39534a;
+    --theia-notificationsInfoIcon-foreground: #8ccfb0;
+}
+.lm-Widget.dialogOverlay .dialogBlock { border: 1px solid #39534a; border-radius: 8px; background: #17211e; color: #d9e0e2; box-shadow: 0 14px 40px #000b; }
+.lm-Widget.dialogOverlay .dialogTitle { min-height: 36px; border-bottom: 1px solid #263036; background: transparent; color: #e4eeea; font-weight: 600; }
+.lm-Widget.dialogOverlay .dialogTitle i.closeButton { border-radius: 4px; color: #8e9da2; }
+.lm-Widget.dialogOverlay .dialogTitle i.closeButton:hover { background: #263830; color: #d6f1e1; }
+.lm-Widget.dialogOverlay .theia-button { border-radius: 5px; }
+/* Theia가 실행 중에 넣는 스타일은 버튼 색을 파랑 값으로 박아 두므로(.theia-button { background: #0e639c }) 한 단계 높은 선택자로 변수를 다시 쓴다. */
+body .theia-button { background: var(--theia-button-background); color: var(--theia-button-foreground); }
+body .theia-button:hover { background: var(--theia-button-hoverBackground); }
+body .theia-button.secondary { background: var(--theia-button-secondaryBackground); color: var(--theia-button-secondaryForeground); }
+body .theia-button.secondary:hover { background: var(--theia-button-secondaryHoverBackground); }
+.theia-notifications-container .theia-notification-list-item { border-radius: 8px; box-shadow: 0 10px 30px #0009; }
+.theia-notifications-container .theia-notification-list-item-container { border-radius: 8px; }
+.theia-notifications-container .theia-button { border-radius: 5px; }
+/* 명령 팔레트(Ctrl+Shift+P·F1)도 폴더 메뉴와 같은 톤으로. 팔레트 요소에서 변수를 덮어 다른 목록 색은 그대로 둔다. */
+.quick-input-widget {
+    --theia-quickInput-background: #17211e;
+    --theia-quickInput-foreground: #d9e0e2;
+    --theia-widget-border: #39534a;
+    --theia-widget-shadow: #000b;
+    --theia-input-background: #0f1614;
+    --theia-input-border: #39534a;
+    --theia-list-focusBackground: #2b4437;
+    --theia-list-activeSelectionBackground: #2b4437;
+    --theia-quickInputList-focusBackground: #2b4437;
+    --theia-list-focusForeground: #ecf5f0;
+    --theia-list-activeSelectionForeground: #ecf5f0;
+    --theia-quickInputList-focusForeground: #ecf5f0;
+    --theia-list-hoverBackground: #1f2e29;
+    --theia-list-highlightForeground: #a4dec0;
+    --theia-list-focusHighlightForeground: #a4dec0;
+    --theia-pickerGroup-foreground: #8ccfb0;
+    --theia-pickerGroup-border: #263036;
+    --theia-keybindingLabel-background: #263036;
+    --theia-keybindingLabel-border: #39534a;
+    --theia-keybindingLabel-bottomBorder: #39534a;
+    border-radius: 8px;
+    overflow: hidden;
+}
+.quick-input-widget .monaco-list-row { border-radius: 4px; }

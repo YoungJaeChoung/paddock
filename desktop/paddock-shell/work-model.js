@@ -137,6 +137,84 @@ function folderLabel(
 }
 
 /**
+ * 에이전트가 실행 중인 추가 터미널을 그 터미널 현재 폴더의 작업 터미널로 올린다.
+ *
+ * 에이전트(claude·codex 등)를 띄운 곳이 곧 작업할 곳이라, 사용자가 폴더를 따로 등록하지 않아도 목록에 선다.
+ * 작업 폴더는 이 함수로만 새로 생긴다. 이미 작업 폴더에 속한 터미널은 다른 폴더에서 에이전트를 실행해도
+ * 옮기지 않는다 — 한 번 든 터미널은 사용자가 닫거나 폴더를 뺄 때까지 제자리에 있고, 에이전트가 끝나도 남는다.
+ * 현재 폴더를 아직 모르는 터미널은 올리지 않는다(호출자가 다음 주기에 다시 준다).
+ *
+ * 입력 `terminals`: `[{ id, cwd, program, isAgent }]`. `cwd`는 폴더 file URI, `program`은 앞쪽 프로그램 이름.
+ * 출력: `{ state, promoted, added }` — 올린 터미널 id, 새로 생긴 폴더 key. 올린 것이 없으면 받은 상태 그대로다.
+ *
+ * Examples:
+ *   빈 상태, [{ id: 't1', cwd: 'file:///r/', program: 'claude', isAgent: true }]
+ *     → t1이 'file:///r'에 이름 'claude'로, added ['file:///r']
+ *   'file:///a'에 속한 t0, [{ id: 't0', cwd: 'file:///b', isAgent: true, … }] → promoted []
+ *   [{ id: 's', cwd: 'file:///a', program: 'bash', isAgent: false }]           → promoted []
+ */
+function promoteAgentTerminals(
+    state,
+    terminals,
+) {
+    let result = state;
+    const promoted = [];
+    const added = [];
+    for (const { id, cwd, program, isAgent } of terminals) {
+        if (isAgent && cwd && !folderOf(result, id)) {
+            const key = normalizeKey(cwd);
+            if (!result.folders.some(folder => folder.key === key)) added.push(key);
+            result = assignTerminal(result, id, key, program);
+            promoted.push(id);
+        }
+    }
+    return { state: result, promoted, added };
+}
+
+/**
+ * 한 폴더의 터미널 행. 목록 순서대로 이름을 쓰고, 같은 이름은 두 번째부터 `suffix`에 ·2·3을 붙인다.
+ * 사이드바 Work 보기와 작업 폴더 탭 줄이 같은 이름표를 쓰도록 둘 다 이 행을 쓴다.
+ *
+ * Examples:
+ *   이름 [claude, terminal, claude] → suffix ['', '', '·2']
+ */
+function terminalRows(
+    state,
+    key,
+) {
+    const folderKey = normalizeKey(key);
+    const n_seen = new Map();
+    return terminalsOf(state, folderKey).map((id) => {
+        const name = state.terminals[id].name;
+        const n_same = (n_seen.get(name) ?? 0) + 1;
+        n_seen.set(name, n_same);
+        return { kind: 'terminal', id, folder: folderKey, name, suffix: n_same > 1 ? `·${n_same}` : '' };
+    });
+}
+
+/**
+ * 같은 탭 줄에서 옮겨 갈 터미널. 단축키(Ctrl+방향키)로 탭을 오갈 때 쓴다.
+ *
+ * `target`은 `previous`·`next`(끝에서 반대쪽 끝으로 돈다), `first`·`last`다.
+ * 현재 터미널이 줄에 없거나 줄이 비면 null이다.
+ *
+ * Examples:
+ *   ['a', 'b', 'c'], 'a', 'previous' → 'c'
+ *   ['a', 'b', 'c'], 'b', 'last'     → 'c'
+ *   ['a', 'b'],      'x', 'next'     → null
+ */
+function tabTarget(
+    ids,
+    currentId,
+    target,
+) {
+    const index = ids.indexOf(currentId);
+    const n_tabs = ids.length;
+    const positions = { previous: (index - 1 + n_tabs) % n_tabs, next: (index + 1) % n_tabs, first: 0, last: n_tabs - 1 };
+    return index >= 0 ? ids[positions[target]] ?? null : null;
+}
+
+/**
  * 폴더를 목록에서 뺀다. 디스크의 폴더는 건드리지 않는다.
  *
  * `closed`는 호출자가 닫을 터미널 id, `next`는 현재 터미널이 뺀 폴더에 있었을 때 옮겨 갈 터미널이다.
@@ -193,13 +271,7 @@ function visibleRows(
         const expanded = folder.expanded || folder.key === currentFolder;
         rows.push({ kind: 'folder', key: folder.key, expanded, n_terminals: ids.length, current: folder.key === currentFolder });
         if (expanded) {
-            const n_seen = new Map();
-            const named = ids.map((id) => {
-                const name = state.terminals[id].name;
-                const n_same = (n_seen.get(name) ?? 0) + 1;
-                n_seen.set(name, n_same);
-                return { kind: 'terminal', id, folder: folder.key, name, suffix: n_same > 1 ? `·${n_same}` : '' };
-            });
+            const named = terminalRows(state, folder.key);
             const limited = showAll.has(folder.key) ? named : named.filter((row, index) => index < N_VISIBLE_TERMINALS || row.id === currentId);
             rows.push(...limited);
             if (limited.length < named.length) {
@@ -269,6 +341,9 @@ module.exports = {
     setExpanded,
     setFolderLabel,
     folderLabel,
+    promoteAgentTerminals,
+    terminalRows,
+    tabTarget,
     removeFolder,
     visibleRows,
     serialize,

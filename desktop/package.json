@@ -10,7 +10,23 @@
         "applicationName": "Paddock",
         "defaultTheme": "dark",
         "preferences": {
-          "workbench.colorTheme": "dark",
+          "workbench.colorTheme": "Mermaid Dark",
+          "terminal.integrated.fontFamily": "Consolas, Menlo, 'Droid Sans Mono', 'DejaVu Sans Mono', 'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans Mono CJK KR', monospace",
+          "terminal.integrated.letterSpacing": 0,
+          "terminal.integrated.lineHeight": 1.1,
+          "editor.fontFamily": "Consolas, Menlo, 'Droid Sans Mono', 'DejaVu Sans Mono', 'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans Mono CJK KR', monospace",
+          "editor.enablePreview": false,
+          "workbench.tree.indent": 20,
+          "files.exclude": {
+            "**/.git": true,
+            "**/.svn": true,
+            "**/.hg": true,
+            "**/CVS": true,
+            "**/.DS_Store": true,
+            "**/Thumbs.db": true,
+            "**/__pycache__": true
+          },
+          "git.autofetch": true,
           "window.titleBarStyle": "native",
           "terminal.integrated.profiles.osx": {
             "zsh": {
@@ -47,7 +63,7 @@
               "path": "C:\\Windows\\System32\\wsl.exe"
             }
           },
-          "terminal.integrated.defaultProfile.windows": "PowerShell",
+          "terminal.integrated.defaultProfile.windows": "Git Bash",
           "terminal.integrated.copyOnSelection": true,
           "git.openRepositoryInParentFolders": "always",
           "scm.alwaysShowRepositories": true,

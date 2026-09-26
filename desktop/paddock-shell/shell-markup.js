@@ -19,6 +19,14 @@ module.exports = {
         <div class="window-drag-space" aria-hidden="true"></div>
         <div id="shell-menu" popover role="menu" aria-label="Shell for a new terminal"></div>
     </header>`),
+    // 본문 바로 위 줄은 선택한 작업 폴더의 터미널만 보여 준다. ＋는 그 폴더에서 새 작업 터미널을 연다.
+    folderBar: () => element(`<div class="folder-bar" aria-label="Work folder terminals">
+        <div class="folder-bar-name"><span class="codicon codicon-folder-opened"></span><span class="folder-bar-label"></span></div>
+        <div class="folder-tabs" role="tablist" aria-label="Work folder terminals"></div>
+        <div class="tab-actions">
+            <button type="button" class="folder-tab-add" aria-label="New work terminal in this folder" title="New work terminal in this folder"><span class="codicon codicon-add"></span></button>
+        </div>
+    </div>`),
     sidebar: () => element(`<aside class="sidebar" aria-label="Sidebar">
         <nav class="view-bar" aria-label="Sidebar views">
             <button type="button" class="view-button is-active" data-view="work" aria-label="Work" title="Work"><span class="codicon codicon-list-tree"></span></button>
