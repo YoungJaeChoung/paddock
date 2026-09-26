@@ -12,11 +12,12 @@ const { isOSX } = require('@theia/core/lib/common/os');
 const MAC_ONLY_WINDOW_OPTIONS = ['titleBarStyle', 'trafficLightPosition'];
 
 /**
- * 사용자 확장·설정 폴더를 환경 변수로 지정한다.
+ * 사용자 확장·설정 폴더와 앱에 동봉한 기본 확장 폴더를 환경 변수로 지정한다.
  *
  * 개발 실행(`npm start`)과 설치본이 같은 폴더를 쓰도록 메인 프로세스에서 정한다.
  * 백엔드 프로세스는 이 환경 변수를 물려받는다. `HERDR_EXTENSIONS_DIR`·`HERDR_CONFIG_DIR`가 있으면
  * 그 경로를, 없으면 `~/.herdr/extensions`·`~/.herdr/config`를 만들어 쓴다.
+ * 앱 폴더의 `plugins`(Source control 보기에 쓰는 VS Code 내장 git 확장)는 있을 때만 더한다.
  */
 function useHerdrDirectories() {
     const extensionDirectory = path.resolve(process.env.HERDR_EXTENSIONS_DIR || path.join(os.homedir(), '.herdr', 'extensions'));
@@ -26,7 +27,9 @@ function useHerdrDirectories() {
     process.env.THEIA_CONFIG_DIR = configDirectory;
     // Windows 경로(C:\...)도 확장 목록 주소로 읽히도록 /C:/... 형태로 바꿔 넘긴다.
     const extensionEntry = `local-dir:${pathToFileURL(extensionDirectory).pathname}`;
-    process.env.THEIA_DEFAULT_PLUGINS = [process.env.THEIA_DEFAULT_PLUGINS, extensionEntry].filter(Boolean).join(',');
+    const bundledDirectory = path.join(process.env.THEIA_APP_PROJECT_PATH || process.cwd(), 'plugins');
+    const bundledEntry = fs.existsSync(bundledDirectory) ? `local-dir:${pathToFileURL(bundledDirectory).pathname}` : undefined;
+    process.env.THEIA_DEFAULT_PLUGINS = [process.env.THEIA_DEFAULT_PLUGINS, bundledEntry, extensionEntry].filter(Boolean).join(',');
 }
 
 /** Herdr 설정을 적용한 뒤 Theia 데스크톱 앱을 시작한다. */

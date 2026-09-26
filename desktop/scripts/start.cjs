@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
+const { prepareLinuxIme } = require('./linux-ime.cjs');
 
 // 확장·설정 폴더는 herdr-shell/electron-main-module.js가 앱 시작 시 정한다. 설치본도 같은 경로를 쓴다.
 const desktopDirectory = path.join(__dirname, '..');
@@ -10,6 +11,9 @@ if (!fs.existsSync(cli) || !fs.existsSync(path.join(desktopDirectory, 'lib', 'fr
     process.exit(1);
 }
 
+const ime = prepareLinuxIme();
+if (ime.message) console.log(ime.message);
+
 // node_modules/.bin/theia는 Windows에서 .cmd 래퍼라 셸 없이 실행할 수 없다. CLI 스크립트를 Node로 직접 실행한다.
 const child = spawn(process.execPath, [
     cli,
@@ -18,6 +22,7 @@ const child = spawn(process.execPath, [
 ], {
     cwd: desktopDirectory,
     stdio: 'inherit',
+    env: { ...process.env, ...ime.env },
 });
 
 child.on('error', (error) => {

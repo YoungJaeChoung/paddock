@@ -16,6 +16,8 @@ files:
   - lib
   - src-gen
   - herdr-shell
+  # Source control 보기에 쓰는 VS Code 내장 git 확장. setup 단계의 download:plugins가 받는다.
+  - plugins
   - package.json
   - "!**/node_modules/electron/**"
   # Windows npm은 로컬 패키지(@herdr/shell)를 폴더 연결로 설치하는데, 의존성 수집기가 이를 따라가 저장소 루트를

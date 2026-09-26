@@ -1,55 +1,137 @@
 /* 창 배치는 위젯 수명 주기로 관리하고 공통 조작 요소의 스타일을 확장한다. */
-.herdr-shell { color: #d9e0e2; background: #0d1115; font: 13px -apple-system, BlinkMacSystemFont, sans-serif; }
-.herdr-shell .activity-rail { min-width: 52px; max-width: 52px; }
-.herdr-shell .sidebar { min-width: 246px; max-width: 246px; }
-.herdr-shell .tab-strip { min-height: 40px; max-height: 40px; }
+.herdr-shell { color: #d9e0e2; background: #0d1115; font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.herdr-shell .sidebar { min-width: 246px; max-width: 246px; display: flex; flex-direction: column; overflow: hidden; }
 .herdr-shell .statusbar { min-height: 27px; max-height: 27px; }
 .herdr-shell #theia-main-content-panel { background: #0d1115; }
-.herdr-shell .terminal-container { padding: 24px 30px; }
-.herdr-shell .herdr-welcome { padding: 52px; background: #0d1115; }
-.herdr-shell .herdr-welcome h1 { font-size: 26px; color: #e5eeeb; }
-.herdr-shell .herdr-welcome p { color: #8e9da2; line-height: 1.8; }
-.herdr-shell .herdr-welcome .primary-button { margin-right: 10px; }
-.herdr-shell .herdr-file-children { padding-left: 12px; }
-.herdr-shell .extension-card { margin: 12px; padding: 14px; }
-.herdr-shell .extension-card small { color: #8e9da2; }
-.herdr-shell .sidebar-actions { padding: 16px; display: flex; gap: 8px; flex-wrap: wrap; }
+.herdr-shell .terminal-container { padding: 14px 20px; }
 
-/* 탭과 창 제어를 한 줄에 두고 빈 부분으로 창을 이동한다. */
-.herdr-shell .herdr-tabbar { display: flex; align-items: center; min-height: 40px; max-height: 40px; background: #141b1f; border-bottom: 1px solid #263036; -webkit-app-region: drag; }
+/* 위쪽 줄: 작업 폴더 밖의 추가 터미널만 둔다. 높이는 28px로 낮춰 본문을 넓힌다. */
+.herdr-shell .herdr-tabbar { display: flex; align-items: flex-end; min-height: 28px; max-height: 28px; background: #141b1f; border-bottom: 1px solid #263036; -webkit-app-region: drag; }
 .herdr-shell .window-controls-space { display: none; }
 .herdr-shell.is-macos .window-controls-space { display: block; flex: 0 0 92px; height: 100%; }
-.herdr-shell .herdr-tabbar .tab-strip { flex: 0 1 auto; min-width: 0; height: 40px; min-height: 40px; max-height: 40px; align-items: flex-end; overflow-x: auto; border: 0; background: transparent; }
-.herdr-shell .herdr-tabbar .tab { flex: 0 0 180px; min-width: 130px; height: 34px; border-radius: 7px 7px 0 0; border-top: 0; margin-right: 3px; -webkit-app-region: no-drag; }
-.herdr-shell .herdr-tabbar .tab.is-active { background: #20302c; box-shadow: inset 0 -2px #97d4b4; }
-.herdr-shell .tab-select { white-space: nowrap; text-overflow: ellipsis; }
-.herdr-shell .tab-actions { display: flex; flex: none; align-items: center; padding: 0 6px; gap: 2px; -webkit-app-region: no-drag; }
-.herdr-shell .tab-actions button { width: 32px; height: 32px; border: 0; border-radius: 5px; color: #9aaca5; background: transparent; }
+.herdr-shell .tab-strip-label { align-self: stretch; display: flex; align-items: center; padding: 0 12px; border-left: 1px solid #263036; border-right: 1px solid #263036; color: #8e9da2; font-size: 10px; white-space: nowrap; }
+.herdr-shell .herdr-tabbar .tab-strip { display: flex; flex: 0 1 auto; min-width: 0; height: 28px; align-items: flex-end; overflow-x: auto; border: 0; background: transparent; scrollbar-width: none; }
+.herdr-shell .herdr-tabbar .tab { display: flex; align-items: center; flex: 0 0 170px; min-width: 110px; height: 24px; padding: 0 6px 0 10px; border-radius: 5px 5px 0 0; background: #141c20; color: #8f9fa2; -webkit-app-region: no-drag; }
+.herdr-shell .herdr-tabbar .tab.is-active { background: #20302c; color: #e4eeea; box-shadow: inset 0 -2px #97d4b4; }
+.herdr-shell .tab-select { flex: 1; min-width: 0; overflow: hidden; border: 0; background: transparent; color: inherit; font-size: 12px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.herdr-shell .tab-close { display: grid; place-items: center; width: 18px; height: 18px; border: 0; border-radius: 4px; background: transparent; color: #708184; }
+.herdr-shell .tab-close:hover { background: #37413f; color: #ecf1ee; }
+.herdr-shell .tab-actions { display: flex; flex: none; align-items: center; align-self: center; padding: 0 6px; gap: 2px; -webkit-app-region: no-drag; }
+.herdr-shell .tab-actions button { display: grid; place-items: center; width: 24px; height: 22px; border: 0; border-radius: 5px; color: #9aaca5; background: transparent; }
 .herdr-shell .tab-actions button:hover { background: #263830; color: #d6f1e1; }
-.herdr-shell .shell-picker { font-size: 20px; }
 .herdr-shell .window-drag-space { flex: 1 0 72px; height: 100%; }
-.herdr-shell #shell-menu { position: fixed; inset: 38px auto auto 0; margin: 0; min-width: 220px; padding: 6px; border: 1px solid #39534a; border-radius: 8px; background: #17211e; color: #d9e0e2; box-shadow: 0 12px 35px #0007; -webkit-app-region: no-drag; }
-.herdr-shell .shell-option { display: block; width: 100%; padding: 10px 12px; border: 0; border-radius: 4px; background: transparent; color: inherit; text-align: left; }
+.herdr-shell #shell-menu { position: fixed; inset: 28px auto auto 0; margin: 0; min-width: 220px; padding: 6px; border: 1px solid #39534a; border-radius: 8px; background: #17211e; color: #d9e0e2; box-shadow: 0 12px 35px #0007; -webkit-app-region: no-drag; }
+.herdr-shell .shell-option { display: block; width: 100%; padding: 8px 10px; border: 0; border-radius: 4px; background: transparent; color: inherit; text-align: left; }
 .herdr-shell .shell-option:hover, .herdr-shell .shell-option:focus-visible { background: #2b4437; }
-.herdr-shell .sidebar-project { overflow: hidden; padding: 14px 19px 0; color: #a6c4b6; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 
-/* 작업 상태와 안내는 실제 문서·프로세스 상태를 표시한다. */
-.herdr-shell button:disabled { opacity: .5; cursor: wait; }
-.herdr-shell .sidebar-header { min-height: 48px; font-size: 11px; font-weight: 650; color: #a8b7b3; }
-.herdr-shell .sidebar-project { padding-bottom: 14px; }
-.herdr-shell .sidebar-description { margin: 0; padding: 14px 19px; line-height: 1.7; }
-.herdr-shell .side-item, .herdr-shell .file-item { display: block; overflow: hidden; text-overflow: ellipsis; }
-.herdr-shell .file-item { padding-left: 18px; }
-.herdr-shell .herdr-file-children .file-item { padding-left: 18px; }
-.herdr-shell .extension-card { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 16px 19px; border-bottom: 1px solid #202a2f; }
-.herdr-shell .extension-card strong, .herdr-shell .extension-card small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.herdr-shell .extension-card small { font-size: 11px; }
-.herdr-shell .statusbar { background: #141e1a; border-color: #28382f; color: #91ac9e; }
+/* 사이드바 위 가로 보기 줄(Cursor와 같은 자리). 세로 레일과 달리 폭을 쓰지 않는다. */
+.herdr-shell .view-bar { display: flex; flex: none; align-items: center; gap: 4px; height: 36px; padding: 0 8px; border-bottom: 1px solid #202a2f; }
+.herdr-shell .view-button { position: relative; display: grid; place-items: center; width: 30px; height: 28px; border: 0; border-radius: 6px; background: transparent; color: #7f9094; }
+.herdr-shell .view-button:hover { background: #1e292c; color: #bac8c6; }
+.herdr-shell .view-button.is-active { background: #20332c; color: #a4dec0; }
+.herdr-shell .view-button .codicon { font-size: 16px; }
+.herdr-shell .view-badge { position: absolute; top: 2px; left: 17px; min-width: 12px; height: 12px; padding: 0 3px; border-radius: 6px; background: #4d8fd6; color: #fff; font-size: 8px; font-weight: 700; line-height: 12px; }
+.herdr-shell .view-host { flex: 1; min-height: 0; overflow: auto; }
+.herdr-shell .view-host[hidden] { display: none; }
+.herdr-shell .view-host > .theia-view-container { height: 100%; }
+
+/* Work 보기: 작업 폴더 → 작업 터미널 트리와 선택한 폴더의 파일. */
+.herdr-shell .section-header { display: flex; align-items: center; gap: 4px; width: 100%; height: 30px; padding: 0 10px 0 8px; border: 0; border-bottom: 1px solid #202a2f; background: transparent; color: #a8b7b3; font-size: 11px; font-weight: 700; letter-spacing: .3px; text-align: left; }
+.herdr-shell .work-list { padding: 4px 0; }
+.herdr-shell .work-row { display: flex; align-items: center; width: 100%; min-height: 28px; padding-right: 8px; border: 0; border-left: 2px solid transparent; background: transparent; color: #98a7ab; text-align: left; }
+.herdr-shell .work-row:hover { background: #1b282b; }
+.herdr-shell .row-main { display: flex; flex: 1; align-items: center; gap: 5px; min-width: 0; height: 28px; padding: 0 0 0 8px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
+.herdr-shell .folder-row { color: #b4c2c4; }
+.herdr-shell .folder-row.is-current { background: #172320; color: #d6f1e1; font-weight: 600; }
+.herdr-shell .terminal-row .row-main { padding-left: 34px; }
+.herdr-shell .terminal-row.is-current { border-left-color: #8ccfb0; background: #20302c; color: #d6f1e1; }
+.herdr-shell .row-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.herdr-shell .row-suffix, .herdr-shell .row-meta { flex: none; color: #637378; font-size: 11px; }
+.herdr-shell .row-meta { max-width: 70px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.herdr-shell .prompt-mark { font-family: ui-monospace, monospace; font-size: 11px; color: #7f9094; }
+.herdr-shell .row-action { display: none; place-items: center; width: 20px; height: 20px; margin-left: 4px; border: 0; border-radius: 4px; background: transparent; color: #9aaca5; }
+.herdr-shell .work-row:hover .row-action, .herdr-shell .row-action:focus-visible { display: grid; }
+.herdr-shell .row-action:hover { background: #2f463b; color: #d6f1e1; }
+.herdr-shell .more-row { gap: 6px; padding-left: 34px; color: #a6c4b6; font-size: 12px; }
+.herdr-shell .new-work { display: flex; flex-wrap: wrap; align-items: center; column-gap: 6px; width: 100%; padding: 6px 12px 6px 14px; border: 0; border-top: 1px solid #202a2f; background: transparent; color: #8e9da2; font-size: 12px; text-align: left; }
+.herdr-shell .new-work:hover { background: #1b2824; color: #d6f1e1; }
+.herdr-shell .new-work-path { flex-basis: 100%; padding-left: 20px; color: #637378; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.herdr-shell .work-empty { margin: 0; padding: 6px 14px; color: #8e9da2; font-size: 12px; }
+.herdr-shell .work-steps { margin: 0; padding: 0 14px 6px 32px; color: #8e9da2; font-size: 12px; line-height: 1.5; }
+.herdr-shell .file-list { padding: 4px 0; }
+.herdr-shell .file-row { display: flex; align-items: center; gap: 5px; width: 100%; height: 26px; padding-right: 12px; border: 0; background: transparent; color: #98a7ab; text-align: left; }
+.herdr-shell .file-row.is-file .codicon-file { margin-left: 18px; }
+.herdr-shell .file-row:hover { background: #1b282b; color: #dce9e4; }
+.herdr-shell .file-row.is-current { background: #1a2622; color: #d6f1e1; }
+
+/* 폴더 메뉴. 빼기는 붉은 글자와 결과 안내로 알린다. */
+.herdr-menu { position: fixed; inset: auto; margin: 0; min-width: 236px; padding: 6px; border: 1px solid #39534a; border-radius: 8px; background: #17211e; color: #d9e0e2; box-shadow: 0 14px 40px #000b; font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.herdr-menu .menu-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 4px; background: transparent; color: inherit; text-align: left; }
+.herdr-menu .menu-item:hover { background: #2b4437; }
+.herdr-menu .menu-item.is-danger { color: #e9998d; }
+.herdr-menu .menu-note { margin: 0; padding: 0 10px 6px 34px; color: #8e9da2; font-size: 11px; }
+
+/* 본문 칸의 탭 줄은 현재 항목 하나만 보이는 경로 줄로 쓴다. */
+.herdr-shell #theia-main-content-panel .lm-TabBar { position: relative; min-height: 30px; max-height: 30px; background: #161c1f; border-bottom: 1px solid #202a2f; }
+.herdr-shell #theia-main-content-panel .lm-TabBar > :not(.path-bar) { visibility: hidden; }
+.herdr-shell .path-bar { position: absolute; inset: 0; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 16px; color: #a8b7b3; font-size: 12px; white-space: nowrap; }
+.herdr-shell .path-bar.is-active { background: #1b2427; box-shadow: inset 0 -2px #97d4b4; }
+.herdr-shell .path-bar .codicon { font-size: 13px; color: #7f9094; }
+.herdr-shell .path-bar.is-active > .codicon:first-child { color: #a4dec0; }
+.herdr-shell .path-folder { font-weight: 600; color: #d6f1e1; }
+.herdr-shell .path-item { color: #d9e0e2; overflow: hidden; text-overflow: ellipsis; }
+.herdr-shell .path-meta { color: #637378; font-size: 11px; }
+.herdr-shell .path-space { flex: 1; }
+.herdr-shell .path-branch { color: #8e9da2; font-size: 11px; margin-right: 6px; }
+.herdr-shell .path-actions { display: flex; gap: 2px; }
+.herdr-shell .path-action { display: grid; place-items: center; width: 22px; height: 22px; border: 0; border-radius: 4px; background: transparent; color: #8e9da2; }
+.herdr-shell .path-action:hover { background: #263830; color: #d6f1e1; }
+
+/* 상태 줄: 왼쪽 원격 표시·HERDR, 오른쪽 상태·메모리. */
+.herdr-shell .statusbar { display: flex; align-items: stretch; justify-content: space-between; padding: 0 13px 0 0; border-top: 1px solid #28382f; background: #141e1a; color: #91ac9e; font-size: 10px; }
+.herdr-shell .status-left, .herdr-shell .status-right { display: flex; align-items: center; gap: 12px; }
+.herdr-shell .remote-indicator { display: flex; align-items: center; gap: 5px; height: 100%; padding: 0 8px; border: 0; background: #1f3329; color: #b5d7bd; font-size: 10px; }
+.herdr-shell .remote-indicator:hover { background: #2b4437; }
+.herdr-shell .remote-indicator.is-connected { background: #2f6f4f; color: #e6fff0; font-weight: 600; }
+.herdr-shell .ai-usage { display: flex; align-items: stretch; align-self: stretch; gap: 12px; }
+/* 묶음이 상태 줄 높이를 다 차지해야 Claude 묶음(끄기 버튼)의 누르는 자리와 hover 배경이 줄 높이만큼 된다. */
+.herdr-shell .status-right > .usage-group { align-self: stretch; }
+/* 출처 묶음(Claude·Codex·Memory): 앞에 가는 구분선, 표지·이름 한 번, 그 뒤 창별 게이지. */
+.herdr-shell .usage-group { display: flex; align-items: center; gap: 5px; position: relative; height: 100%; padding: 0 2px 0 16px; border: 0; background: transparent; color: inherit; font: inherit; }
+.herdr-shell .usage-group::before { content: ""; position: absolute; left: 0; top: 50%; width: 1px; height: 14px; margin-top: -7px; background: #3a5046; }
+.herdr-shell button.usage-group { cursor: pointer; }
+.herdr-shell button.usage-group:hover { background: #1a2822; }
+.herdr-shell .usage-group .meter { margin-left: 10px; }
+.herdr-shell .usage-group .source-name + .meter { margin-left: 4px; }
+/* 표지는 모두 무채색이다 — 색은 막대·%의 사용량 수준(호박·빨강)에만 쓴다. 브랜드 주황은 경고색으로 오인됐다. */
+.herdr-shell .source-mark { font-size: 10px; line-height: 1; color: #aebdb5; }
+.herdr-shell .usage-group[data-source="claude"] .source-mark { font-size: 11px; font-weight: 700; }
+.herdr-shell .source-name { color: #c9d4ce; font-size: 10px; }
+.herdr-shell .usage-group[data-source="memory"] .source-name { color: #91ac9e; }
+/* 게이지: 채워진 막대가 사용량, 빈 부분이 남은 양. 75% 이상 호박색, 90% 이상 붉은색. */
+.herdr-shell .meter { display: flex; align-items: center; gap: 5px; border: 0; padding: 0; background: transparent; color: inherit; font: inherit; }
+.herdr-shell button.meter { cursor: pointer; }
+.herdr-shell .meter-label { color: #7f948a; font-family: ui-monospace, monospace; font-size: 10px; }
+.herdr-shell .meter-bar { position: relative; width: 28px; height: 4px; border-radius: 3px; background: #243a30; overflow: hidden; }
+.herdr-shell .meter[data-meter="memory"] .meter-bar { width: 36px; }
+.herdr-shell .meter-fill { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 3px; background: #89cbb1; }
+.herdr-shell .meter-percent { font-family: ui-monospace, monospace; font-size: 10px; color: #b5d7bd; }
+.herdr-shell .meter.is-high .meter-fill { background: #e5bf83; }
+.herdr-shell .meter.is-high .meter-percent { color: #e5bf83; }
+.herdr-shell .meter.is-critical .meter-fill { background: #e9998d; }
+.herdr-shell .meter.is-critical .meter-percent { color: #e9998d; }
+.herdr-shell .meter.is-empty .meter-percent { color: #637378; }
+.herdr-shell .usage-toggle { display: flex; align-items: center; gap: 4px; height: 18px; padding: 0 7px; border: 1px solid #39534a; border-radius: 3px; background: transparent; color: #b5d7bd; font-size: 10px; }
+.herdr-shell .usage-toggle:hover { background: #1f3329; }
 .herdr-shell #statusbar-right { display: flex; align-items: center; gap: 12px; }
 .herdr-shell .save-action { border: 0; padding: 2px 8px; border-radius: 3px; background: #284535; color: #c5ebd0; font: inherit; }
-.welcome-mark { display: grid; place-items: center; width: 48px; height: 48px; border: 1px solid #335146; border-radius: 12px; background: #1b3028; color: #a7d9bb; font: 22px ui-monospace, monospace; }
-.herdr-about { width: 360px; padding: 30px; border: 1px solid #39534a; border-radius: 12px; background: #141c20; color: #d9e0e2; }
-.herdr-about::backdrop { background: #0008; }
-.herdr-about h1 { font-size: 22px; margin-top: 22px; }
-.herdr-about p { color: #95a6a1; font-size: 13px; line-height: 1.7; }
-.herdr-about button { margin-top: 14px; }
+.herdr-shell button:disabled { opacity: .5; cursor: wait; }
+.herdr-shell .new-work.is-new-folder { margin: 4px 8px; width: calc(100% - 16px); border: 1px solid #39534a; border-radius: 5px; background: #1b2824; color: #d6f1e1; font-weight: 600; }
+.herdr-shell .new-work.is-new-folder .codicon { color: #a4dec0; }
+.herdr-shell .new-work.is-new-folder .new-work-path { color: #a6c4b6; font-weight: 400; }
+.herdr-shell .view-host.is-drop-target { outline: 2px dashed #6ca987; outline-offset: -4px; background: #16211d; }
+/* 에이전트가 끝났는데 아직 안 본 터미널: 줄·탭에 초록 점. 그 터미널을 열면 사라진다. */
+.herdr-shell .terminal-row.is-done .row-meta { color: #8ccfb0; }
+.herdr-shell .terminal-row.is-done .row-meta::before,
+.herdr-shell .tab.is-done .tab-select::after { content: ""; display: inline-block; width: 6px; height: 6px; margin: 0 5px 1px 0; border-radius: 50%; background: #8ccfb0; vertical-align: middle; }
+.herdr-shell .tab.is-done .tab-select::after { margin: 0 0 1px 6px; }

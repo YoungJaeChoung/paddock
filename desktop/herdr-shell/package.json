@@ -2,5 +2,5 @@
   "name": "@herdr/shell",
   "version": "0.1.0",
   "private": true,
-  "theiaExtensions": [{ "frontend": "./frontend-module.js", "electronMain": "./electron-main-module.js" }]
+  "theiaExtensions": [{ "frontend": "./frontend-module.js", "electronMain": "./electron-main-module.js", "backend": "./backend-module.js" }]
 }

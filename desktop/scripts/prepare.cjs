@@ -22,7 +22,9 @@ if (process.platform === 'linux' && /microsoft/i.test(os.release())) {
     console.warn('WSL에서는 Linux용 앱으로 실행됩니다. Windows용 앱은 PowerShell이나 명령 프롬프트에서 npm run feedback으로 띄우세요.');
 }
 // Step 1: 의존성 설치와 네이티브 모듈의 Electron용 컴파일. 컴파일이 끝나면 theia rebuild가 원본을 .browser_modules에 보관한다.
-if (!fs.existsSync(path.join(desktopDirectory, '.browser_modules', 'modules.json'))) {
+// Source control 보기에 쓰는 git 확장(plugins/)도 setup이 받는다.
+const isPrepared = fs.existsSync(path.join(desktopDirectory, '.browser_modules', 'modules.json')) && fs.existsSync(path.join(desktopDirectory, 'plugins'));
+if (!isPrepared) {
     console.log('처음 실행이라 의존성을 설치하고 이 운영체제용으로 컴파일합니다.');
     runNpm('setup');
 }

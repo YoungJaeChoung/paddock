@@ -10,3 +10,4 @@ desktop/captures/
 desktop/gen-esbuild.*.mjs
 out/
 desktop/dist/
+desktop/plugins/

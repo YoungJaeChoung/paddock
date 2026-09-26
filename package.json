@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "setup": "npm --prefix desktop install && npm --prefix desktop run rebuild",
+    "setup": "npm --prefix desktop install && npm --prefix desktop run download:plugins && npm --prefix desktop run rebuild",
     "build": "npm --prefix desktop run build",
     "start": "npm --prefix desktop start --",
     "package:mac": "npm --prefix desktop run package:mac",

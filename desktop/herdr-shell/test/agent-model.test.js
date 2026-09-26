@@ -1,0 +1,49 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const agent = require('../agent-model');
+
+test('C-agent-A1.1: 명령줄에서 프로그램 이름을 뽑고 에이전트는 에이전트 이름으로 적는다', () => {
+    assert.equal(agent.programName(['/home/me/.local/bin/claude', '--resume']), 'claude');
+    assert.equal(agent.programName(['node', '/usr/lib/node_modules/@openai/codex/bin/codex.js']), 'codex');
+    assert.equal(agent.programName(['node', '/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js']), 'claude');
+    assert.equal(agent.programName(['C:\\Tools\\codex.exe']), 'codex');
+    assert.equal(agent.programName(['node', 'server.js']), 'server');
+    assert.equal(agent.programName(['-bash']), 'bash');
+    assert.equal(agent.programName(['/bin/bash', '/home/me/bin/claude']), 'claude');
+    assert.equal(agent.programName(['/bin/zsh', '-l']), 'zsh');
+    assert.equal(agent.programName([]), null);
+    assert.equal(agent.isAgent('claude'), true);
+    assert.equal(agent.isAgent('bash'), false);
+});
+
+test('C-agent-A2.1: Enter 뒤 오래 일하던 에이전트가 조용해지면 한 번 알린다', () => {
+    const { QUIET_MS, MIN_BUSY_MS } = agent.ACTIVITY;
+    let a = agent.noteInput(agent.idle(), 'fix the bug\r', 0);
+    for (let t = 100; t <= MIN_BUSY_MS + 1000; t += 200) a = agent.noteOutput(a, t);
+    const last = MIN_BUSY_MS + 1000;
+    let r = agent.settle(a, last + 500, true);
+    assert.equal(r.finished, false, '아직 조용한 시간이 짧다');
+    r = agent.settle(r.activity, last + QUIET_MS, true);
+    assert.equal(r.finished, true);
+    assert.equal(agent.settle(r.activity, last + QUIET_MS * 3, true).finished, false, '한 번만 알린다');
+});
+
+test('C-agent-A2.2: 짧은 응답·Enter 없는 출력·에이전트가 아닌 프로그램은 알리지 않는다', () => {
+    const { QUIET_MS } = agent.ACTIVITY;
+    let a = agent.noteOutput(agent.noteInput(agent.idle(), '\r', 0), 1000);
+    assert.equal(agent.settle(a, 1000 + QUIET_MS, true).finished, false, '짧게 끝난 응답');
+    a = agent.idle();
+    for (let t = 0; t <= 10000; t += 200) a = agent.noteOutput(a, t);
+    assert.equal(agent.settle(a, 10000 + QUIET_MS, true).finished, false, 'Enter 없이 나온 출력(시작 화면 등)');
+    a = agent.noteInput(agent.idle(), 'npm test\r', 0);
+    for (let t = 100; t <= 10000; t += 200) a = agent.noteOutput(a, t);
+    assert.equal(agent.settle(a, 10000 + QUIET_MS, false).finished, false, '에이전트가 아닌 긴 명령');
+});
+
+test('C-agent-A2.3: 일하는 동안 에이전트였으면 끝나며 셸로 돌아가도 알린다', () => {
+    const { QUIET_MS } = agent.ACTIVITY;
+    let a = agent.noteInput(agent.idle(), 'claude -p "summarize"\r', 0);
+    for (let t = 100; t <= 8000; t += 200) a = agent.noteOutput(a, t);
+    a = agent.settle(a, 8100, true).activity;
+    assert.equal(agent.settle(a, 8000 + QUIET_MS, false).finished, true);
+});
