@@ -49,14 +49,14 @@ test('C-usage-U3.3: 창 길이를 5h·wk처럼 짧게 적고, 말풍선에서는
 
 test('C-usage-U4.1: 상태 줄 등록은 기존 명령을 이어 부르도록 기억하고, 해제하면 되돌린다', () => {
     const settings = { theme: 'dark', statusLine: { type: 'command', command: 'my-line' } };
-    const installed = usage.installStatusLine(settings, 'herdr-line');
-    assert.deepEqual(installed.settings.statusLine, { type: 'command', command: 'herdr-line' });
+    const installed = usage.installStatusLine(settings, 'paddock-line');
+    assert.deepEqual(installed.settings.statusLine, { type: 'command', command: 'paddock-line' });
     assert.deepEqual(installed.previous, { type: 'command', command: 'my-line' });
     assert.equal(installed.settings.theme, 'dark');
-    const again = usage.installStatusLine(installed.settings, 'herdr-line');
+    const again = usage.installStatusLine(installed.settings, 'paddock-line');
     assert.deepEqual(again.previous, null, '이미 등록돼 있으면 자기 자신을 이전 명령으로 기억하지 않는다');
     assert.deepEqual(usage.restoreStatusLine(installed.settings, installed.previous).statusLine, settings.statusLine);
-    assert.equal('statusLine' in usage.restoreStatusLine({ statusLine: { type: 'command', command: 'herdr-line' } }, null), false);
+    assert.equal('statusLine' in usage.restoreStatusLine({ statusLine: { type: 'command', command: 'paddock-line' } }, null), false);
 });
 
 test('C-usage-U5.1: 상태 줄 스크립트는 한도만 저장하고, 원래 상태 줄이 있으면 그 출력을 보여 준다', () => {
@@ -64,7 +64,7 @@ test('C-usage-U5.1: 상태 줄 스크립트는 한도만 저장하고, 원래 �
     const os = require('node:os');
     const path = require('node:path');
     const { spawnSync } = require('node:child_process');
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'herdr-usage-'));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'paddock-usage-'));
     const usagePath = path.join(directory, 'claude.json');
     const previousPath = path.join(directory, 'previous-statusline.json');
     const script = path.join(__dirname, '..', 'claude-statusline.cjs');

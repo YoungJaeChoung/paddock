@@ -112,8 +112,8 @@ function describe(
 }
 
 /**
- * Claude Code 설정에 Herdr 상태 줄 명령을 넣는다.
- * 원래 쓰던 상태 줄은 `previous`로 돌려주어 Herdr 명령이 이어 부르게 한다. 이미 Herdr 명령이면 `previous`는 null.
+ * Claude Code 설정에 Paddock 상태 줄 명령을 넣는다.
+ * 원래 쓰던 상태 줄은 `previous`로 돌려주어 Paddock 명령이 이어 부르게 한다. 이미 Paddock 명령이면 `previous`는 null.
  */
 function installStatusLine(
     settings,
@@ -127,7 +127,7 @@ function installStatusLine(
     };
 }
 
-/** Herdr 상태 줄을 걷어 내고 원래 상태 줄(없으면 빈 상태)로 되돌린다. */
+/** Paddock 상태 줄을 걷어 내고 원래 상태 줄(없으면 빈 상태)로 되돌린다. */
 function restoreStatusLine(
     settings,
     previous,

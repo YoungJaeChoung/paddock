@@ -3,10 +3,10 @@ import { createRoot } from 'react-dom/client';
 import { Agentation } from 'agentation';
 
 const pending = new Map();
-const unsavedKey = 'herdr-feedback-unsaved';
+const unsavedKey = 'paddock-feedback-unsaved';
 let n_requests = 0;
 
-window.__herdrFeedbackReply = (id, reply) => {
+window.__paddockFeedbackReply = (id, reply) => {
     const resolve = pending.get(id);
     if (resolve) {
         pending.delete(id);
@@ -21,7 +21,7 @@ function request(
     const id = ++n_requests;
     const result = new Promise((resolve) => {
         pending.set(id, resolve);
-        window.herdrFeedbackBridge(JSON.stringify({ id, operation, payload }));
+        window.paddockFeedbackBridge(JSON.stringify({ id, operation, payload }));
     });
     return result;
 }
@@ -99,7 +99,7 @@ function composeNote(
         screen: [...document.querySelectorAll('[data-pen], [aria-label]')]
             .filter((element) => {
                 const box = element.getBoundingClientRect();
-                return box.width > 0 && box.height > 0 && !element.closest('[data-agentation-root], [data-herdr-feedback]');
+                return box.width > 0 && box.height > 0 && !element.closest('[data-agentation-root], [data-paddock-feedback]');
             })
             .slice(0, 200)
             .map((element) => ({
@@ -169,7 +169,7 @@ function FeedbackOverlay() {
         function updatePortalHost() {
             const dialog = [...document.querySelectorAll('dialog')].find((item) => item.matches(':modal'));
             const host = dialog || null;
-            window.__herdrFeedbackPortal = host;
+            window.__paddockFeedbackPortal = host;
             setPortalHost(host);
         }
         const observer = new MutationObserver(updatePortalHost);
@@ -195,14 +195,14 @@ function FeedbackOverlay() {
 
     return <>
         {ready && <Agentation key={portalHost ? 'dialog' : 'body'} onAnnotationAdd={(annotation) => { void add(annotation); }} copyToClipboard={false} />}
-        {error && <div data-herdr-feedback-error style={{ position: 'fixed', right: 20, bottom: 72, zIndex: 2147483647, padding: 12, background: '#7f1d1d', color: '#fff', borderRadius: 8 }}>{error}</div>}
+        {error && <div data-paddock-feedback-error style={{ position: 'fixed', right: 20, bottom: 72, zIndex: 2147483647, padding: 12, background: '#7f1d1d', color: '#fff', borderRadius: 8 }}>{error}</div>}
     </>;
 }
 
 function mountFeedback() {
-    if (!document.querySelector('[data-herdr-feedback]')) {
+    if (!document.querySelector('[data-paddock-feedback]')) {
         const host = document.createElement('div');
-        host.setAttribute('data-herdr-feedback', '');
+        host.setAttribute('data-paddock-feedback', '');
         document.body.append(host);
         createRoot(host).render(<FeedbackOverlay />);
     }

@@ -41,7 +41,7 @@ async function buildOverlay() {
                     const withDragBoxes = source.replace(dragOriginal, dragUpdated);
                     const portalOffset = withDragBoxes.lastIndexOf(original);
                     return {
-                        contents: `${withDragBoxes.slice(0, portalOffset)}    window.__herdrFeedbackPortal || document.body\n  );\n}${withDragBoxes.slice(portalOffset + original.length)}`,
+                        contents: `${withDragBoxes.slice(0, portalOffset)}    window.__paddockFeedbackPortal || document.body\n  );\n}${withDragBoxes.slice(portalOffset + original.length)}`,
                         loader: 'js',
                         resolveDir: path.dirname(args.path),
                     };
@@ -107,7 +107,7 @@ class DebugPage {
             reply = { ok: false, message: error instanceof Error ? error.message : String(error) };
         }
         if (typeof request?.id === 'number') {
-            await this.evaluate(`window.__herdrFeedbackReply(${request.id}, ${JSON.stringify(reply)})`).catch(() => undefined);
+            await this.evaluate(`window.__paddockFeedbackReply(${request.id}, ${JSON.stringify(reply)})`).catch(() => undefined);
         }
     }
 }
@@ -172,7 +172,7 @@ async function cropImage(
 async function capturePage(
     page,
 ) {
-    await page.evaluate(`document.querySelectorAll('[data-herdr-feedback], [data-agentation-root], [data-agentation-toolbar]').forEach((item) => { item.dataset.feedbackDisplay = item.style.getPropertyValue('display'); item.dataset.feedbackDisplayPriority = item.style.getPropertyPriority('display'); item.style.setProperty('display', 'none', 'important'); })`);
+    await page.evaluate(`document.querySelectorAll('[data-paddock-feedback], [data-agentation-root], [data-agentation-toolbar]').forEach((item) => { item.dataset.feedbackDisplay = item.style.getPropertyValue('display'); item.dataset.feedbackDisplayPriority = item.style.getPropertyPriority('display'); item.style.setProperty('display', 'none', 'important'); })`);
     let image;
     try {
         await new Promise((resolve) => setTimeout(resolve, 100));
@@ -267,10 +267,10 @@ async function main() {
         await new Promise((resolve) => socket.addEventListener('open', resolve, { once: true }));
         const page = new DebugPage(socket);
         await Promise.all([page.send('Runtime.enable'), page.send('Page.enable')]);
-        await page.send('Runtime.addBinding', { name: 'herdrFeedbackBridge' });
+        await page.send('Runtime.addBinding', { name: 'paddockFeedbackBridge' });
         page.onLoad = () => page.evaluate(overlay).catch((error) => console.error('피드백 화면 재연결 실패:', error));
         for (let n_attempts = 0; n_attempts < 100; n_attempts += 1) {
-            const ready = await page.evaluate('!!document.body && !!document.querySelector(".herdr-shell")').catch(() => false);
+            const ready = await page.evaluate('!!document.body && !!document.querySelector(".paddock-shell")').catch(() => false);
             if (ready) break;
             await new Promise((resolve) => setTimeout(resolve, 100));
         }

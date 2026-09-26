@@ -1,4 +1,4 @@
-// Herdr 창의 고정 탐색 요소. 편집기와 별도로 유지한다.
+// Paddock 창의 고정 탐색 요소. 편집기와 별도로 유지한다.
 function element(
     html,
 ) {
@@ -8,7 +8,7 @@ function element(
 }
 module.exports = {
     // 위쪽 줄은 작업 폴더에 속하지 않는 추가 터미널만 보여 준다. 작업 터미널은 사이드바 Work 보기에 있다.
-    header: () => element(`<header class="herdr-tabbar" aria-label="Extra terminals">
+    header: () => element(`<header class="paddock-tabbar" aria-label="Extra terminals">
         <div class="window-controls-space" aria-hidden="true"></div>
         <div class="tab-strip-label" aria-hidden="true">Extra terminals</div>
         <div class="tab-strip" id="tab-strip" role="tablist" aria-label="Extra terminals"></div>
@@ -32,7 +32,7 @@ module.exports = {
     footer: () => element(`<footer class="statusbar">
         <div class="status-left">
             <button type="button" class="remote-indicator" aria-label="Open a remote window" title="Open a remote window"><span class="codicon codicon-remote"></span><span class="remote-label"></span></button>
-            <span id="statusbar-project">◆ HERDR</span>
+            <span id="statusbar-project">◆ PADDOCK</span>
         </div>
         <div class="status-right">
             <span id="statusbar-right" role="status">Ready</span>

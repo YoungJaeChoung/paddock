@@ -32,7 +32,7 @@ const agent = require('./agent-model');
 const HIDDEN_FILES = new Set(['.git', '.DS_Store', 'Thumbs.db']);
 
 // 작업 목록을 남기는 저장 키. 폴더 목록과 터미널 소속을 JSON으로 둔다.
-const STORAGE_KEY = 'herdr.work-folders.v1';
+const STORAGE_KEY = 'paddock.work-folders.v1';
 
 // 터미널 현재 폴더·실행 중 프로그램·메모리처럼 이벤트가 없는 값을 다시 읽는 간격(ms).
 const REFRESH_INTERVAL = 2000;
@@ -50,9 +50,9 @@ const SOURCE_MARKS = {
 };
 
 // 본문을 나누는 명령. 단축키는 VS Code의 새 터미널·터미널 분할과 같다.
-const HERDR_COMMANDS = {
-    splitDown: { id: 'herdr.work.splitDown', label: 'Herdr: New Work Terminal Below' },
-    splitRight: { id: 'herdr.work.splitRight', label: 'Herdr: New Work Terminal to the Side' },
+const PADDOCK_COMMANDS = {
+    splitDown: { id: 'paddock.work.splitDown', label: 'Paddock: New Work Terminal Below' },
+    splitRight: { id: 'paddock.work.splitRight', label: 'Paddock: New Work Terminal to the Side' },
 };
 
 function element(
@@ -94,7 +94,7 @@ function button(
  * 작업 폴더는 "지금 보고 있는 터미널의 현재 폴더"를 따라 생긴다. 폴더 선택 창은 없다.
  * 작업 폴더에 속한 터미널은 사이드바에, 속하지 않은 터미널은 위쪽 추가 터미널 줄에 나온다.
  */
-class HerdrWorkspace {
+class PaddockWorkspace {
     constructor(
         container,
     ) {
@@ -122,8 +122,8 @@ class HerdrWorkspace {
     registerCommands(
         commands,
     ) {
-        commands.registerCommand(HERDR_COMMANDS.splitDown, { execute: () => this.run(() => this.newWorkTerminal({ split: 'split-bottom' })) });
-        commands.registerCommand(HERDR_COMMANDS.splitRight, { execute: () => this.run(() => this.newWorkTerminal({ split: 'split-right' })) });
+        commands.registerCommand(PADDOCK_COMMANDS.splitDown, { execute: () => this.run(() => this.newWorkTerminal({ split: 'split-bottom' })) });
+        commands.registerCommand(PADDOCK_COMMANDS.splitRight, { execute: () => this.run(() => this.newWorkTerminal({ split: 'split-right' })) });
     }
 
     registerKeybindings(
@@ -140,9 +140,9 @@ class HerdrWorkspace {
         for (const key of ['ctrl+shift+`', 'ctrlcmd+shift+5', 'ctrlcmd+\\']) {
             this.keybindings.unregisterKeybinding(key);
         }
-        this.keybindings.registerKeybinding({ command: HERDR_COMMANDS.splitDown.id, keybinding: 'ctrl+shift+`' });
-        this.keybindings.registerKeybinding({ command: HERDR_COMMANDS.splitRight.id, keybinding: 'ctrlcmd+shift+5' });
-        this.keybindings.registerKeybinding({ command: HERDR_COMMANDS.splitRight.id, keybinding: 'ctrlcmd+\\' });
+        this.keybindings.registerKeybinding({ command: PADDOCK_COMMANDS.splitDown.id, keybinding: 'ctrl+shift+`' });
+        this.keybindings.registerKeybinding({ command: PADDOCK_COMMANDS.splitRight.id, keybinding: 'ctrlcmd+shift+5' });
+        this.keybindings.registerKeybinding({ command: PADDOCK_COMMANDS.splitRight.id, keybinding: 'ctrlcmd+\\' });
     }
 
     // -- 시작 --
@@ -362,7 +362,7 @@ class HerdrWorkspace {
         const pids = terminals.map(terminal => this.shellPids.get(terminal.id)).filter(Boolean);
         if (pids.length) {
             try {
-                const names = await this.fetchJson('/herdr/foreground', 'GET', `?pids=${pids.join(',')}`);
+                const names = await this.fetchJson('/paddock/foreground', 'GET', `?pids=${pids.join(',')}`);
                 for (const terminal of terminals) {
                     const name = names[this.shellPids.get(terminal.id)];
                     if (name) this.programs.set(terminal.id, name);
@@ -386,7 +386,7 @@ class HerdrWorkspace {
             const watching = terminal === current && terminal.isVisible && document.hasFocus();
             if (finished && !watching) {
                 this.doneIds.add(terminal.id);
-                if (this.preferences.get('herdr.agentDoneSound', true)) this.playDoneSound();
+                if (this.preferences.get('paddock.agentDoneSound', true)) this.playDoneSound();
             }
         }
     }
@@ -788,7 +788,7 @@ class HerdrWorkspace {
         key,
         anchor,
     ) {
-        const menu = element('div', 'herdr-menu');
+        const menu = element('div', 'paddock-menu');
         menu.setAttribute('popover', '');
         menu.setAttribute('role', 'menu');
         const n_terminals = model.terminalsOf(this.state, key).length;
@@ -1046,7 +1046,7 @@ class HerdrWorkspace {
 
     async refreshMemory() {
         try {
-            const { percent } = await this.fetchJson('/herdr/memory');
+            const { percent } = await this.fetchJson('/paddock/memory');
             if (percent !== null) {
                 this.fillMeter(this.shell.footer.node.querySelector('[data-meter="memory"]'), percent, `System memory in use: ${percent}%`);
             }
@@ -1057,19 +1057,19 @@ class HerdrWorkspace {
 
     /**
      * Claude·Codex 사용량 게이지를 그린다. 값은 각 CLI가 터미널에서 실행될 때 남긴 마지막 기록이다.
-     * Claude 표시는 처음 한 번 자동으로 켜고(Claude Code 상태 줄에 Herdr 명령 등록), 끄기·켜기는 Claude 게이지 하나로 한다.
+     * Claude 표시는 처음 한 번 자동으로 켜고(Claude Code 상태 줄에 Paddock 명령 등록), 끄기·켜기는 Claude 게이지 하나로 한다.
      */
     async refreshUsage() {
         let data = null;
         try {
-            data = await this.fetchJson('/herdr/usage');
+            data = await this.fetchJson('/paddock/usage');
         } catch {
             data = null;
         }
         if (data?.claude.state === 'unset' && !this.claudeAutoTried) {
             this.claudeAutoTried = true;
             await this.setClaudeUsage(true, true);
-            data = await this.fetchJson('/herdr/usage');
+            data = await this.fetchJson('/paddock/usage');
         }
         const host = this.shell.footer.node.querySelector('.ai-usage');
         // 값이 그대로면 다시 그리지 않는다(마우스를 올린 말풍선이 깜빡이지 않게). 분 단위가 바뀌면 문구를 새로 쓴다.
@@ -1133,7 +1133,7 @@ class HerdrWorkspace {
         enabled,
         isAutomatic = false,
     ) {
-        await this.fetchJson('/herdr/usage/claude', 'POST', `?enabled=${enabled}`);
+        await this.fetchJson('/paddock/usage/claude', 'POST', `?enabled=${enabled}`);
         if (isAutomatic) {
             // 사용자 설정 파일을 바꾼 일이라 처음 한 번 알리고 바로 끌 수 있게 한다.
             // 알림 버튼을 기다리는 동안 게이지 그리기가 멈추지 않게 결과는 따로 처리한다.
@@ -1149,11 +1149,11 @@ class HerdrWorkspace {
     }
 
     async toggleClaudeUsage() {
-        const { claude } = await this.fetchJson('/herdr/usage');
+        const { claude } = await this.fetchJson('/paddock/usage');
         const turnOn = claude.state !== 'on';
         const confirmed = turnOn || await new ConfirmDialog({
             title: 'Turn off Claude usage',
-            msg: 'Herdr will remove its status line from Claude Code settings and restore the one you had before.',
+            msg: 'Paddock will remove its status line from Claude Code settings and restore the one you had before.',
             ok: 'Turn off',
             cancel: 'Cancel',
         }).open();
@@ -1175,4 +1175,4 @@ class HerdrWorkspace {
         await this.refreshUsage();
     }
 }
-module.exports = { HerdrWorkspace, HERDR_COMMANDS };
+module.exports = { PaddockWorkspace, PADDOCK_COMMANDS };

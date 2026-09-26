@@ -1,4 +1,4 @@
-# Herdr Terminal
+# Paddock
 
 터미널과 프로젝트 파일을 한 창에서 다루는 macOS·Windows 데스크톱 앱입니다.
 
@@ -6,9 +6,9 @@
 
 최신 릴리스의 설치 파일을 받습니다. 링크는 새 릴리스가 나오면 자동으로 그 파일을 가리킵니다.
 
-- [macOS (Apple Silicon) — Herdr-Terminal-mac-arm64.dmg](https://github.com/YoungJaeChoung/paddock/releases/latest/download/Herdr-Terminal-mac-arm64.dmg)
-- [macOS (Intel) — Herdr-Terminal-mac-x64.dmg](https://github.com/YoungJaeChoung/paddock/releases/latest/download/Herdr-Terminal-mac-x64.dmg)
-- [Windows — Herdr-Terminal-win-x64.exe](https://github.com/YoungJaeChoung/paddock/releases/latest/download/Herdr-Terminal-win-x64.exe)
+- [macOS (Apple Silicon) — Paddock-mac-arm64.dmg](https://github.com/YoungJaeChoung/paddock/releases/latest/download/Paddock-mac-arm64.dmg)
+- [macOS (Intel) — Paddock-mac-x64.dmg](https://github.com/YoungJaeChoung/paddock/releases/latest/download/Paddock-mac-x64.dmg)
+- [Windows — Paddock-win-x64.exe](https://github.com/YoungJaeChoung/paddock/releases/latest/download/Paddock-win-x64.exe)
 
 지난 버전은 [릴리스 목록](https://github.com/YoungJaeChoung/paddock/releases)에 있습니다. 저장소가 비공개인 동안에는 저장소 접근 권한이 있는 GitHub 계정으로 로그인해야 받을 수 있습니다.
 
@@ -36,8 +36,8 @@ npm start -- /프로젝트/절대경로
 
 | 운영체제 | 명령 | 결과 |
 | --- | --- | --- |
-| macOS | `make package-mac` | `Herdr-Terminal-mac-<arm64 또는 x64>.dmg` |
-| Windows | `make package-win` | `Herdr-Terminal-win-x64.exe` (설치 마법사) |
+| macOS | `make package-mac` | `Paddock-mac-<arm64 또는 x64>.dmg` |
+| Windows | `make package-win` | `Paddock-win-x64.exe` (설치 마법사) |
 
 Windows에 `make`가 없으면 `npm run setup` 다음 `npm run package:win`을 실행해도 같습니다.
 
@@ -48,7 +48,7 @@ Windows에 `make`가 없으면 `npm run setup` 다음 `npm run package:win`을 �
 | `package/`로 시작하는 브랜치 | 실행 화면의 Artifacts에 설치 파일 (확인용) |
 | `make release` (`v<버전>` 태그) | GitHub 릴리스 생성. 위 다운로드 링크가 이 파일로 바뀜 |
 
-`make release`는 `desktop/package.json`의 버전으로 태그를 만듭니다. 새 버전을 내려면 먼저 그 버전을 올리고 커밋하세요. 설치본은 개발 실행과 같은 `~/.herdr/extensions`·`~/.herdr/config`를 씁니다.
+`make release`는 `desktop/package.json`의 버전으로 태그를 만듭니다. 새 버전을 내려면 먼저 그 버전을 올리고 커밋하세요. 설치본은 개발 실행과 같은 `~/.paddock/extensions`·`~/.paddock/config`를 씁니다.
 
 ## 사용
 
@@ -58,10 +58,10 @@ Windows에 `make`가 없으면 `npm run setup` 다음 `npm run package:win`을 �
 - **추가 터미널:** 위쪽 줄의 `＋`는 작업 폴더와 무관한 터미널을 엽니다. `⌄`에서 셸을 고릅니다(macOS zsh·bash, Windows PowerShell·명령 프롬프트·Git Bash·WSL).
 - **나누기:** `` Ctrl+Shift+` ``는 같은 폴더의 새 작업 터미널을 아래 칸에, `Ctrl+Shift+5`(macOS `⌘\`)는 옆 칸에 엽니다. 각 칸 위 경로 줄의 버튼으로도 됩니다.
 - **복사:** 터미널 글자를 드래그해 선택하면 바로 복사됩니다.
-- **에이전트 완료 알림:** 보고 있지 않은 터미널에서 Claude·Codex 같은 에이전트가 5초 넘게 일하다 멈추면(끝났거나 답을 기다림) 짧은 소리가 나고, 사이드바·탭에 초록 점이 붙습니다. 그 터미널을 열면 점이 사라집니다. 소리는 설정(Preferences)의 `herdr.agentDoneSound`로 끕니다. 사이드바 오른쪽 흐린 글자는 그 터미널에서 지금 실행 중인 프로그램입니다(Windows는 셸 이름).
+- **에이전트 완료 알림:** 보고 있지 않은 터미널에서 Claude·Codex 같은 에이전트가 5초 넘게 일하다 멈추면(끝났거나 답을 기다림) 짧은 소리가 나고, 사이드바·탭에 초록 점이 붙습니다. 그 터미널을 열면 점이 사라집니다. 소리는 설정(Preferences)의 `paddock.agentDoneSound`로 끕니다. 사이드바 오른쪽 흐린 글자는 그 터미널에서 지금 실행 중인 프로그램입니다(Windows는 셸 이름).
 - **Source control·Extensions:** 사이드바 위 아이콘으로 전환합니다. Source control은 작업 폴더의 변경·커밋을, Extensions는 VS Code처럼 Open VSX에서 확장을 찾아 설치합니다. `.vsix` 파일은 확장 보기로 끌어다 놓습니다.
 - **원격:** 상태 줄 맨 왼쪽 원격 표시를 눌러 SSH 호스트에 연결합니다. 연결되면 창 전체가 그 호스트에서 동작합니다. 오른쪽 **Memory**는 시스템 메모리 사용률입니다.
-- **AI 사용량:** 상태 줄 오른쪽에 Claude·Codex 사용 한도가 나옵니다. 출처마다 표지(✱ Claude · ◎ Codex · ▦ Memory)와 이름을 한 번 쓰고, 그 뒤에 `5h`(5시간 창)·`wk`(주간 창) 게이지와 %가 붙습니다. 막대에 마우스를 올리면 남은 양과 초기화까지 남은 시간이 보입니다. 로그인은 필요 없습니다 — Codex는 세션 기록을, Claude는 Claude Code 상태 줄 입력(Pro·Max, 첫 응답 뒤)을 읽습니다. Claude 표시를 위해 첫 실행에 `~/.claude/settings.json`에 Herdr 상태 줄을 넣고(원래 상태 줄은 이어서 보여 주고, 원본은 `settings.json.herdr-backup`), Claude 묶음을 눌러 끄면 원래대로 되돌립니다. 상태 줄 실행에 Node.js가 필요합니다(macOS·Linux는 없으면 앱 내장 런타임을 씁니다).
+- **AI 사용량:** 상태 줄 오른쪽에 Claude·Codex 사용 한도가 나옵니다. 출처마다 표지(✱ Claude · ◎ Codex · ▦ Memory)와 이름을 한 번 쓰고, 그 뒤에 `5h`(5시간 창)·`wk`(주간 창) 게이지와 %가 붙습니다. 막대에 마우스를 올리면 남은 양과 초기화까지 남은 시간이 보입니다. 로그인은 필요 없습니다 — Codex는 세션 기록을, Claude는 Claude Code 상태 줄 입력(Pro·Max, 첫 응답 뒤)을 읽습니다. Claude 표시를 위해 첫 실행에 `~/.claude/settings.json`에 Paddock 상태 줄을 넣고(원래 상태 줄은 이어서 보여 주고, 원본은 `settings.json.paddock-backup`), Claude 묶음을 눌러 끄면 원래대로 되돌립니다. 상태 줄 실행에 Node.js가 필요합니다(macOS·Linux는 없으면 앱 내장 런타임을 씁니다).
 - **저장:** 하단 **Save** 또는 `⌘S`(Windows는 `Ctrl+S`)로 저장합니다. 저장하지 않고 닫으면 편집기의 저장 확인이 나타납니다.
 
 기본 터미널 사용은 로컬에서 실행됩니다. 앱 자체가 외부로 보내는 것은 확장 검색어(Open VSX)뿐입니다. AI 사용량은 로컬 파일만 읽습니다. 사용자가 실행한 명령과 설치한 확장은 외부 서비스에 연결하거나 로컬 파일에 접근할 수 있습니다.

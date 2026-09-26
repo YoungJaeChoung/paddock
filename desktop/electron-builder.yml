@@ -1,9 +1,9 @@
-# Herdr Terminal 설치 파일 설정. scripts/package.cjs가 운영체제별로 호출한다.
+# Paddock 설치 파일 설정. scripts/package.cjs가 운영체제별로 호출한다.
 # 설치 파일은 그 운영체제에서 만든다. 터미널용 네이티브 모듈이 운영체제별로 컴파일되기 때문이다.
-appId: io.github.youngjaechoung.herdr-terminal
-productName: Herdr Terminal
+appId: io.github.youngjaechoung.paddock
+productName: Paddock
 # 버전을 파일 이름에 넣지 않는다. README의 최신 릴리스 다운로드 주소가 이 이름에 고정돼 있다.
-artifactName: Herdr-Terminal-${os}-${arch}.${ext}
+artifactName: Paddock-${os}-${arch}.${ext}
 electronDist: node_modules/electron/dist
 # Theia는 앱 폴더의 파일을 실제 경로로 읽으므로 asar로 묶지 않는다.
 asar: false
@@ -15,14 +15,14 @@ directories:
 files:
   - lib
   - src-gen
-  - herdr-shell
+  - paddock-shell
   # Source control 보기에 쓰는 VS Code 내장 git 확장. setup 단계의 download:plugins가 받는다.
   - plugins
   - package.json
   - "!**/node_modules/electron/**"
-  # Windows npm은 로컬 패키지(@herdr/shell)를 폴더 연결로 설치하는데, 의존성 수집기가 이를 따라가 저장소 루트를
-  # herdr-terminal 패키지로 한 번 더 넣는다. herdr-shell은 배포 번들(lib)에 이미 포함돼 있어 빼도 된다.
-  - "!**/node_modules/herdr-terminal/**"
+  # Windows npm은 로컬 패키지(@paddock/shell)를 폴더 연결로 설치하는데, 의존성 수집기가 이를 따라가 저장소 루트를
+  # paddock 패키지로 한 번 더 넣는다. paddock-shell은 배포 번들(lib)에 이미 포함돼 있어 빼도 된다.
+  - "!**/node_modules/paddock/**"
 
 mac:
   target: dmg

@@ -35,7 +35,7 @@ jobs:
       - run: npm run package:${{ matrix.target }}
       - uses: actions/upload-artifact@v4
         with:
-          name: herdr-terminal-${{ matrix.target }}-${{ matrix.arch }}
+          name: paddock-${{ matrix.target }}-${{ matrix.arch }}
           path: |
             desktop/dist/*.dmg
             desktop/dist/*.exe
@@ -53,6 +53,6 @@ jobs:
         with:
           path: installers
           merge-multiple: true
-      - run: gh release create "$GITHUB_REF_NAME" installers/* --repo "$GITHUB_REPOSITORY" --title "Herdr Terminal $GITHUB_REF_NAME" --generate-notes
+      - run: gh release create "$GITHUB_REF_NAME" installers/* --repo "$GITHUB_REPOSITORY" --title "Paddock $GITHUB_REF_NAME" --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}

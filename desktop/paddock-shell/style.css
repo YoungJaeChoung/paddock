@@ -1,0 +1,137 @@
+/* 창 배치는 위젯 수명 주기로 관리하고 공통 조작 요소의 스타일을 확장한다. */
+.paddock-shell { color: #d9e0e2; background: #0d1115; font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.paddock-shell .sidebar { min-width: 246px; max-width: 246px; display: flex; flex-direction: column; overflow: hidden; }
+.paddock-shell .statusbar { min-height: 27px; max-height: 27px; }
+.paddock-shell #theia-main-content-panel { background: #0d1115; }
+.paddock-shell .terminal-container { padding: 14px 20px; }
+
+/* 위쪽 줄: 작업 폴더 밖의 추가 터미널만 둔다. 높이는 28px로 낮춰 본문을 넓힌다. */
+.paddock-shell .paddock-tabbar { display: flex; align-items: flex-end; min-height: 28px; max-height: 28px; background: #141b1f; border-bottom: 1px solid #263036; -webkit-app-region: drag; }
+.paddock-shell .window-controls-space { display: none; }
+.paddock-shell.is-macos .window-controls-space { display: block; flex: 0 0 92px; height: 100%; }
+.paddock-shell .tab-strip-label { align-self: stretch; display: flex; align-items: center; padding: 0 12px; border-left: 1px solid #263036; border-right: 1px solid #263036; color: #8e9da2; font-size: 10px; white-space: nowrap; }
+.paddock-shell .paddock-tabbar .tab-strip { display: flex; flex: 0 1 auto; min-width: 0; height: 28px; align-items: flex-end; overflow-x: auto; border: 0; background: transparent; scrollbar-width: none; }
+.paddock-shell .paddock-tabbar .tab { display: flex; align-items: center; flex: 0 0 170px; min-width: 110px; height: 24px; padding: 0 6px 0 10px; border-radius: 5px 5px 0 0; background: #141c20; color: #8f9fa2; -webkit-app-region: no-drag; }
+.paddock-shell .paddock-tabbar .tab.is-active { background: #20302c; color: #e4eeea; box-shadow: inset 0 -2px #97d4b4; }
+.paddock-shell .tab-select { flex: 1; min-width: 0; overflow: hidden; border: 0; background: transparent; color: inherit; font-size: 12px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.paddock-shell .tab-close { display: grid; place-items: center; width: 18px; height: 18px; border: 0; border-radius: 4px; background: transparent; color: #708184; }
+.paddock-shell .tab-close:hover { background: #37413f; color: #ecf1ee; }
+.paddock-shell .tab-actions { display: flex; flex: none; align-items: center; align-self: center; padding: 0 6px; gap: 2px; -webkit-app-region: no-drag; }
+.paddock-shell .tab-actions button { display: grid; place-items: center; width: 24px; height: 22px; border: 0; border-radius: 5px; color: #9aaca5; background: transparent; }
+.paddock-shell .tab-actions button:hover { background: #263830; color: #d6f1e1; }
+.paddock-shell .window-drag-space { flex: 1 0 72px; height: 100%; }
+.paddock-shell #shell-menu { position: fixed; inset: 28px auto auto 0; margin: 0; min-width: 220px; padding: 6px; border: 1px solid #39534a; border-radius: 8px; background: #17211e; color: #d9e0e2; box-shadow: 0 12px 35px #0007; -webkit-app-region: no-drag; }
+.paddock-shell .shell-option { display: block; width: 100%; padding: 8px 10px; border: 0; border-radius: 4px; background: transparent; color: inherit; text-align: left; }
+.paddock-shell .shell-option:hover, .paddock-shell .shell-option:focus-visible { background: #2b4437; }
+
+/* 사이드바 위 가로 보기 줄(Cursor와 같은 자리). 세로 레일과 달리 폭을 쓰지 않는다. */
+.paddock-shell .view-bar { display: flex; flex: none; align-items: center; gap: 4px; height: 36px; padding: 0 8px; border-bottom: 1px solid #202a2f; }
+.paddock-shell .view-button { position: relative; display: grid; place-items: center; width: 30px; height: 28px; border: 0; border-radius: 6px; background: transparent; color: #7f9094; }
+.paddock-shell .view-button:hover { background: #1e292c; color: #bac8c6; }
+.paddock-shell .view-button.is-active { background: #20332c; color: #a4dec0; }
+.paddock-shell .view-button .codicon { font-size: 16px; }
+.paddock-shell .view-badge { position: absolute; top: 2px; left: 17px; min-width: 12px; height: 12px; padding: 0 3px; border-radius: 6px; background: #4d8fd6; color: #fff; font-size: 8px; font-weight: 700; line-height: 12px; }
+.paddock-shell .view-host { flex: 1; min-height: 0; overflow: auto; }
+.paddock-shell .view-host[hidden] { display: none; }
+.paddock-shell .view-host > .theia-view-container { height: 100%; }
+
+/* Work 보기: 작업 폴더 → 작업 터미널 트리와 선택한 폴더의 파일. */
+.paddock-shell .section-header { display: flex; align-items: center; gap: 4px; width: 100%; height: 30px; padding: 0 10px 0 8px; border: 0; border-bottom: 1px solid #202a2f; background: transparent; color: #a8b7b3; font-size: 11px; font-weight: 700; letter-spacing: .3px; text-align: left; }
+.paddock-shell .work-list { padding: 4px 0; }
+.paddock-shell .work-row { display: flex; align-items: center; width: 100%; min-height: 28px; padding-right: 8px; border: 0; border-left: 2px solid transparent; background: transparent; color: #98a7ab; text-align: left; }
+.paddock-shell .work-row:hover { background: #1b282b; }
+.paddock-shell .row-main { display: flex; flex: 1; align-items: center; gap: 5px; min-width: 0; height: 28px; padding: 0 0 0 8px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
+.paddock-shell .folder-row { color: #b4c2c4; }
+.paddock-shell .folder-row.is-current { background: #172320; color: #d6f1e1; font-weight: 600; }
+.paddock-shell .terminal-row .row-main { padding-left: 34px; }
+.paddock-shell .terminal-row.is-current { border-left-color: #8ccfb0; background: #20302c; color: #d6f1e1; }
+.paddock-shell .row-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.paddock-shell .row-suffix, .paddock-shell .row-meta { flex: none; color: #637378; font-size: 11px; }
+.paddock-shell .row-meta { max-width: 70px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.paddock-shell .prompt-mark { font-family: ui-monospace, monospace; font-size: 11px; color: #7f9094; }
+.paddock-shell .row-action { display: none; place-items: center; width: 20px; height: 20px; margin-left: 4px; border: 0; border-radius: 4px; background: transparent; color: #9aaca5; }
+.paddock-shell .work-row:hover .row-action, .paddock-shell .row-action:focus-visible { display: grid; }
+.paddock-shell .row-action:hover { background: #2f463b; color: #d6f1e1; }
+.paddock-shell .more-row { gap: 6px; padding-left: 34px; color: #a6c4b6; font-size: 12px; }
+.paddock-shell .new-work { display: flex; flex-wrap: wrap; align-items: center; column-gap: 6px; width: 100%; padding: 6px 12px 6px 14px; border: 0; border-top: 1px solid #202a2f; background: transparent; color: #8e9da2; font-size: 12px; text-align: left; }
+.paddock-shell .new-work:hover { background: #1b2824; color: #d6f1e1; }
+.paddock-shell .new-work-path { flex-basis: 100%; padding-left: 20px; color: #637378; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.paddock-shell .work-empty { margin: 0; padding: 6px 14px; color: #8e9da2; font-size: 12px; }
+.paddock-shell .work-steps { margin: 0; padding: 0 14px 6px 32px; color: #8e9da2; font-size: 12px; line-height: 1.5; }
+.paddock-shell .file-list { padding: 4px 0; }
+.paddock-shell .file-row { display: flex; align-items: center; gap: 5px; width: 100%; height: 26px; padding-right: 12px; border: 0; background: transparent; color: #98a7ab; text-align: left; }
+.paddock-shell .file-row.is-file .codicon-file { margin-left: 18px; }
+.paddock-shell .file-row:hover { background: #1b282b; color: #dce9e4; }
+.paddock-shell .file-row.is-current { background: #1a2622; color: #d6f1e1; }
+
+/* 폴더 메뉴. 빼기는 붉은 글자와 결과 안내로 알린다. */
+.paddock-menu { position: fixed; inset: auto; margin: 0; min-width: 236px; padding: 6px; border: 1px solid #39534a; border-radius: 8px; background: #17211e; color: #d9e0e2; box-shadow: 0 14px 40px #000b; font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.paddock-menu .menu-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 4px; background: transparent; color: inherit; text-align: left; }
+.paddock-menu .menu-item:hover { background: #2b4437; }
+.paddock-menu .menu-item.is-danger { color: #e9998d; }
+.paddock-menu .menu-note { margin: 0; padding: 0 10px 6px 34px; color: #8e9da2; font-size: 11px; }
+
+/* 본문 칸의 탭 줄은 현재 항목 하나만 보이는 경로 줄로 쓴다. */
+.paddock-shell #theia-main-content-panel .lm-TabBar { position: relative; min-height: 30px; max-height: 30px; background: #161c1f; border-bottom: 1px solid #202a2f; }
+.paddock-shell #theia-main-content-panel .lm-TabBar > :not(.path-bar) { visibility: hidden; }
+.paddock-shell .path-bar { position: absolute; inset: 0; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 16px; color: #a8b7b3; font-size: 12px; white-space: nowrap; }
+.paddock-shell .path-bar.is-active { background: #1b2427; box-shadow: inset 0 -2px #97d4b4; }
+.paddock-shell .path-bar .codicon { font-size: 13px; color: #7f9094; }
+.paddock-shell .path-bar.is-active > .codicon:first-child { color: #a4dec0; }
+.paddock-shell .path-folder { font-weight: 600; color: #d6f1e1; }
+.paddock-shell .path-item { color: #d9e0e2; overflow: hidden; text-overflow: ellipsis; }
+.paddock-shell .path-meta { color: #637378; font-size: 11px; }
+.paddock-shell .path-space { flex: 1; }
+.paddock-shell .path-branch { color: #8e9da2; font-size: 11px; margin-right: 6px; }
+.paddock-shell .path-actions { display: flex; gap: 2px; }
+.paddock-shell .path-action { display: grid; place-items: center; width: 22px; height: 22px; border: 0; border-radius: 4px; background: transparent; color: #8e9da2; }
+.paddock-shell .path-action:hover { background: #263830; color: #d6f1e1; }
+
+/* 상태 줄: 왼쪽 원격 표시·PADDOCK, 오른쪽 상태·메모리. */
+.paddock-shell .statusbar { display: flex; align-items: stretch; justify-content: space-between; padding: 0 13px 0 0; border-top: 1px solid #28382f; background: #141e1a; color: #91ac9e; font-size: 10px; }
+.paddock-shell .status-left, .paddock-shell .status-right { display: flex; align-items: center; gap: 12px; }
+.paddock-shell .remote-indicator { display: flex; align-items: center; gap: 5px; height: 100%; padding: 0 8px; border: 0; background: #1f3329; color: #b5d7bd; font-size: 10px; }
+.paddock-shell .remote-indicator:hover { background: #2b4437; }
+.paddock-shell .remote-indicator.is-connected { background: #2f6f4f; color: #e6fff0; font-weight: 600; }
+.paddock-shell .ai-usage { display: flex; align-items: stretch; align-self: stretch; gap: 12px; }
+/* 묶음이 상태 줄 높이를 다 차지해야 Claude 묶음(끄기 버튼)의 누르는 자리와 hover 배경이 줄 높이만큼 된다. */
+.paddock-shell .status-right > .usage-group { align-self: stretch; }
+/* 출처 묶음(Claude·Codex·Memory): 앞에 가는 구분선, 표지·이름 한 번, 그 뒤 창별 게이지. */
+.paddock-shell .usage-group { display: flex; align-items: center; gap: 5px; position: relative; height: 100%; padding: 0 2px 0 16px; border: 0; background: transparent; color: inherit; font: inherit; }
+.paddock-shell .usage-group::before { content: ""; position: absolute; left: 0; top: 50%; width: 1px; height: 14px; margin-top: -7px; background: #3a5046; }
+.paddock-shell button.usage-group { cursor: pointer; }
+.paddock-shell button.usage-group:hover { background: #1a2822; }
+.paddock-shell .usage-group .meter { margin-left: 10px; }
+.paddock-shell .usage-group .source-name + .meter { margin-left: 4px; }
+/* 표지는 모두 무채색이다 — 색은 막대·%의 사용량 수준(호박·빨강)에만 쓴다. 브랜드 주황은 경고색으로 오인됐다. */
+.paddock-shell .source-mark { font-size: 10px; line-height: 1; color: #aebdb5; }
+.paddock-shell .usage-group[data-source="claude"] .source-mark { font-size: 11px; font-weight: 700; }
+.paddock-shell .source-name { color: #c9d4ce; font-size: 10px; }
+.paddock-shell .usage-group[data-source="memory"] .source-name { color: #91ac9e; }
+/* 게이지: 채워진 막대가 사용량, 빈 부분이 남은 양. 75% 이상 호박색, 90% 이상 붉은색. */
+.paddock-shell .meter { display: flex; align-items: center; gap: 5px; border: 0; padding: 0; background: transparent; color: inherit; font: inherit; }
+.paddock-shell button.meter { cursor: pointer; }
+.paddock-shell .meter-label { color: #7f948a; font-family: ui-monospace, monospace; font-size: 10px; }
+.paddock-shell .meter-bar { position: relative; width: 28px; height: 4px; border-radius: 3px; background: #243a30; overflow: hidden; }
+.paddock-shell .meter[data-meter="memory"] .meter-bar { width: 36px; }
+.paddock-shell .meter-fill { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 3px; background: #89cbb1; }
+.paddock-shell .meter-percent { font-family: ui-monospace, monospace; font-size: 10px; color: #b5d7bd; }
+.paddock-shell .meter.is-high .meter-fill { background: #e5bf83; }
+.paddock-shell .meter.is-high .meter-percent { color: #e5bf83; }
+.paddock-shell .meter.is-critical .meter-fill { background: #e9998d; }
+.paddock-shell .meter.is-critical .meter-percent { color: #e9998d; }
+.paddock-shell .meter.is-empty .meter-percent { color: #637378; }
+.paddock-shell .usage-toggle { display: flex; align-items: center; gap: 4px; height: 18px; padding: 0 7px; border: 1px solid #39534a; border-radius: 3px; background: transparent; color: #b5d7bd; font-size: 10px; }
+.paddock-shell .usage-toggle:hover { background: #1f3329; }
+.paddock-shell #statusbar-right { display: flex; align-items: center; gap: 12px; }
+.paddock-shell .save-action { border: 0; padding: 2px 8px; border-radius: 3px; background: #284535; color: #c5ebd0; font: inherit; }
+.paddock-shell button:disabled { opacity: .5; cursor: wait; }
+.paddock-shell .new-work.is-new-folder { margin: 4px 8px; width: calc(100% - 16px); border: 1px solid #39534a; border-radius: 5px; background: #1b2824; color: #d6f1e1; font-weight: 600; }
+.paddock-shell .new-work.is-new-folder .codicon { color: #a4dec0; }
+.paddock-shell .new-work.is-new-folder .new-work-path { color: #a6c4b6; font-weight: 400; }
+.paddock-shell .view-host.is-drop-target { outline: 2px dashed #6ca987; outline-offset: -4px; background: #16211d; }
+/* 에이전트가 끝났는데 아직 안 본 터미널: 줄·탭에 초록 점. 그 터미널을 열면 사라진다. */
+.paddock-shell .terminal-row.is-done .row-meta { color: #8ccfb0; }
+.paddock-shell .terminal-row.is-done .row-meta::before,
+.paddock-shell .tab.is-done .tab-select::after { content: ""; display: inline-block; width: 6px; height: 6px; margin: 0 5px 1px 0; border-radius: 50%; background: #8ccfb0; vertical-align: middle; }
+.paddock-shell .tab.is-done .tab-select::after { margin: 0 0 1px 6px; }

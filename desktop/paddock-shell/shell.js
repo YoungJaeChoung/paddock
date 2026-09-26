@@ -9,14 +9,14 @@ const markup = require('./shell-markup');
 const SIDEBAR_WIDTH = 246;
 
 /**
- * Herdr가 창 틀(추가 터미널 줄·사이드바·상태 줄)을 그리고 본문은 Theia 편집 영역을 쓴다.
+ * Paddock가 창 틀(추가 터미널 줄·사이드바·상태 줄)을 그리고 본문은 Theia 편집 영역을 쓴다.
  *
  * 본문은 여러 칸으로 나눌 수 있게 multiple-document 모드로 둔다. 칸마다 생기는 탭 줄은
  * 현재 항목 하나만 보이는 경로 줄로 꾸민다(workspace.js가 내용을 채운다).
  */
-class HerdrShell extends ApplicationShell {
+class PaddockShell extends ApplicationShell {
     createLayout() {
-        this.addClass('herdr-shell');
+        this.addClass('paddock-shell');
         // macOS 창 버튼이 위쪽 줄 왼쪽에 겹치므로 그 자리를 비울지 CSS가 판단한다.
         this.toggleClass('is-macos', isOSX);
         this.mainPanel.mode = 'multiple-document';
@@ -51,5 +51,5 @@ class HerdrShell extends ApplicationShell {
         await super.addWidget(widget, target);
     }
 }
-decorate(injectable(), HerdrShell);
-module.exports = { HerdrShell };
+decorate(injectable(), PaddockShell);
+module.exports = { PaddockShell };

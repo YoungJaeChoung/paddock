@@ -1,13 +1,13 @@
-// 실행 중인 Herdr(시험용 설정, --remote-debugging-port)를 CDP로 조작해 작업 폴더 흐름을 확인한다.
-// 사용: HERDR_CDP_PORT=9333 HERDR_SMOKE_REPO=/path/to/git/repo node scripts/smoke-shell.cjs
+// 실행 중인 Paddock(시험용 설정, --remote-debugging-port)를 CDP로 조작해 작업 폴더 흐름을 확인한다.
+// 사용: PADDOCK_CDP_PORT=9333 PADDOCK_SMOKE_REPO=/path/to/git/repo node scripts/smoke-shell.cjs
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
 async function main() {
-    const port = process.env.HERDR_CDP_PORT;
-    const repo = process.env.HERDR_SMOKE_REPO || path.join(__dirname, '..', '..');
-    assert(port, '별도의 시험 설정으로 실행한 앱의 HERDR_CDP_PORT를 지정하세요.');
+    const port = process.env.PADDOCK_CDP_PORT;
+    const repo = process.env.PADDOCK_SMOKE_REPO || path.join(__dirname, '..', '..');
+    assert(port, '별도의 시험 설정으로 실행한 앱의 PADDOCK_CDP_PORT를 지정하세요.');
     const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
     const target = targets.find((item) => item.type === 'page');
     const socket = new WebSocket(target.webSocketDebuggerUrl);
@@ -68,7 +68,7 @@ async function main() {
         text,
         keyCode,
     ) {
-        // Control+Shift 조합을 문서에 보내 Herdr 단축키를 누른다.
+        // Control+Shift 조합을 문서에 보내 Paddock 단축키를 누른다.
         for (const type of ['rawKeyDown', 'keyUp']) {
             await send('Input.dispatchKeyEvent', { type, modifiers: 2 | 8, key: text, code, windowsVirtualKeyCode: keyCode });
         }
@@ -93,10 +93,10 @@ async function main() {
     const untilPrompts = () => until(`${shell}.widgets.filter(w => w.id.startsWith('terminal-') && w.isVisible).every(w => { const b = w.term.buffer.active; for (let i = 0; i < b.length; i++) { if (/[$%#>] *$/.test(b.getLine(i).translateToString(true))) return true; } return false; })`, 120);
     try {
         // Step 1: 창 틀 — 레일 없음, 보기 줄 3개, 추가 터미널 줄, 상태 줄 메모리.
-        assert(await evaluate('!!document.querySelector(".herdr-shell")'));
+        assert(await evaluate('!!document.querySelector(".paddock-shell")'));
         assert.equal(await evaluate('document.querySelectorAll(".activity-rail, .rail-button").length'), 0);
         assert.equal(await evaluate('document.querySelectorAll(".view-bar [data-view]").length'), 3);
-        assert.equal(await evaluate('Math.round(document.querySelector(".herdr-tabbar").getBoundingClientRect().height)'), 28);
+        assert.equal(await evaluate('Math.round(document.querySelector(".paddock-tabbar").getBoundingClientRect().height)'), 28);
         await until('/^\\d+%$/.test(document.querySelector("[data-meter=memory] .meter-percent").textContent)');
         // AI 사용량: Claude는 첫 실행에 켜져 게이지(값이 아직 없으면 —)나 켜기 버튼 하나로 선다.
         // 값이 있는 게이지는 채움 폭이 숫자와 같고, 말풍선이 남은 양을 말한다.
@@ -121,9 +121,9 @@ async function main() {
         await until(`document.querySelector(".new-work")?.dataset.followFolder === ${JSON.stringify(repoKey)}`);
         await capture('2-follow-folder');
         // 터미널 글자를 선택하면 바로 클립보드에 복사된다(terminal.integrated.copyOnSelection).
-        await evaluate(`${shell}.currentWidget.sendText('echo HERDR_COPY_CHECK\\n')`);
-        await until(`(() => { const b = ${shell}.currentWidget.term.buffer.active; for (let i = 0; i < b.length; i++) { if (b.getLine(i).translateToString(true) === 'HERDR_COPY_CHECK') { ${shell}.currentWidget.term.select(0, i, 16); return true; } } return false; })()`);
-        await until(`navigator.clipboard.readText().then(text => text === 'HERDR_COPY_CHECK')`);
+        await evaluate(`${shell}.currentWidget.sendText('echo PADDOCK_COPY_CHECK\\n')`);
+        await until(`(() => { const b = ${shell}.currentWidget.term.buffer.active; for (let i = 0; i < b.length; i++) { if (b.getLine(i).translateToString(true) === 'PADDOCK_COPY_CHECK') { ${shell}.currentWidget.term.select(0, i, 16); return true; } } return false; })()`);
+        await until(`navigator.clipboard.readText().then(text => text === 'PADDOCK_COPY_CHECK')`);
         await evaluate('document.querySelector(".new-work").click()');
         await until(`document.querySelector('.folder-row[data-folder=${JSON.stringify(repoKey)}]')`);
         await until('document.querySelector(".terminal-row.is-current")');
@@ -159,7 +159,7 @@ async function main() {
         // Step 6: 보기 줄 — Source control(저장소·변경·본문 비교), Extensions(추천·검색)가 사이드바 안에 그려진다.
         await evaluate('document.querySelector("[data-view=scm]").click()');
         await until('document.querySelector("[data-host=scm] .theia-view-container:not(.lm-mod-hidden)")?.getBoundingClientRect().height > 100');
-        await until('document.querySelector("[data-host=scm]").innerText.includes("herdr-terminal")');
+        await until('document.querySelector("[data-host=scm]").innerText.includes("paddock")');
         await evaluate(`[...document.querySelectorAll('[data-host=scm] .scmItem, [data-host=scm] .theia-scm-resource')].find(n => n.textContent.includes('README.md') || n.textContent.includes('.md'))?.click()`);
         await capture('8-source-control');
         await evaluate('document.querySelector("[data-view=extensions]").click()');
@@ -175,16 +175,16 @@ async function main() {
         const folderAction = `document.querySelector('.folder-row[data-folder=${JSON.stringify(repoKey)}] .row-action')`;
         await until(folderAction);
         await evaluate(`${folderAction}.click()`);
-        await until('document.querySelector(".herdr-menu .menu-note")');
+        await until('document.querySelector(".paddock-menu .menu-note")');
         await capture('6-folder-menu');
-        await evaluate(`[...document.querySelectorAll('.herdr-menu .menu-item')].find(n => n.textContent.includes('Rename in list')).click()`);
+        await evaluate(`[...document.querySelectorAll('.paddock-menu .menu-item')].find(n => n.textContent.includes('Rename in list')).click()`);
         await until('document.querySelector(".dialogBlock input")');
-        await evaluate(`(() => { const input = document.querySelector('.dialogBlock input'); input.value = 'herdr app'; input.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('.dialogBlock .theia-button.main').click(); })()`);
-        await until(`document.querySelector('.folder-row[data-folder=${JSON.stringify(repoKey)}] .row-name')?.textContent === 'herdr app'`);
+        await evaluate(`(() => { const input = document.querySelector('.dialogBlock input'); input.value = 'paddock app'; input.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('.dialogBlock .theia-button.main').click(); })()`);
+        await until(`document.querySelector('.folder-row[data-folder=${JSON.stringify(repoKey)}] .row-name')?.textContent === 'paddock app'`);
         const before = await evaluate(n_terminals);
         await evaluate(`${folderAction}.click()`);
-        await until('document.querySelector(".herdr-menu .menu-note")');
-        await evaluate(`[...document.querySelectorAll('.herdr-menu .menu-item')].find(n => n.textContent.includes('Remove from list')).click()`);
+        await until('document.querySelector(".paddock-menu .menu-note")');
+        await evaluate(`[...document.querySelectorAll('.paddock-menu .menu-item')].find(n => n.textContent.includes('Remove from list')).click()`);
         await until('document.querySelector(".dialogBlock .theia-button.main")');
         await evaluate('document.querySelector(".dialogBlock .theia-button.main").click()');
         await until(`!document.querySelector('.folder-row[data-folder=${JSON.stringify(repoKey)}]')`);
@@ -198,10 +198,10 @@ async function main() {
 
         // Step 7b: 보고 있지 않은 터미널의 에이전트가 오래 일하다 멈추면 소리와 완료 표시(초록 점)가 붙고, 그 터미널을 열면 지워진다.
         // 실제 에이전트 대신 이름이 claude인 가짜 프로그램(7초 스피너 뒤 입력 대기)을 쓴다.
-        const fakeBin = await fs.mkdtemp(path.join(require('node:os').tmpdir(), 'herdr-fake-agent-'));
+        const fakeBin = await fs.mkdtemp(path.join(require('node:os').tmpdir(), 'paddock-fake-agent-'));
         await fs.writeFile(path.join(fakeBin, 'claude'), '#!/bin/bash\necho ready\nwhile read -r line; do end=$((SECONDS+7)); while [ $SECONDS -lt $end ]; do printf "\\r working"; sleep 0.15; done; printf "\\r done\\n> "; done\n', { mode: 0o755 });
-        const workspace = service('HerdrWorkspace');
-        await evaluate(`(() => { window.__herdrRings = 0; const hw = ${workspace}; const play = hw.playDoneSound.bind(hw); hw.playDoneSound = () => { window.__herdrRings += 1; play(); }; })()`);
+        const workspace = service('PaddockWorkspace');
+        await evaluate(`(() => { window.__paddockRings = 0; const hw = ${workspace}; const play = hw.playDoneSound.bind(hw); hw.playDoneSound = () => { window.__paddockRings += 1; play(); }; })()`);
         const firstTerminal = await evaluate(`${shell}.widgets.find(w => w.id.startsWith('terminal-') && w.isVisible).id`);
         await evaluate(`${workspace}.newWorkTerminal({ folderKey: ${JSON.stringify(homeKey)} }).then(() => true)`);
         const agentId = await evaluate(`${workspace}.currentWidget().id`);
@@ -211,7 +211,7 @@ async function main() {
         await evaluate(`(() => { const t = ${shell}.getWidgetById('${agentId}'); t.sendText('fix the bug\\r'); t.onDataEmitter.fire('fix the bug\\r'); })()`);
         await evaluate(`${shell}.activateWidget('${firstTerminal}').then(() => true)`);
         await until(`document.querySelector('.terminal-row[data-widget-id="${agentId}"]')?.classList.contains('is-done')`, 150);
-        assert.equal(await evaluate('window.__herdrRings'), 1);
+        assert.equal(await evaluate('window.__paddockRings'), 1);
         await capture('12-agent-done');
         await evaluate(`${shell}.activateWidget('${agentId}').then(() => true)`);
         await until(`!document.querySelector('.terminal-row[data-widget-id="${agentId}"]')?.classList.contains('is-done')`);

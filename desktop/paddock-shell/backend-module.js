@@ -14,7 +14,7 @@ const agent = require('./agent-model');
 const N_TAIL_BYTES = 512 * 1024;
 
 function usageDirectory() {
-    const directory = path.join(process.env.THEIA_CONFIG_DIR || path.join(os.homedir(), '.herdr', 'config'), 'usage');
+    const directory = path.join(process.env.THEIA_CONFIG_DIR || path.join(os.homedir(), '.paddock', 'config'), 'usage');
     fs.mkdirSync(directory, { recursive: true });
     return directory;
 }
@@ -98,7 +98,7 @@ function foregroundArgv(
 }
 
 /**
- * Herdr 상태 줄을 실행할 명령. PATH의 node를 쓰고, 없으면(macOS·Linux) 앱의 Electron을 Node로 돌린다.
+ * Paddock 상태 줄을 실행할 명령. PATH의 node를 쓰고, 없으면(macOS·Linux) 앱의 Electron을 Node로 돌린다.
  * Windows에서 node가 없으면 명령을 만들지 못한다(null).
  */
 function statusLineCommand(
@@ -116,22 +116,22 @@ function statusLineCommand(
 }
 
 /**
- * `GET /herdr/memory` → `{ percent, total, free }`.
- * `GET /herdr/usage` → `{ claude: { state, windows, updatedAt }, codex: { windows, updatedAt } }`.
- * `GET /herdr/foreground?pids=1,2` → `{ "1": "claude", "2": "bash" }` 셸 pid별 실행 중 프로그램 이름(모르면 null).
- * `POST /herdr/usage/claude?enabled=true|false` → Claude Code 설정에 Herdr 상태 줄을 넣거나 원래대로 되돌린다.
+ * `GET /paddock/memory` → `{ percent, total, free }`.
+ * `GET /paddock/usage` → `{ claude: { state, windows, updatedAt }, codex: { windows, updatedAt } }`.
+ * `GET /paddock/foreground?pids=1,2` → `{ "1": "claude", "2": "bash" }` 셸 pid별 실행 중 프로그램 이름(모르면 null).
+ * `POST /paddock/usage/claude?enabled=true|false` → Claude Code 설정에 Paddock 상태 줄을 넣거나 원래대로 되돌린다.
  * Claude의 `state`는 'unset'(아직 정한 적 없음)·'on'·'off'다.
  */
-class HerdrStatusRoutes {
+class PaddockStatusRoutes {
     configure(
         app,
     ) {
-        app.get('/herdr/memory', (request, response) => {
+        app.get('/paddock/memory', (request, response) => {
             const total = os.totalmem();
             const free = os.freemem();
             response.json({ percent: memoryPercent(total, free), total, free });
         });
-        app.get('/herdr/foreground', (request, response) => {
+        app.get('/paddock/foreground', (request, response) => {
             const names = {};
             for (const pid of String(request.query.pids || '').split(',').filter(value => /^\d+$/.test(value))) {
                 const argv = foregroundArgv(Number(pid));
@@ -139,7 +139,7 @@ class HerdrStatusRoutes {
             }
             response.json(names);
         });
-        app.get('/herdr/usage', (request, response) => {
+        app.get('/paddock/usage', (request, response) => {
             const directory = usageDirectory();
             const state = readJson(path.join(directory, 'state.json'), {}).claude || 'unset';
             const claudeFile = readJson(path.join(directory, 'claude.json'), null);
@@ -155,7 +155,7 @@ class HerdrStatusRoutes {
                 codex,
             });
         });
-        app.post('/herdr/usage/claude', (request, response) => {
+        app.post('/paddock/usage/claude', (request, response) => {
             const { enabled } = request.query;
             if (enabled !== 'true' && enabled !== 'false') {
                 // 값이 빠진 요청을 "끄기"로 오해해 사용자 설정을 바꾸지 않는다.
@@ -178,15 +178,15 @@ class HerdrStatusRoutes {
         const previousFile = path.join(directory, 'previous-statusline.json');
         const script = path.join(directory, 'claude-statusline.cjs');
         // 앱을 옮기거나 업데이트해도 Claude Code가 부르는 경로가 바뀌지 않게 스크립트를 사용량 폴더로 복사해 둔다.
-        // 백엔드는 하나의 번들로 묶이므로 원본은 앱 폴더의 herdr-shell에서 찾는다(설치 파일에도 포함된다).
+        // 백엔드는 하나의 번들로 묶이므로 원본은 앱 폴더의 paddock-shell에서 찾는다(설치 파일에도 포함된다).
         const appPath = process.env.THEIA_APP_PROJECT_PATH || process.cwd();
-        fs.copyFileSync(path.join(appPath, 'herdr-shell', 'claude-statusline.cjs'), script);
+        fs.copyFileSync(path.join(appPath, 'paddock-shell', 'claude-statusline.cjs'), script);
         const command = statusLineCommand(script, path.join(directory, 'claude.json'), previousFile);
         let settings = {};
         if (fs.existsSync(settingsPath)) {
             settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
             // 처음 바꿀 때 한 번만 원본을 남긴다.
-            if (!fs.existsSync(`${settingsPath}.herdr-backup`)) fs.copyFileSync(settingsPath, `${settingsPath}.herdr-backup`);
+            if (!fs.existsSync(`${settingsPath}.paddock-backup`)) fs.copyFileSync(settingsPath, `${settingsPath}.paddock-backup`);
         }
         if (enabled && !command) {
             throw new Error('Node.js is needed to show Claude usage. Install Node.js and try again.');
@@ -206,9 +206,9 @@ class HerdrStatusRoutes {
         return { state: enabled ? 'on' : 'off' };
     }
 }
-decorate(injectable(), HerdrStatusRoutes);
+decorate(injectable(), PaddockStatusRoutes);
 
 exports.default = new ContainerModule((bind) => {
-    bind(HerdrStatusRoutes).toSelf().inSingletonScope();
-    bind(BackendApplicationContribution).toService(HerdrStatusRoutes);
+    bind(PaddockStatusRoutes).toSelf().inSingletonScope();
+    bind(BackendApplicationContribution).toService(PaddockStatusRoutes);
 });

@@ -1,13 +1,13 @@
 {
   "private": true,
-  "name": "herdr-terminal-desktop",
+  "name": "paddock-desktop",
   "version": "0.1.0",
   "main": "lib/backend/electron-main.js",
   "theia": {
     "target": "electron",
     "frontend": {
       "config": {
-        "applicationName": "Herdr Terminal",
+        "applicationName": "Paddock",
         "defaultTheme": "dark",
         "preferences": {
           "workbench.colorTheme": "dark",
@@ -77,7 +77,7 @@
     }
   },
   "dependencies": {
-    "@herdr/shell": "file:./herdr-shell",
+    "@paddock/shell": "file:./paddock-shell",
     "@theia/core": "1.75.0",
     "@theia/editor": "1.75.0",
     "@theia/electron": "1.75.0",
@@ -112,7 +112,7 @@
     "package:mac": "node scripts/package.cjs mac",
     "package:win": "node scripts/package.cjs win",
     "download:plugins": "theia download:plugins --rate-limit=15 --parallel=false",
-    "test": "node --test herdr-shell/test/work-model.test.js herdr-shell/test/usage-model.test.js herdr-shell/test/agent-model.test.js"
+    "test": "node --test paddock-shell/test/work-model.test.js paddock-shell/test/usage-model.test.js paddock-shell/test/agent-model.test.js paddock-shell/test/legacy-directory.test.js"
   },
   "theiaPluginsDir": "plugins",
   "theiaPlugins": {

@@ -1,4 +1,4 @@
-// 현재 운영체제용 Herdr Terminal 설치 파일을 desktop/dist/에 만든다.
+// 현재 운영체제용 Paddock 설치 파일을 desktop/dist/에 만든다.
 // 사용: node scripts/package.cjs mac | win
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
