@@ -26,6 +26,8 @@ files:
 
 mac:
   target: dmg
+  # 원본은 resources/icon-mac.svg. 824px 타일을 1024px 캔버스 가운데 둔 macOS 아이콘 격자를 따른다.
+  icon: resources/icon.icns
   category: public.app-category.developer-tools
   # 개발자 인증서 없이 자체 서명한다. Apple Silicon은 서명이 없으면 실행을 거부한다.
   identity: "-"
@@ -33,6 +35,8 @@ mac:
 
 win:
   target: nsis
+  # 원본은 resources/icon-win.svg. Windows는 여백 없이 캔버스를 채운다. 설치 마법사 아이콘도 이 파일을 쓴다.
+  icon: resources/icon.ico
 
 nsis:
   oneClick: false
