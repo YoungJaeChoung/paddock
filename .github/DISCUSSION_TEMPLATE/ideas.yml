@@ -1,0 +1,24 @@
+# 파일 이름(ideas)이 Discussions의 카테고리 이름과 같아야 이 양식이 적용된다.
+title: "[제안] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        마음에 드는 제안에는 추천(▲)을 눌러 주세요. 추천이 많은 제안부터 검토합니다.
+  - type: textarea
+    id: problem
+    attributes:
+      label: 겪는 불편
+      description: 어떤 작업을 하다가 무엇이 불편했는지 적어 주세요. 해결책보다 상황이 더 도움이 됩니다.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: 원하는 동작
+      description: 어떻게 되면 좋을지 적어 주세요.
+  - type: textarea
+    id: workaround
+    attributes:
+      label: 지금 쓰는 우회 방법
+      description: 다른 앱이나 방법으로 대신하고 있다면 적어 주세요.

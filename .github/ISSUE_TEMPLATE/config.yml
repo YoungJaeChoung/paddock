@@ -1,0 +1,9 @@
+# 빈 이슈를 막아 모든 제보가 아래 양식을 거치게 한다. 기능 제안은 Discussions로 보낸다.
+blank_issues_enabled: false
+contact_links:
+  - name: 기능 제안
+    url: https://github.com/YoungJaeChoung/paddock/discussions/new?category=ideas
+    about: 새 기능·개선 아이디어는 Discussions의 Ideas에 올려 주세요. 추천이 많은 제안부터 검토합니다.
+  - name: 질문
+    url: https://github.com/YoungJaeChoung/paddock/discussions/new?category=q-a
+    about: 사용법 질문은 Discussions의 Q&A에 올려 주세요.
