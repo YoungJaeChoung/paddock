@@ -7,6 +7,9 @@ const { CommandContribution } = require('@theia/core/lib/common/command');
 const { PreferenceContribution } = require('@theia/core/lib/common/preferences/preference-schema');
 const { PaddockShell } = require('./shell');
 const { PaddockWorkspace } = require('./workspace');
+const { PaddockPdfOpener } = require('./pdf-viewer');
+const { PaddockBinaryNoticeOpener } = require('./binary-notice');
+const { OpenHandler } = require('@theia/core/lib/browser/opener-service');
 require('./controls.css');
 
 // Paddock 설정. 설정 화면(Preferences)에서 "paddock"로 찾을 수 있다.
@@ -39,5 +42,7 @@ exports.default = new ContainerModule((bind, unbind, isBound, rebind) => {
     bind(FrontendApplicationContribution).toService(PaddockWorkspace);
     bind(CommandContribution).toService(PaddockWorkspace);
     bind(KeybindingContribution).toService(PaddockWorkspace);
+    bind(OpenHandler).toDynamicValue(({ container }) => new PaddockPdfOpener(container)).inSingletonScope();
+    bind(OpenHandler).toDynamicValue(({ container }) => new PaddockBinaryNoticeOpener(container)).inSingletonScope();
     bind(PreferenceContribution).toConstantValue({ schema: PaddockPreferenceSchema });
 });

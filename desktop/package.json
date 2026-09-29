@@ -152,6 +152,7 @@
   "theiaPluginsDir": "plugins",
   "theiaPlugins": {
     "vscode.git": "https://open-vsx.org/api/vscode/git/1.95.3/file/vscode.git-1.95.3.vsix",
-    "vscode.git-base": "https://open-vsx.org/api/vscode/git-base/1.95.3/file/vscode.git-base-1.95.3.vsix"
+    "vscode.git-base": "https://open-vsx.org/api/vscode/git-base/1.95.3/file/vscode.git-base-1.95.3.vsix",
+    "vscode.media-preview": "https://open-vsx.org/api/vscode/media-preview/1.95.3/file/vscode.media-preview-1.95.3.vsix"
   }
 }

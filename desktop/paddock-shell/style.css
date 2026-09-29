@@ -301,3 +301,16 @@ body .theia-button.secondary:hover { background: var(--theia-button-secondaryHov
 .paddock-shell .folder-bar .tab.is-clipped, .paddock-shell .paddock-tabbar .tab.is-clipped { visibility: hidden; }
 /* 탭 위치(offsetLeft)를 탭 줄 스크롤 좌표로 재도록 탭 줄을 위치 기준 요소로 둔다(넘김 버튼·여백만큼 어긋나지 않게). */
 .paddock-shell .folder-tabs, .paddock-shell .paddock-tabbar .tab-strip { position: relative; }
+
+.paddock-pdf { display: flex; height: 100%; background: var(--p-bg, #1e1e1e); }
+.paddock-pdf .paddock-pdf-frame { flex: 1; width: 100%; height: 100%; border: 0; }
+
+.paddock-binary-notice { display: flex; height: 100%; align-items: center; justify-content: center; background: var(--p-bg, #1e1e1e); color: var(--p-fg-soft, #cccccc); }
+.paddock-binary-notice .binary-notice-body { display: flex; max-width: 360px; flex-direction: column; align-items: center; gap: 6px; padding: 16px; text-align: center; }
+.paddock-binary-notice p { margin: 0; }
+.paddock-binary-notice .binary-notice-name { color: var(--p-fg-strong, #ffffff); font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.paddock-binary-notice .binary-notice-size { color: var(--p-fg-muted, #999999); font-size: 12px; }
+.paddock-binary-notice .binary-notice-message { margin-top: 6px; font-size: 12px; }
+.paddock-binary-notice .binary-notice-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 10px; }
+.paddock-binary-notice .binary-notice-action { height: 26px; padding: 0 12px; border: 1px solid var(--p-popup-border, #454545); border-radius: 5px; background: transparent; color: inherit; font-size: 12px; }
+.paddock-binary-notice .binary-notice-action:hover { background: var(--p-hover-bg, #2a2d2e); color: var(--p-fg-strong, #ffffff); }
