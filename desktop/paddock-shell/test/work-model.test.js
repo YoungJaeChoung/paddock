@@ -109,6 +109,18 @@ test('C-work-F4.2: 깨진 저장 값은 빈 목록으로 시작한다', () => {
     assert.deepEqual(model.restore(JSON.stringify({ folders: 3 }), new Set()), model.empty());
 });
 
+test('다른 창의 같은 id 터미널은 목록에 함께 보이되 이 창의 터미널 소속을 바꾸지 않는다', () => {
+    const local = withTerminals('file:///a', ['claude']);
+    const snapshot = { windowId: 'other-window', folders: [{ key: 'file:///b', expanded: false }], terminals: [{ id: 't0', folder: 'file:///b', name: 'codex', program: 'codex' }] };
+    const { state, remote } = model.mergeWorkPresence(local, [snapshot]);
+    assert.deepEqual(state.folders.map(folder => folder.key), ['file:///a', 'file:///b']);
+    assert.deepEqual(model.visibleRows(state, 't0', new Set()).filter(row => row.kind === 'terminal').map(row => row.name), ['claude', 'codex']);
+    assert.equal(model.folderOf(state, 't0'), 'file:///a');
+    assert.equal(model.folderOf(state, 'other-window:t0'), 'file:///b');
+    assert.equal(remote.get('other-window:t0').program, 'codex');
+    assert.equal(local.folders.length, 1);
+});
+
 test('C-work-F5.1: 메모리 사용률은 (전체-가용)/전체를 0~100 정수로 반올림한다', () => {
     assert.equal(model.memoryPercent(16, 9.76), 39);
     assert.equal(model.memoryPercent(0, 0), null);
@@ -143,13 +155,16 @@ test('C-work-F8.2: 그 폴더가 이미 목록에 있으면 새 폴더를 만들
     assert.deepEqual(model.terminalsOf(state, 'file:///repo'), ['t0', 'x']);
 });
 
-test('C-work-F8.3: 이미 작업 폴더에 속한 터미널은 다른 폴더에서 에이전트를 실행해도 옮기지 않는다', () => {
+test('C-work-F8.3: 다른 폴더로 이동해 에이전트를 실행하면 터미널도 현재 폴더로 옮긴다', () => {
     const before = withTerminals('file:///a', ['terminal']);
-    const { state, promoted } = model.promoteAgentTerminals(before, [
+    const { state, promoted, added } = model.promoteAgentTerminals(before, [
         { id: 't0', cwd: 'file:///b', program: 'claude', isAgent: true },
     ]);
-    assert.deepEqual(promoted, []);
-    assert.equal(state, before);
+    assert.deepEqual(promoted, ['t0']);
+    assert.deepEqual(added, ['file:///b']);
+    assert.equal(model.folderOf(state, 't0'), 'file:///b');
+    assert.equal(state.terminals.t0.name, 'claude');
+    assert.equal(model.terminalsOf(state, 'file:///a').length, 0);
 });
 
 test('C-work-F8.4: 에이전트가 아니거나 현재 폴더를 모르는 터미널은 올리지 않는다', () => {

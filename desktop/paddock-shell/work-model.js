@@ -161,7 +161,7 @@ function promoteAgentTerminals(
     const promoted = [];
     const added = [];
     for (const { id, cwd, program, isAgent } of terminals) {
-        if (isAgent && cwd && !folderOf(result, id)) {
+        if (isAgent && cwd && folderOf(result, id) !== normalizeKey(cwd)) {
             const key = normalizeKey(cwd);
             if (!result.folders.some(folder => folder.key === key)) added.push(key);
             result = assignTerminal(result, id, key, program);
@@ -282,6 +282,32 @@ function visibleRows(
     return rows;
 }
 
+/**
+ * 이 창의 작업 목록에 다른 창의 터미널 이름·소속을 합쳐 표시용 목록을 만든다.
+ * 다른 창의 터미널 id에는 창 id를 붙여 이 창의 터미널과 구별한다.
+ */
+function mergeWorkPresence(
+    state,
+    snapshots,
+) {
+    let merged = { folders: [...state.folders], terminals: { ...state.terminals } };
+    const remote = new Map();
+    for (const snapshot of snapshots) {
+        if (typeof snapshot?.windowId !== 'string') continue;
+        for (const folder of snapshot.folders || []) {
+            if (!merged.folders.some(item => item.key === folder.key)) {
+                merged = { ...merged, folders: [...merged.folders, { ...folder, expanded: true }] };
+            }
+        }
+        for (const terminal of snapshot.terminals || []) {
+            const id = `${snapshot.windowId}:${terminal.id}`;
+            merged = assignTerminal(merged, id, terminal.folder, terminal.name);
+            remote.set(id, { program: terminal.program || '', windowId: snapshot.windowId });
+        }
+    }
+    return { state: merged, remote };
+}
+
 function serialize(
     state,
 ) {
@@ -346,6 +372,7 @@ module.exports = {
     tabTarget,
     removeFolder,
     visibleRows,
+    mergeWorkPresence,
     serialize,
     restore,
     memoryPercent,

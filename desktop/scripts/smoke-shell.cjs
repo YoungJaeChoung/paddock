@@ -73,6 +73,17 @@ async function main() {
             await send('Input.dispatchKeyEvent', { type, modifiers: 2 | 8, key: text, code, windowsVirtualKeyCode: keyCode });
         }
     }
+    /** 실제 포인터를 누른 채 초점 변경이 일어나도 첫 클릭이 선택으로 끝나는지 확인한다. */
+    async function mouseClick(
+        selector,
+        duringPress = null,
+    ) {
+        const point = await evaluate(`(() => { const rect = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }; })()`);
+        await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
+        if (duringPress) await evaluate(duringPress);
+        await new Promise(resolve => setTimeout(resolve, 80));
+        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
+    }
     // 다른 창이 OS 포커스를 가져가도 포커스 이벤트가 오게 한다. 없으면 Theia가 현재 위젯을 잃어 새 터미널 확인이 실패한다.
     await send('Emulation.setFocusEmulationEnabled', { enabled: true });
     const captureDirectory = path.join(__dirname, '..', 'captures');
@@ -100,6 +111,12 @@ async function main() {
         assert.equal(await evaluate('document.querySelectorAll(".activity-rail, .rail-button").length'), 0);
         assert.equal(await evaluate('document.querySelectorAll(".view-bar [data-view]").length'), 3);
         assert.equal(await evaluate('Math.round(document.querySelector(".paddock-tabbar").getBoundingClientRect().height)'), 28);
+        assert.equal(await evaluate('document.querySelector(".tab-strip-label") === null'), true);
+        assert.equal(await evaluate('getComputedStyle(document.querySelector(".paddock-tabbar")).backgroundColor === getComputedStyle(document.querySelector(".statusbar")).backgroundColor'), true);
+        if (await evaluate('document.querySelector(".paddock-shell").classList.contains("is-linux")')) {
+            assert.equal(await evaluate('document.querySelectorAll(".window-controls button").length'), 3);
+            assert.equal(await evaluate('Math.round(document.querySelector(".window-minimize").getBoundingClientRect().width)'), 28);
+        }
         await until('/^\\d+%$/.test(document.querySelector("[data-meter=memory] .meter-percent").textContent)');
         // AI 사용량: Claude는 첫 실행에 켜져 게이지(값이 아직 없으면 —)나 켜기 버튼 하나로 선다.
         // 값이 있는 게이지는 채움 폭이 숫자와 같고, 말풍선이 남은 양을 말한다.
@@ -111,11 +128,15 @@ async function main() {
             assert.match(meter.title, /% left/);
         }
         // 첫 실행: 작업 폴더는 에이전트를 실행해야 생기므로 목록은 비어 있고 다음 행동을 안내한다.
-        // 첫 터미널은 맨 위 추가 터미널 줄에 있고, 작업 폴더 탭 줄은 숨어 있다.
+        // 첫 터미널은 맨 위 추가 터미널 줄에 있고, 아래 작업 폴더 탭 줄은 비어 있다.
         await until('document.querySelector(".work-empty")?.textContent.includes("No work folders")');
         await until('document.querySelector(".work-steps")?.textContent.includes("Run claude or codex")');
         await until('document.querySelectorAll("#tab-strip [role=tab]").length === 1');
-        assert.equal(await evaluate('document.querySelector(".folder-bar").classList.contains("lm-mod-hidden")'), true);
+        assert.equal(await evaluate('document.querySelector(".folder-bar").classList.contains("lm-mod-hidden")'), false);
+        assert.equal(await evaluate('document.querySelectorAll(".folder-tabs [role=tab]").length'), 0);
+        assert.equal(await evaluate('document.querySelector(".folder-tab-add").getClientRects().length > 0'), true);
+        assert.equal(await evaluate('document.querySelector(".tab-add").getClientRects().length > 0'), true);
+        assert.equal(await evaluate('document.querySelector(".folder-bar-actions").hidden'), true);
         await untilPrompts();
         await capture('1-first-run');
 
@@ -138,13 +159,21 @@ async function main() {
         await until('document.querySelectorAll("#tab-strip [role=tab]").length === 0');
         await until(`document.querySelector(".folder-bar")?.dataset.folder === ${JSON.stringify(repoKey)} && !document.querySelector(".folder-bar").classList.contains("lm-mod-hidden")`);
         await until(`document.querySelector('.folder-tabs .tab.is-active [role=tab]')?.textContent === 'claude'`);
-        await until('document.querySelector(".path-bar.is-active .path-branch")?.textContent.length > 0');
+        await until('document.querySelector(".folder-bar-branch-name")?.textContent.length > 0');
+        assert.equal(await evaluate('document.querySelector(".folder-tabs .tab-close, .terminal-row .row-action") === null'), true);
+        for (const selector of ['.folder-tabs .tab.is-active', `.terminal-row[data-widget-id="${firstTerminal}"]`]) {
+            await evaluate(`document.querySelector(${JSON.stringify(selector)}).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 320, clientY: 100 }))`);
+            await until('document.querySelector(".paddock-menu:popover-open")?.textContent.includes("Rename terminal")');
+            assert.equal(await evaluate('document.querySelector(".paddock-menu:popover-open").textContent.includes("Close terminal")'), true);
+            await evaluate('document.querySelector(".paddock-menu:popover-open").hidePopover()');
+        }
         await capture('2-agent-promoted');
 
         // 작업 폴더 탭 줄의 ＋는 그 폴더에서 새 작업 터미널을 연다.
         await evaluate('document.querySelector(".folder-tab-add").click()');
         await until('document.querySelectorAll(".folder-tabs [role=tab]").length === 2');
         await until(`document.querySelector('.folder-tabs .tab.is-active [role=tab]')?.textContent === 'terminal 2'`);
+        assert.equal(await evaluate('document.querySelector(".folder-tab-add").getClientRects().length > 0'), true);
         await untilPrompts();
         await capture('3-working');
 
@@ -160,9 +189,24 @@ async function main() {
         await untilPrompts();
         await capture('4-5-split');
 
-        // Step 4: 파일 구획에서 README를 열면 본문 경로 줄이 파일을 가리킨다.
-        await evaluate(`[...document.querySelectorAll('.file-row')].find(n => n.textContent.includes('README.md')).click()`);
-        await until(`document.querySelector('.path-bar.is-active .path-item')?.textContent === 'README.md'`);
+        // Step 4: 파일 구획에서 README를 열면 터미널 옆 오른쪽 칸에 파일이 열린다.
+        await mouseClick(`.terminal-row[data-widget-id=${JSON.stringify(firstTerminal)}] .row-main`, `${workspace}.refresh()`);
+        await until(`${workspace}.currentWidget()?.id === ${JSON.stringify(firstTerminal)}`);
+        const terminalBeforeFile = await evaluate(`${workspace}.currentWidget().id`);
+        const n_panesBeforeFile = await evaluate(`[...${shell}.mainPanel.tabBars()].length`);
+        await mouseClick('.file-row[data-uri$="README.md"]');
+        await until('document.querySelector(".folder-tabs .tab.is-active [role=tab]")?.textContent === "README.md"');
+        assert.equal(await evaluate('document.querySelector(".path-bar.is-active .path-item") === null'), true);
+        assert.equal(await evaluate('Math.round(document.querySelector(".path-bar.is-active").getBoundingClientRect().height)'), 3);
+        await until(`[...${shell}.mainPanel.tabBars()].length === ${n_panesBeforeFile + 1}`);
+        assert.equal(await evaluate(`(() => { const terminal = ${shell}.getWidgetById(${JSON.stringify(terminalBeforeFile)}); const file = ${workspace}.currentWidget(); return terminal.isVisible && ${shell}.getTabBarFor(file) !== ${shell}.getTabBarFor(terminal) && ${shell}.getTabBarFor(file).node.getBoundingClientRect().left > ${shell}.getTabBarFor(terminal).node.getBoundingClientRect().left; })()`), true);
+        await until('document.querySelector(".folder-tabs .tab.is-active [role=tab]")?.textContent === "README.md"');
+        assert.equal(await evaluate('document.querySelectorAll(".folder-tabs [role=tab]").length'), 5);
+        const fileTabId = await evaluate(`${workspace}.currentWidget().id`);
+        await mouseClick(`.folder-tabs [data-widget-id=${JSON.stringify(firstTerminal)}]`);
+        await until(`${workspace}.currentWidget()?.id === ${JSON.stringify(firstTerminal)}`);
+        await mouseClick(`.folder-tabs [data-widget-id=${JSON.stringify(fileTabId)}]`);
+        await until(`${workspace}.currentWidget()?.id === ${JSON.stringify(fileTabId)}`);
 
         // Step 5: 한 폴더에 터미널이 8개를 넘으면 8줄 + "Show N more"로 묶이고 현재 터미널은 보인다.
         for (let n_added = 0; n_added < 7; n_added += 1) {
@@ -175,7 +219,7 @@ async function main() {
         await capture('7-many-terminals');
 
         // Step 6: 보기 줄 — Source control(저장소·변경·본문 비교), Extensions(추천·검색)가 사이드바 안에 그려진다.
-        await evaluate('document.querySelector("[data-view=scm]").click()');
+        await mouseClick('[data-view=scm]');
         await until('document.querySelector("[data-host=scm] .theia-view-container:not(.lm-mod-hidden)")?.getBoundingClientRect().height > 100');
         await until('document.querySelector("[data-host=scm]").innerText.includes("paddock")');
         await evaluate(`[...document.querySelectorAll('[data-host=scm] .scmItem, [data-host=scm] .theia-scm-resource')].find(n => n.textContent.includes('README.md') || n.textContent.includes('.md'))?.click()`);
@@ -209,21 +253,38 @@ async function main() {
         await evaluate('document.querySelector(".dialogBlock .theia-button.main").click()');
         await until(`!document.querySelector('.folder-row[data-folder=${JSON.stringify(repoKey)}]')`);
         await until(`${n_terminals} === ${before - 11}`);
-        // 선택한 폴더를 빼면 작업 폴더 탭 줄은 숨는다.
-        await until('document.querySelector(".folder-bar").classList.contains("lm-mod-hidden")');
+        // 선택한 폴더를 빼도 아래 줄은 남고 작업 탭은 비어 있다.
+        await until('document.querySelectorAll(".folder-tabs [role=tab]").length === 0');
+        assert.equal(await evaluate('document.querySelector(".folder-bar").classList.contains("lm-mod-hidden")'), false);
 
         // 위쪽 ＋는 작업 목록에 들어가지 않는 추가 터미널을 연다.
         const n_rows = await evaluate(`document.querySelectorAll('.terminal-row').length`);
         await evaluate('document.querySelector(".tab-add").click()');
         await until('document.querySelectorAll("#tab-strip [role=tab]").length === 1');
         assert.equal(await evaluate(`document.querySelectorAll('.terminal-row').length`), n_rows);
+        // 터미널 바로 위 ＋도 항상 보인다. 작업 폴더가 없으면 현재 위쪽 터미널의 내부 탭에 연다.
+        assert.equal(await evaluate('document.querySelector(".folder-tab-add").getClientRects().length > 0'), true);
+        const extraCwd = await evaluate(`${workspace}.readCwd(${workspace}.currentWidget())`);
+        await evaluate('document.querySelector(".folder-tab-add").click()');
+        await until('document.querySelectorAll(".folder-tabs [role=tab]").length === 1');
+        assert.equal(await evaluate('document.querySelectorAll("#tab-strip [role=tab]").length'), 1);
+        assert.equal(await evaluate(`${workspace}.workFolderOf(${workspace}.currentWidget())`), null);
+        assert.equal(await evaluate('document.querySelector(".folder-tabs .tab.is-active [role=tab]")?.textContent'), 'terminal 1');
+        assert.equal(await evaluate(`${workspace}.readCwd(${workspace}.currentWidget())`), extraCwd);
+        assert.equal(await evaluate(`document.querySelectorAll('.terminal-row').length`), n_rows);
 
         // Step 7b: 보고 있지 않은 터미널의 에이전트가 오래 일하다 멈추면 소리와 완료 표시(초록 점)가 붙고, 그 터미널을 열면 지워진다.
         // 홈의 추가 터미널에서 에이전트를 실행하므로 홈도 작업 폴더로 올라간다.
         await evaluate(`(() => { window.__paddockRings = 0; const hw = ${workspace}; const play = hw.playDoneSound.bind(hw); hw.playDoneSound = () => { window.__paddockRings += 1; play(); }; })()`);
         const extraTerminal = await evaluate(`${shell}.widgets.find(w => w.id.startsWith('terminal-') && w.isVisible).id`);
+        const topRoot = await evaluate(`${workspace}.selectedTopTerminal`);
         await evaluate(`${workspace}.newExtraTerminal().then(() => true)`);
         const agentId = await evaluate(`${workspace}.currentWidget().id`);
+        await until('document.querySelectorAll(".folder-tabs [role=tab]").length === 0');
+        await evaluate(`${shell}.activateWidget(${JSON.stringify(topRoot)}).then(() => true)`);
+        await until('document.querySelectorAll(".folder-tabs [role=tab]").length === 1');
+        await evaluate(`${shell}.activateWidget(${JSON.stringify(agentId)}).then(() => true)`);
+        await until('document.querySelectorAll(".folder-tabs [role=tab]").length === 0');
         await evaluate(`${shell}.getWidgetById('${agentId}').sendText(${JSON.stringify(`export PATH=${fakeBin}:$PATH; claude\n`)})`);
         await until(`${workspace}.programOf(${shell}.getWidgetById('${agentId}')) === 'claude'`, 60);
         await until(`document.querySelector('.folder-row[data-folder=${JSON.stringify(homeKey)}]')`, 60);
@@ -242,7 +303,35 @@ async function main() {
         await until('document.querySelector(".quick-input-widget")?.style.display !== "none"');
         await capture('11-remote-pick');
         await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
-        console.log('PASS: 창 틀·메모리·AI 사용량 게이지, 첫 실행 빈 목록 안내, 드래그 복사, 에이전트 실행 시 작업 폴더 승격, 작업 폴더 탭 줄 ＋, 분할 단축키, 파일 경로 줄, 많은 터미널 묶기, SCM·확장(추천·검색), 목록 이름 바꾸기·빼기, 추가 터미널, 에이전트 완료 알림, 원격 선택');
+        // 다른 창의 목록 요청이 멈춰도 두 ＋는 각각 자기 창의 터미널을 바로 열어야 한다.
+        await evaluate(`(() => { window.__workPresenceFetch = window.fetch; window.fetch = (input, options) => String(input).includes('/paddock/work-presence') ? new Promise(() => {}) : window.__workPresenceFetch(input, options); })()`);
+        const folderKey = await evaluate('document.querySelector(".folder-bar").dataset.folder');
+        const n_workTabs = await evaluate('document.querySelectorAll(".folder-tabs [role=tab]").length');
+        await evaluate('document.querySelector(".folder-tab-add").click()');
+        await until(`document.querySelectorAll('.folder-tabs [role=tab]').length === ${n_workTabs + 1}`);
+        assert.equal(await evaluate(`${workspace}.workFolderOf(${workspace}.currentWidget())`), folderKey);
+        const newWorkTerminalId = await evaluate(`${workspace}.currentWidget().id`);
+        const n_extraTabs = await evaluate('document.querySelectorAll("#tab-strip [role=tab]").length');
+        assert.equal(await evaluate('document.querySelector(".tab-add").getClientRects().length > 0'), true);
+        await evaluate('document.querySelector(".tab-add").click()');
+        await until(`document.querySelectorAll('#tab-strip [role=tab]').length === ${n_extraTabs + 1}`);
+        assert.equal(await evaluate(`${workspace}.workFolderOf(${workspace}.currentWidget())`), null);
+        const previousTopId = await evaluate('document.querySelector("#tab-strip [role=tab]").dataset.widgetId');
+        const newestTopId = await evaluate('document.querySelector("#tab-strip .tab:last-child [role=tab]").dataset.widgetId');
+        await mouseClick('#tab-strip [role=tab]');
+        await until(`${workspace}.currentWidget()?.id === ${JSON.stringify(previousTopId)}`);
+        await mouseClick('#tab-strip .tab:last-child [role=tab]');
+        await until(`${workspace}.currentWidget()?.id === ${JSON.stringify(newestTopId)}`);
+        await until('document.querySelectorAll(".folder-tabs [role=tab]").length === 0');
+        assert.equal(await evaluate('document.querySelector(".folder-bar").classList.contains("lm-mod-hidden")'), false);
+        assert.equal(await evaluate('document.querySelector(".folder-tab-add").getClientRects().length > 0'), true);
+        assert.equal(await evaluate('document.querySelector(".folder-bar-actions").hidden'), true);
+        await evaluate(`${shell}.activateWidget(${JSON.stringify(newWorkTerminalId)}).then(() => true)`);
+        await until('document.querySelectorAll(".folder-tabs [role=tab]").length > 0');
+        assert.equal(await evaluate('document.querySelector(".folder-tab-add").getClientRects().length > 0'), true);
+        assert.equal(await evaluate('document.querySelector(".folder-bar-actions").hidden'), false);
+        await evaluate('window.fetch = window.__workPresenceFetch; delete window.__workPresenceFetch');
+        console.log('PASS: 창 틀·메모리·AI 사용량 게이지, 첫 실행 빈 목록 안내, 드래그 복사, 에이전트 실행 시 작업 폴더 승격, 작업 폴더 탭 줄 ＋, 분할 단축키, 파일 경로 줄, 많은 터미널 묶기, SCM·확장(추천·검색), 목록 이름 바꾸기·빼기, 추가 터미널, 에이전트 완료 알림, 원격 선택, 목록 동기화 지연 중 두 ＋');
     } finally {
         socket.close();
     }

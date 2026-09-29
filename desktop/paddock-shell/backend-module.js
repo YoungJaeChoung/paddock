@@ -4,11 +4,13 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const express = require('express');
 const { ContainerModule, injectable, decorate } = require('@theia/core/shared/inversify');
 const { BackendApplicationContribution } = require('@theia/core/lib/node/backend-application');
 const { memoryPercent } = require('./work-model');
 const usage = require('./usage-model');
 const agent = require('./agent-model');
+const { WorkPresenceRegistry } = require('./work-presence');
 
 // Codex 세션 기록 끝부분만 읽는다. 마지막 한도 기록은 파일 끝 가까이에 있다.
 const N_TAIL_BYTES = 512 * 1024;
@@ -123,9 +125,26 @@ function statusLineCommand(
  * Claude의 `state`는 'unset'(아직 정한 적 없음)·'on'·'off'다.
  */
 class PaddockStatusRoutes {
+    constructor() {
+        this.workPresence = new WorkPresenceRegistry();
+    }
+
     configure(
         app,
     ) {
+        // 모든 Paddock 창이 한 백엔드에 자신의 목록 정보만 보내고 다른 창의 목록을 받는다.
+        app.post('/paddock/work-presence', express.json({ limit: '64kb' }), (request, response) => {
+            const { windowId, folders, terminals } = request.body || {};
+            if (typeof windowId !== 'string' || !windowId) {
+                response.status(400).json({ error: 'windowId is required' });
+            } else {
+                response.json(this.workPresence.update(windowId, { folders, terminals }));
+            }
+        });
+        app.delete('/paddock/work-presence', (request, response) => {
+            if (typeof request.query.windowId === 'string') this.workPresence.remove(request.query.windowId);
+            response.status(204).end();
+        });
         app.get('/paddock/memory', (request, response) => {
             const total = os.totalmem();
             const free = os.freemem();

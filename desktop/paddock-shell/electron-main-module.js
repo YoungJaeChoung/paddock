@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { app } = require('electron');
 const { ContainerModule, injectable, decorate } = require('@theia/core/shared/inversify');
 const { ElectronMainApplication } = require('@theia/core/lib/electron-main/electron-main-application');
 const { isOSX } = require('@theia/core/lib/common/os');
@@ -19,8 +20,8 @@ const MAC_ONLY_WINDOW_OPTIONS = ['titleBarStyle', 'trafficLightPosition'];
  * 백엔드 프로세스는 이 환경 변수를 물려받는다. `PADDOCK_EXTENSIONS_DIR`·`PADDOCK_CONFIG_DIR`가 있으면
  * 그 경로를, 없으면 `~/.paddock/extensions`·`~/.paddock/config`를 만들어 쓴다.
  * 이전 이름으로 쓰던 `~/.herdr`가 있으면 기본 폴더를 만들기 전에 그 폴더를 옮겨 이어 쓴다.
- * 앱 폴더의 `plugins`(Source control 보기에 쓰는 VS Code 내장 git 확장)와 `themes`(기본 색 테마 Mermaid Dark를 담은
- * 테마 전용 확장, 저장소에 둔다)는 있을 때만 더한다.
+ * 앱 폴더의 `plugins`(Source control 보기에 쓰는 VS Code 내장 git 확장)와 `themes`(기본 색 테마 Paddock Dark·Light와
+ * Cursor에서 쓰던 Mermaid Dark·Light를 담은 테마 전용 확장, 저장소에 둔다)는 있을 때만 더한다.
  */
 function usePaddockDirectories() {
     if (!process.env.PADDOCK_EXTENSIONS_DIR && !process.env.PADDOCK_CONFIG_DIR) {
@@ -75,6 +76,26 @@ function useWindowsFontsOnWsl(
         process.env.FONTCONFIG_FILE = fontConfigPath;
     }
 }
+
+// WSL이 Windows GPU를 Linux에 넘겨 주는 장치.
+const WSL_GPU_DEVICE = '/dev/dxg';
+
+/**
+ * WSL에서 실행되면 Windows GPU로 화면을 그리게 한다.
+ *
+ * Chromium은 WSL의 GPU를 차단 목록에 올려 WebGL을 끈다. 그러면 WebGL로 그리는 확장(예: pen.dev)이
+ * "Hardware acceleration unavailable"로 멈추고, 차단을 풀기만 하면 CPU로 흉내 내는 그리기(llvmpipe)가 잡혀 느리다.
+ * 여기서는 차단 목록만 무시한다 — 이것만으로 WebGL이 켜진다(CPU 그리기). 실제 GPU(예: Intel Arc)로 그리는
+ * Mesa D3D12 드라이버(`GALLIUM_DRIVER=d3d12`)는 기본으로 켜지 않는다. 이 드라이버로 실행했을 때 Windows GPU가
+ * 응답을 멈춰 화면 전체가 굳고 강제 종료해야 했다. 원하는 사용자는 실행 전에 이 변수를 직접 정할 수 있다.
+ * 앱이 준비되기 전에 정해야 GPU 프로세스에 적용되므로 모듈을 읽을 때 실행한다.
+ */
+function useWslGpu() {
+    if (process.platform === 'linux' && fs.existsSync(WSL_GPU_DEVICE)) {
+        app.commandLine.appendSwitch('ignore-gpu-blocklist');
+    }
+}
+useWslGpu();
 
 /** Paddock 설정을 적용한 뒤 Theia 데스크톱 앱을 시작한다. */
 class PaddockMainApplication extends ElectronMainApplication {

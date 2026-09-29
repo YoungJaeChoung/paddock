@@ -10,12 +10,13 @@
         "applicationName": "Paddock",
         "defaultTheme": "dark",
         "preferences": {
-          "workbench.colorTheme": "Mermaid Dark",
+          "workbench.colorTheme": "Paddock Dark",
           "terminal.integrated.fontFamily": "Consolas, Menlo, 'Droid Sans Mono', 'DejaVu Sans Mono', 'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans Mono CJK KR', monospace",
           "terminal.integrated.letterSpacing": 0,
           "terminal.integrated.lineHeight": 1.1,
           "editor.fontFamily": "Consolas, Menlo, 'Droid Sans Mono', 'DejaVu Sans Mono', 'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans Mono CJK KR', monospace",
           "editor.enablePreview": false,
+          "editor.wordWrap": "on",
           "workbench.tree.indent": 20,
           "files.exclude": {
             "**/.git": true,
@@ -28,6 +29,26 @@
           },
           "git.autofetch": true,
           "window.titleBarStyle": "native",
+          "terminal.integrated.profiles.linux": {
+            "bash": {
+              "path": "/bin/bash",
+              "args": [
+                "-l"
+              ]
+            },
+            "zsh": {
+              "path": "/usr/bin/zsh",
+              "args": [
+                "-l"
+              ]
+            },
+            "fish": {
+              "path": "/usr/bin/fish"
+            },
+            "sh": {
+              "path": "/bin/sh"
+            }
+          },
           "terminal.integrated.profiles.osx": {
             "zsh": {
               "path": "/bin/zsh",
@@ -126,7 +147,7 @@
     "package:mac": "node scripts/package.cjs mac",
     "package:win": "node scripts/package.cjs win",
     "download:plugins": "theia download:plugins --rate-limit=15 --parallel=false",
-    "test": "node --test paddock-shell/test/work-model.test.js paddock-shell/test/usage-model.test.js paddock-shell/test/agent-model.test.js paddock-shell/test/legacy-directory.test.js"
+    "test": "node --test paddock-shell/test/work-model.test.js paddock-shell/test/work-presence.test.js paddock-shell/test/usage-model.test.js paddock-shell/test/agent-model.test.js paddock-shell/test/legacy-directory.test.js paddock-shell/test/layout-model.test.js"
   },
   "theiaPluginsDir": "plugins",
   "theiaPlugins": {

@@ -17,6 +17,18 @@ const PaddockPreferenceSchema = {
             default: true,
             description: 'Play a sound when an AI agent (Claude, Codex, …) finishes in a terminal you are not looking at.',
         },
+        'paddock.interfaceFontFamily': {
+            type: 'string',
+            default: '',
+            description: 'Font for the Paddock interface, including the sidebar and tabs. Leave empty to use the system font.',
+        },
+        'paddock.sidebarIndent': {
+            type: 'number',
+            default: 12,
+            minimum: 6,
+            maximum: 24,
+            description: 'Indentation in pixels for each level of the Work and file lists in the sidebar.',
+        },
     },
 };
 require('./style.css');

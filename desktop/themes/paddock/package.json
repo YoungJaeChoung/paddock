@@ -1,0 +1,28 @@
+{
+  "name": "paddock-theme",
+  "publisher": "paddock",
+  "displayName": "Paddock Theme",
+  "description": "Paddock Dark and Paddock Light: the default Paddock colors for the window frame, terminals and files.",
+  "version": "1.0.0",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "categories": [
+    "Themes"
+  ],
+  "contributes": {
+    "themes": [
+      {
+        "label": "Paddock Dark",
+        "uiTheme": "vs-dark",
+        "path": "./themes/paddock-dark-color-theme.json"
+      },
+      {
+        "label": "Paddock Light",
+        "uiTheme": "vs",
+        "path": "./themes/paddock-light-color-theme.json"
+      }
+    ]
+  }
+}

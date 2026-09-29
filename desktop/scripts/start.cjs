@@ -14,6 +14,10 @@ if (!fs.existsSync(cli) || !fs.existsSync(path.join(desktopDirectory, 'lib', 'fr
 const ime = prepareLinuxIme();
 if (ime.message) console.log(ime.message);
 
+// npm으로 실행하면(npm start, npm --prefix ... run) npm이 npm_config_prefix 같은 자기 변수를 환경에 넣는다.
+// 이 값이 앱의 터미널 셸까지 물려 가면 nvm이 "npm_config_prefix와 호환되지 않는다"는 경고를 띄우고 동작을 바꾸므로 걷어 낸다.
+const appEnv = Object.fromEntries(Object.entries({ ...process.env, ...ime.env }).filter(([name]) => !/^npm_/i.test(name) && name !== 'INIT_CWD'));
+
 // node_modules/.bin/theia는 Windows에서 .cmd 래퍼라 셸 없이 실행할 수 없다. CLI 스크립트를 Node로 직접 실행한다.
 const child = spawn(process.execPath, [
     cli,
@@ -22,7 +26,7 @@ const child = spawn(process.execPath, [
 ], {
     cwd: desktopDirectory,
     stdio: 'inherit',
-    env: { ...process.env, ...ime.env },
+    env: appEnv,
 });
 
 child.on('error', (error) => {

@@ -9,7 +9,7 @@ test('C-usage-U1.1: Codex 기록에서 마지막 사용량 한도를 창별로 �
     const text = ['{"type":"other"}', CODEX_LINE.replace('41.0', '30.0'), 'not json', CODEX_LINE, ''].join('\n');
     assert.deepEqual(usage.codexWindows(text), [
         { label: '5h', used: 12, resetsAt: 1790800000 },
-        { label: 'wk', used: 41, resetsAt: 1790846316 },
+        { label: 'week', used: 41, resetsAt: 1790846316 },
     ]);
 });
 
@@ -22,28 +22,31 @@ test('C-usage-U2.1: Claude 상태 줄 입력에서 5시간·주간 창을 읽는
     const input = { rate_limits: { five_hour: { used_percentage: 23.5, resets_at: 1738425600 }, seven_day: { used_percentage: 41.2, resets_at: 1738857600 } } };
     assert.deepEqual(usage.claudeWindows(input), [
         { label: '5h', used: 24, resetsAt: 1738425600 },
-        { label: 'wk', used: 41, resetsAt: 1738857600 },
+        { label: 'week', used: 41, resetsAt: 1738857600 },
     ]);
     assert.deepEqual(usage.claudeWindows({ model: {} }), []);
 });
 
-test('C-usage-U3.1: 초기화 시각이 지난 창은 보이지 않는다', () => {
-    const windows = [{ label: '5h', used: 90, resetsAt: 100 }, { label: 'wk', used: 10, resetsAt: 300 }];
-    assert.deepEqual(usage.activeWindows(windows, 200), [{ label: 'wk', used: 10, resetsAt: 300 }]);
+test('C-usage-U3.1: 초기화 시각이 지난 창은 숨기지 않고 0%로 보이며, 말풍선은 다음 사용 때 새 창이 시작된다고 쓴다', () => {
+    const windows = [{ label: '5h', used: 90, resetsAt: 100 }, { label: 'week', used: 10, resetsAt: 300 }];
+    const current = usage.currentWindows(windows, 200);
+    assert.deepEqual(current, [{ label: '5h', used: 0, resetsAt: null }, { label: 'week', used: 10, resetsAt: 300 }]);
+    assert.equal(usage.describe(current[0], 200), '0% used · 100% left · reset — a new window starts with your next request');
+    assert.equal(usage.describe({ label: '5h', used: 5 }, 200), '5% used · 95% left');
 });
 
 test('C-usage-U3.2: 말풍선은 사용·남은 양과 초기화까지 남은 시간을 쓴다', () => {
     assert.equal(usage.describe({ label: '5h', used: 23, resetsAt: 10000 + 2 * 3600 + 600 }, 10000), '23% used · 77% left · resets in 2h 10m');
-    assert.equal(usage.describe({ label: 'wk', used: 41, resetsAt: 10000 + 3 * 86400 + 3600 }, 10000), '41% used · 59% left · resets in 3d 1h');
+    assert.equal(usage.describe({ label: 'week', used: 41, resetsAt: 10000 + 3 * 86400 + 3600 }, 10000), '41% used · 59% left · resets in 3d 1h');
 });
 
-test('C-usage-U3.3: 창 길이를 5h·wk처럼 짧게 적고, 말풍선에서는 풀어 쓴다', () => {
+test('C-usage-U3.3: 창 길이를 5h·week처럼 짧게 적고, 말풍선에서는 풀어 쓴다', () => {
     assert.equal(usage.windowLabel(300), '5h');
-    assert.equal(usage.windowLabel(10080), 'wk');
+    assert.equal(usage.windowLabel(10080), 'week');
     assert.equal(usage.windowLabel(1440), '1d');
     assert.equal(usage.windowLabel(45), '45m');
     assert.equal(usage.windowName('5h'), '5-hour');
-    assert.equal(usage.windowName('wk'), 'weekly');
+    assert.equal(usage.windowName('week'), 'weekly');
     assert.equal(usage.windowName('45m'), '45m');
 });
 
