@@ -2,6 +2,7 @@
 // 사용: node scripts/package.cjs mac | win
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { ensurePlugins } = require('./ensure-plugins.cjs');
 
 const TARGET = {
     mac: { platform: 'darwin', name: 'macOS', builderFlag: '--mac' },
@@ -30,6 +31,12 @@ function runNode(
     }
 }
 
+// Step 0: 확장이 빠진 채 설치 파일을 만들지 않는다. 받지 못하면 멈춘다(코드 색·이미지 미리보기가 없는 설치본을 막는다).
+const missingPlugins = ensurePlugins();
+if (missingPlugins.length) {
+    console.error(`확장 ${missingPlugins.length}개를 받지 못해 설치 파일을 만들지 않습니다: ${missingPlugins.join(', ')}`);
+    process.exit(1);
+}
 // Step 1: 설치본에는 압축된 배포용 번들을 넣는다.
 runNode(path.join(desktopDirectory, 'node_modules', '@theia', 'cli', 'bin', 'theia.js'), ['build', '--mode', 'production']);
 // Step 2: electron-builder로 설치 파일을 만든다. 설정은 electron-builder.yml에 있다.

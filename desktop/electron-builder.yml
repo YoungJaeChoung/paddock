@@ -16,7 +16,8 @@ files:
   - lib
   - src-gen
   - paddock-shell
-  # Source control 보기에 쓰는 VS Code 내장 git 확장. setup 단계의 download:plugins가 받는다.
+  # VS Code 내장 확장(Source control용 git, 언어별 코드 색, 이미지·오디오·영상 미리보기). 설치 파일에 넣어 두므로 사용자는 설치할 때 따로 받지 않는다.
+  # 만드는 쪽은 setup 단계의 download:plugins가 받고, 빠졌으면 scripts/package.cjs가 제작 전에 받거나 멈춘다.
   - plugins
   # 색 테마 전용 확장(기본 Paddock Dark·Light, Mermaid Dark·Light). 저장소에 있다.
   - themes

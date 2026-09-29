@@ -2,6 +2,7 @@
   "$schema": "vscode://schemas/color-theme",
   "name": "Paddock Light",
   "type": "light",
+  "include": "./light_plus.json",
   "colors": {
     "foreground": "#1d2a25",
     "descriptionForeground": "#55655e",
