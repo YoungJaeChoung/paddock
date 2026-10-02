@@ -67,6 +67,20 @@ function withWidget(
     return result;
 }
 
+/**
+ * 여러 배치를 가로로 나란히 이은 한 배치. 각 배치의 칸 나눔·칸별 선택 탭은 그대로 남는다.
+ * 나중에 묶음별로 `prune`하면 각 묶음이 원래 배치로 돌아온다. null은 건너뛰고, 하나만 남으면 그 배치, 없으면 null이다.
+ */
+function besides(
+    areas,
+) {
+    const children = areas.filter(Boolean);
+    let result = null;
+    if (children.length === 1) result = children[0];
+    else if (children.length > 1) result = { type: 'split-area', orientation: 'horizontal', children, sizes: children.map(() => 1 / children.length) };
+    return result;
+}
+
 /** 배치에 위젯이 들어 있는지. */
 function includes(
     area,
@@ -92,4 +106,4 @@ function select(
     return result;
 }
 
-module.exports = { widgetsOf, prune, withoutDisposed, withWidget, includes, select };
+module.exports = { widgetsOf, prune, withoutDisposed, withWidget, besides, includes, select };

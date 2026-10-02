@@ -100,8 +100,10 @@ async function main() {
     const n_terminals = `${shell}.widgets.filter(w => w.id.startsWith('terminal-')).length`;
     const repoKey = `file://${repo}`;
     const homeKey = `file://${require('node:os').homedir()}`;
+    let sidebarFixture = null;
     // 캡처 전에 보이는 터미널마다 셸 프롬프트가 떴는지 기다린다(빈 화면을 결함으로 오해하지 않게).
-    const untilPrompts = () => until(`${shell}.widgets.filter(w => w.id.startsWith('terminal-') && w.isVisible).every(w => { const b = w.term.buffer.active; for (let i = 0; i < b.length; i++) { if (/[$%#>] *$/.test(b.getLine(i).translateToString(true))) return true; } return false; })`, 120);
+    // 가짜 에이전트를 실행 중인 터미널은 셸 프롬프트 대신 에이전트의 준비 출력(ready)을 띄운 상태로 본다.
+    const untilPrompts = () => until(`${shell}.widgets.filter(w => w.id.startsWith('terminal-') && w.isVisible).every(w => { const b = w.term.buffer.active; for (let i = 0; i < b.length; i++) { if (/[$%#>] *$|^ready$/.test(b.getLine(i).translateToString(true))) return true; } return false; })`, 120);
     try {
         // 새 시험 설정은 폴더 신뢰 확인 창부터 뜨고, 답하기 전에는 확장(Git 등)이 시작되지 않는다. 시험 폴더라 신뢰로 답한다.
         await until('!!document.querySelector(".workspace-trust-dialog .theia-button.main")', 80);
@@ -118,15 +120,33 @@ async function main() {
             assert.equal(await evaluate('Math.round(document.querySelector(".window-minimize").getBoundingClientRect().width)'), 28);
         }
         await until('/^\\d+%$/.test(document.querySelector("[data-meter=memory] .meter-percent").textContent)');
-        // AI 사용량: Claude는 첫 실행에 켜져 게이지(값이 아직 없으면 —)나 켜기 버튼 하나로 선다.
+        // AI 사용량: Claude·Codex는 켜져 있으면 게이지(값이 아직 없으면 no data)로, 꺼져 있으면 흐린 이름표로 선다.
         // 값이 있는 게이지는 채움 폭이 숫자와 같고, 말풍선이 남은 양을 말한다.
-        await until('!!document.querySelector(".ai-usage [data-meter^=claude], .ai-usage .usage-toggle")', 60);
+        await until('!!document.querySelector(".ai-usage [data-source=claude]") && !!document.querySelector(".ai-usage [data-source=codex]")', 60);
         const usageMeters = await evaluate('[...document.querySelectorAll(".ai-usage .meter:not(.is-empty)")].map(m => ({ percent: m.querySelector(".meter-percent").textContent, width: m.querySelector(".meter-fill").style.width, title: m.title }))');
         for (const meter of usageMeters) {
             assert.match(meter.percent, /^\d+%$/);
             assert.equal(meter.width, meter.percent);
             assert.match(meter.title, /% left/);
         }
+        // Step 1b: 상태 줄 항목은 눌러 숨기고 흐린 이름표를 눌러 다시 켠다. 빠른 설정의 체크 상자도 같은 설정을 바꾼다.
+        // Claude는 숨길 때 Claude Code 설정을 되돌리므로 확인 창이 뜬다 — 시험에서는 취소해 실제 설정을 건드리지 않는다.
+        await mouseClick('.memory-usage .usage-group');
+        await until('!!document.querySelector(".memory-usage .usage-group.is-off") && !document.querySelector("[data-meter=memory]")');
+        await mouseClick('.memory-usage .usage-group.is-off');
+        await until('/^\\d+%$/.test(document.querySelector("[data-meter=memory] .meter-percent")?.textContent || "")');
+        await mouseClick('.ai-usage [data-source=codex]');
+        await until('!!document.querySelector(".ai-usage [data-source=codex].is-off")');
+        await evaluate(`${service('PaddockWorkspace')}.renderQuickSettings()`);
+        const statusChecks = await evaluate('[...document.querySelectorAll("#quick-settings .quick-check")].map(box => box.checked)');
+        assert.deepEqual(statusChecks, [true, false, true]);
+        await evaluate('document.querySelectorAll("#quick-settings .quick-check")[1].click()');
+        await until('!!document.querySelector(".ai-usage [data-source=codex]:not(.is-off)")');
+        await mouseClick('.ai-usage [data-source=claude]');
+        await until('!!document.querySelector(".dialogOverlay .theia-button.secondary")');
+        await evaluate('document.querySelector(".dialogOverlay .theia-button.secondary").click()');
+        await until('!document.querySelector(".dialogOverlay") && !!document.querySelector(".ai-usage [data-source=claude]:not(.is-off)")');
+
         // 첫 실행: 작업 폴더는 에이전트를 실행해야 생기므로 목록은 비어 있고 다음 행동을 안내한다.
         // 첫 터미널은 맨 위 추가 터미널 줄에 있고, 아래 작업 폴더 탭 줄은 비어 있다.
         await until('document.querySelector(".work-empty")?.textContent.includes("No work folders")');
@@ -151,7 +171,7 @@ async function main() {
         const firstTerminal = await evaluate(`${current}.id`);
         // 터미널 글자를 선택하면 바로 클립보드에 복사된다(terminal.integrated.copyOnSelection).
         await evaluate(`${current}.sendText('echo PADDOCK_COPY_CHECK\\n')`);
-        await until(`(() => { const b = ${current}.term.buffer.active; for (let i = 0; i < b.length; i++) { if (b.getLine(i).translateToString(true) === 'PADDOCK_COPY_CHECK') { ${current}.term.select(0, i, 16); return true; } } return false; })()`);
+        await until(`(() => { const b = ${current}.term.buffer.active; for (let i = 0; i < b.length; i++) { if (b.getLine(i).translateToString(true) === 'PADDOCK_COPY_CHECK') { ${current}.term.select(0, i, 'PADDOCK_COPY_CHECK'.length); return true; } } return false; })()`);
         await until(`navigator.clipboard.readText().then(text => text === 'PADDOCK_COPY_CHECK')`);
         await evaluate(`${current}.sendText(${JSON.stringify(`cd ${repo}; export PATH=${fakeBin}:$PATH; claude\n`)})`);
         await until(`document.querySelector('.folder-row[data-folder=${JSON.stringify(repoKey)}]')`, 80);
@@ -207,6 +227,27 @@ async function main() {
         await until(`${workspace}.currentWidget()?.id === ${JSON.stringify(firstTerminal)}`);
         await mouseClick(`.folder-tabs [data-widget-id=${JSON.stringify(fileTabId)}]`);
         await until(`${workspace}.currentWidget()?.id === ${JSON.stringify(fileTabId)}`);
+
+        // Step 4b: 내용이 같은 파일 목록은 행·선택·스크롤을 유지하고, 실제 파일 변경과 하위 폴더 펼침은 반영한다.
+        await until('document.querySelector(".file-list .file-row.is-current")?.textContent.includes("README.md")');
+        await evaluate('window.__sidebarBeforeRefresh = document.querySelector("[data-host=work]").firstChild');
+        for (let n_refreshes = 0; n_refreshes < 3; n_refreshes += 1) {
+            await evaluate(`${workspace}.refresh().then(() => true)`);
+            assert.equal(await evaluate('document.querySelector("[data-host=work]").firstChild === window.__sidebarBeforeRefresh'), true);
+        }
+        sidebarFixture = await fs.mkdtemp(path.join(repo, '.paddock-smoke-files-'));
+        const fixtureKey = `file://${sidebarFixture}`;
+        await fs.writeFile(path.join(sidebarFixture, 'added.txt'), 'sidebar update\n');
+        await until(`document.querySelector('.file-row[data-uri=${JSON.stringify(fixtureKey)}]')`);
+        await mouseClick(`.file-row[data-uri=${JSON.stringify(fixtureKey)}]`);
+        await until(`document.querySelector('.file-row[data-uri=${JSON.stringify(`${fixtureKey}/added.txt`)}]')`);
+        await fs.rename(path.join(sidebarFixture, 'added.txt'), path.join(sidebarFixture, 'renamed.txt'));
+        await until(`document.querySelector('.file-row[data-uri=${JSON.stringify(`${fixtureKey}/renamed.txt`)}]') && !document.querySelector('.file-row[data-uri=${JSON.stringify(`${fixtureKey}/added.txt`)}]')`);
+        await fs.rm(sidebarFixture, { recursive: true, force: true });
+        sidebarFixture = null;
+        await until(`!document.querySelector('.file-row[data-uri=${JSON.stringify(fixtureKey)}]')`);
+        await until('document.querySelector(".file-list .file-row.is-current")?.textContent.includes("README.md")');
+        await evaluate('delete window.__sidebarBeforeRefresh');
 
         // Step 5: 한 폴더에 터미널이 8개를 넘으면 8줄 + "Show N more"로 묶이고 현재 터미널은 보인다.
         for (let n_added = 0; n_added < 7; n_added += 1) {
@@ -331,9 +372,10 @@ async function main() {
         assert.equal(await evaluate('document.querySelector(".folder-tab-add").getClientRects().length > 0'), true);
         assert.equal(await evaluate('document.querySelector(".folder-bar-actions").hidden'), false);
         await evaluate('window.fetch = window.__workPresenceFetch; delete window.__workPresenceFetch');
-        console.log('PASS: 창 틀·메모리·AI 사용량 게이지, 첫 실행 빈 목록 안내, 드래그 복사, 에이전트 실행 시 작업 폴더 승격, 작업 폴더 탭 줄 ＋, 분할 단축키, 파일 경로 줄, 많은 터미널 묶기, SCM·확장(추천·검색), 목록 이름 바꾸기·빼기, 추가 터미널, 에이전트 완료 알림, 원격 선택, 목록 동기화 지연 중 두 ＋');
+        console.log('PASS: 창 틀·메모리·AI 사용량 게이지, 상태 줄 항목 켜고 끄기, 첫 실행 빈 목록 안내, 드래그 복사, 에이전트 실행 시 작업 폴더 승격, 작업 폴더 탭 줄 ＋, 분할 단축키, 파일 경로 줄, 많은 터미널 묶기, SCM·확장(추천·검색), 목록 이름 바꾸기·빼기, 추가 터미널, 에이전트 완료 알림, 원격 선택, 목록 동기화 지연 중 두 ＋');
     } finally {
         socket.close();
+        if (sidebarFixture) await fs.rm(sidebarFixture, { recursive: true, force: true });
     }
 }
 main().catch((error) => {

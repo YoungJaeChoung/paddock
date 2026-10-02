@@ -156,6 +156,12 @@ body {
 .paddock-shell .ai-usage { display: flex; align-items: stretch; align-self: stretch; gap: 12px; }
 /* 묶음이 상태 줄 높이를 다 차지해야 Claude 묶음(끄기 버튼)의 누르는 자리와 hover 배경이 줄 높이만큼 된다. */
 .paddock-shell .status-right > .usage-group { align-self: stretch; }
+.paddock-shell .memory-usage { display: flex; align-items: stretch; align-self: stretch; }
+/* 꺼진 항목은 표지·이름만 흐리게 남겨, 다시 눌러 켤 수 있음을 보인다. */
+.paddock-shell .usage-group.is-off .source-mark,
+.paddock-shell .usage-group.is-off .source-name { color: var(--p-fg-muted); opacity: 0.55; }
+.paddock-shell .usage-group.is-off:hover .source-mark,
+.paddock-shell .usage-group.is-off:hover .source-name { opacity: 0.9; }
 /* 출처 묶음(Claude·Codex·Memory): 앞에 가는 구분선, 표지·이름 한 번, 그 뒤 창별 게이지. */
 .paddock-shell .usage-group { display: flex; align-items: center; gap: 5px; position: relative; height: 100%; padding: 0 2px 0 16px; border: 0; background: transparent; color: inherit; font: inherit; }
 .paddock-shell .usage-group::before { content: ""; position: absolute; left: 0; top: 50%; width: 1px; height: 14px; margin-top: -7px; background: var(--p-border); }
@@ -265,6 +271,8 @@ body .theia-button.secondary:hover { background: var(--theia-button-secondaryHov
 .paddock-shell #quick-settings .quick-step:hover:not(:disabled) { background: var(--p-selected-bg); }
 .paddock-shell #quick-settings .quick-step:disabled { opacity: 0.4; }
 .paddock-shell #quick-settings .quick-value { min-width: 40px; text-align: center; color: var(--p-fg-strong); font-family: ui-monospace, monospace; font-size: 13px; }
+.paddock-shell #quick-settings .quick-section { margin: 14px 0 6px; font-size: 13px; }
+.paddock-shell #quick-settings .quick-check { width: 15px; height: 15px; margin: 0 4px 0 0; accent-color: var(--p-accent, currentColor); cursor: pointer; }
 .paddock-shell #quick-settings .quick-select { max-width: 150px; height: 26px; padding: 0 6px; border: 1px solid var(--p-control-border); border-radius: 5px; background: var(--p-control-bg); color: var(--p-fg-strong); font-size: 13px; }
 .paddock-shell #quick-settings .quick-all { display: flex; align-items: center; gap: 8px; width: 100%; margin-top: 8px; padding: 8px; border: 0; border-top: 1px solid var(--p-border-subtle); background: transparent; color: var(--p-fg-soft); font-size: 13px; text-align: left; }
 .paddock-shell #quick-settings .quick-all:hover { background: var(--p-selected-bg); color: var(--p-fg-strong); border-radius: 5px; }

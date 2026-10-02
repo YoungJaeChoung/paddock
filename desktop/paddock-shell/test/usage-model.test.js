@@ -62,6 +62,16 @@ test('C-usage-U4.1: 상태 줄 등록은 기존 명령을 이어 부르도록 �
     assert.equal('statusLine' in usage.restoreStatusLine({ statusLine: { type: 'command', command: 'paddock-line' } }, null), false);
 });
 
+test('C-usage-U4.2: 설정 폴더가 다른 Paddock의 상태 줄은 이어 부르지 않고 그 파일 경로를 알려 준다', () => {
+    const other = '"/usr/bin/node" "/tmp/qa/usage/claude-statusline.cjs" "/tmp/qa/usage/claude.json" "/tmp/qa/usage/previous-statusline.json"';
+    assert.deepEqual(usage.paddockStatusLineFiles(other), { script: '/tmp/qa/usage/claude-statusline.cjs', usageFile: '/tmp/qa/usage/claude.json', previousFile: '/tmp/qa/usage/previous-statusline.json' });
+    assert.equal(usage.paddockStatusLineFiles('npx ccstatusline'), null);
+    const installed = usage.installStatusLine({ statusLine: { type: 'command', command: other } }, 'paddock-line');
+    assert.equal(installed.previous, null);
+    assert.equal(installed.replaced.previousFile, '/tmp/qa/usage/previous-statusline.json');
+    assert.equal(usage.installStatusLine({ statusLine: { type: 'command', command: 'my-line' } }, 'paddock-line').replaced, null);
+});
+
 test('C-usage-U5.1: 상태 줄 스크립트는 한도만 저장하고, 원래 상태 줄이 있으면 그 출력을 보여 준다', () => {
     const fs = require('node:fs');
     const os = require('node:os');

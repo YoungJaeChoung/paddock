@@ -1,0 +1,8 @@
+<!-- 16·24·32px 전용 아이콘(창 제목 줄·작업 표시줄). 큰 아이콘(icon-win.svg)의 어두운 타일과 세 칸을 유지하되,
+     작은 크기에서 뭉개지는 터미널 기호를 빼고 칸을 채운 민트로 키우며 타일에 초록 테를 둘러 어두운 제목 줄과 구분한다. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <rect x="0.5" y="0.5" width="15" height="15" rx="3.2" fill="#0b110e" stroke="#245440" stroke-width="1"/>
+  <rect x="2.5" y="2.5" width="4.8" height="11" rx="1.2" fill="#8ccfb0"/>
+  <rect x="8.7" y="2.5" width="4.8" height="4.8" rx="1.2" fill="#8ccfb0" fill-opacity="0.59"/>
+  <rect x="8.7" y="8.7" width="4.8" height="4.8" rx="1.2" fill="#8ccfb0"/>
+</svg>

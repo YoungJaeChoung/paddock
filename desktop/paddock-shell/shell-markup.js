@@ -64,7 +64,7 @@ module.exports = {
         </div>
         <div class="status-right">
             <span class="ai-usage"></span>
-            <span class="usage-group" data-source="memory"><span class="source-mark">▦</span><span class="source-name">Memory</span><span class="meter" data-meter="memory" title="System memory in use"><span class="meter-bar"><span class="meter-fill"></span></span><span class="meter-percent">—</span></span></span>
+            <span class="memory-usage"></span>
         </div>
     </footer>`),
 };

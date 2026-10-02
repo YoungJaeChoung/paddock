@@ -25,6 +25,21 @@ const PaddockPreferenceSchema = {
             default: '',
             description: 'Font for the Paddock interface, including the sidebar and tabs. Leave empty to use the system font.',
         },
+        'paddock.statusBar.claude': {
+            type: 'boolean',
+            default: true,
+            description: 'Show Claude usage in the status bar. Turning it off removes the Paddock status line from Claude Code settings and restores the one you had before.',
+        },
+        'paddock.statusBar.codex': {
+            type: 'boolean',
+            default: true,
+            description: 'Show Codex usage in the status bar.',
+        },
+        'paddock.statusBar.memory': {
+            type: 'boolean',
+            default: true,
+            description: 'Show system memory use in the status bar.',
+        },
         'paddock.sidebarIndent': {
             type: 'number',
             default: 12,

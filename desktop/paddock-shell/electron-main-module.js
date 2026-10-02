@@ -112,6 +112,10 @@ class PaddockMainApplication extends ElectronMainApplication {
             for (const key of MAC_ONLY_WINDOW_OPTIONS) {
                 delete options[key];
             }
+            // 창 왼쪽 위·작업 표시줄 아이콘. 설치본은 실행 파일에 아이콘이 들어 있지만, 개발 실행은 Electron 아이콘이 보여 직접 정한다.
+            // macOS는 창 아이콘이 없고 Dock은 앱 묶음의 아이콘을 쓴다.
+            const icon = path.join(app.getAppPath(), 'resources', process.platform === 'win32' ? 'icon.ico' : 'icon.png');
+            if (fs.existsSync(icon)) options.icon = icon;
         }
         return options;
     }

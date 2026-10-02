@@ -126,18 +126,40 @@ function describe(
 }
 
 /**
+ * 상태 줄 명령이 Paddock 상태 줄이면 그 명령이 쓰는 파일 경로를, 아니면 null을 돌려준다.
+ * 설정 폴더가 다른 Paddock(시험용 설정·다른 설치본)이 등록한 명령도 Paddock 상태 줄로 알아본다.
+ *
+ * Examples
+ * --------
+ * | 명령                                                              | 결과                                                   |
+ * | ----------------------------------------------------------------- | ------------------------------------------------------ |
+ * | `"node" "/c/usage/claude-statusline.cjs" "/c/usage/claude.json" "/c/usage/previous-statusline.json"` | `{ script: '/c/usage/claude-statusline.cjs', usageFile: …, previousFile: … }` |
+ * | `npx ccstatusline`                                                | `null`                                                 |
+ */
+function paddockStatusLineFiles(
+    command,
+) {
+    const quoted = [...String(command || '').matchAll(/"([^"]*)"/g)].map(match => match[1]);
+    const index = quoted.findIndex(part => /[\\/]claude-statusline\.cjs$/.test(part));
+    return index >= 0 ? { script: quoted[index], usageFile: quoted[index + 1] ?? '', previousFile: quoted[index + 2] ?? '' } : null;
+}
+
+/**
  * Claude Code 설정에 Paddock 상태 줄 명령을 넣는다.
- * 원래 쓰던 상태 줄은 `previous`로 돌려주어 Paddock 명령이 이어 부르게 한다. 이미 Paddock 명령이면 `previous`는 null.
+ * 원래 쓰던 상태 줄은 `previous`로 돌려주어 Paddock 명령이 이어 부르게 한다. 이미 Paddock 명령이면(설정 폴더가 다른 Paddock 포함)
+ * `previous`는 null이다 — Paddock 명령끼리 이어 부르면 지워진 시험용 폴더의 스크립트까지 줄줄이 부른다.
+ * 다른 Paddock 명령을 바꾸면 `replaced`에 그 명령의 파일 경로가 담긴다(그 명령이 이어 부르던 원래 상태 줄을 넘겨받는 데 쓴다).
  */
 function installStatusLine(
     settings,
     command,
 ) {
     const current = settings.statusLine;
-    const isOurs = current?.command === command;
+    const other = current?.command !== command ? paddockStatusLineFiles(current?.command) : null;
     return {
         settings: { ...settings, statusLine: { type: 'command', command } },
-        previous: !isOurs && current ? current : null,
+        previous: current && current.command !== command && !other ? current : null,
+        replaced: other,
     };
 }
 
@@ -160,6 +182,7 @@ module.exports = {
     currentWindows,
     describe,
     duration,
+    paddockStatusLineFiles,
     installStatusLine,
     restoreStatusLine,
 };

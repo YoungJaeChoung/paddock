@@ -1,5 +1,6 @@
 const { MessageService } = require('@theia/core/lib/common/message-service');
 const { URI } = require('@theia/core');
+const { OS } = require('@theia/core/lib/common/os');
 const { Saveable } = require('@theia/core/lib/browser/saveable');
 const { Widget } = require('@lumino/widgets');
 const { MessageLoop } = require('@lumino/messaging');
@@ -32,11 +33,14 @@ const model = require('./work-model');
 const layoutModel = require('./layout-model');
 const usage = require('./usage-model');
 const agent = require('./agent-model');
+const wsl = require('./wsl-terminals');
+const cwdReport = require('./cwd-report');
 
-// 작업 목록과 상단 터미널 묶음의 내부 탭을 각각 저장한다.
+// 작업 목록, 상단 터미널 묶음의 내부 탭, 창을 닫을 때 보던 위젯을 각각 저장한다.
 class STORAGE {
     static WORK_FOLDERS = 'paddock.work-folders.v1';
     static INNER_TABS = 'paddock.inner-tabs.v1';
+    static SHOWN_WIDGET = 'paddock.shown-widget.v1';
 }
 
 // 터미널 현재 폴더·실행 중 프로그램·메모리처럼 이벤트가 없는 값을 다시 읽는 간격(ms).
@@ -52,7 +56,15 @@ const VIEW_CONTAINER = {
 const SOURCE_MARKS = {
     claude: '✱',
     codex: '◎',
+    memory: '▦',
 };
+
+// 상태 줄 오른쪽 항목별 표시 설정. 설정 화면·빠른 설정·항목 클릭이 같은 값을 바꾼다. 기본은 모두 켜짐이다.
+class STATUS_ITEMS {
+    static CLAUDE = 'paddock.statusBar.claude';
+    static CODEX = 'paddock.statusBar.codex';
+    static MEMORY = 'paddock.statusBar.memory';
+}
 
 // 본문을 나누는 명령. 단축키는 VS Code의 새 터미널·터미널 분할과 같다.
 const PADDOCK_COMMANDS = {
@@ -85,8 +97,14 @@ const APPEARANCE = {
     HANGUL_FALLBACK: "'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans Mono CJK KR', monospace",
 };
 
-// 기본 셸 실행 파일이 없을 때 대신 여는 프로필. Windows 기본 셸은 Git Bash인데 Git이 없는 PC도 있다.
-const FALLBACK_PROFILE = 'PowerShell';
+// 기본 셸을 열 수 없을 때 차례로 시도하는 프로필. Windows 기본 셸은 WSL인데 배포판이 없거나 Git이 없는 PC도 있다.
+const FALLBACK_PROFILES = ['Git Bash', 'PowerShell'];
+
+// 크기 변경 뒤 Git Bash에 빈 키(NUL)를 보내기까지 기다리는 시간. 콘솔이 크기 변경을 셸에 알릴 시간을 둔다(absorbResizeKeyLoss).
+const RESIZE_KEY_GUARD_MS = 200;
+
+// 운영체제별 기본 셸 설정 이름의 끝부분(terminal.integrated.defaultProfile.<끝부분>).
+const OS_PREFERENCE_KEY = { [OS.Type.Windows]: 'windows', [OS.Type.Linux]: 'linux', [OS.Type.OSX]: 'osx' };
 
 function element(
     tag,
@@ -143,6 +161,9 @@ class PaddockWorkspace {
         this.pointerPressed = false;
         this.refreshAfterPointer = false;
         this.cwdCache = new Map();
+        // 파일 이름 목록은 폴더의 수정 시각이 바뀔 때까지 재사용한다.
+        this.directoryEntries = new Map();
+        this.n_directoryRevision = 0;
         // 작업 폴더 탭 줄이 보여 줄 폴더. 마지막으로 본 작업 터미널·파일의 폴더다.
         this.selectedFolder = null;
         this.selectedTopTerminal = null;
@@ -165,6 +186,17 @@ class PaddockWorkspace {
         this.rootLayouts = new Map();
         this.displayedRoot = null;
         this.isSwitchingRoot = false;
+        // 시작 시 저장된 작업 폴더·내부 탭 소속을 읽었는지. 읽기 전에는 묶음 전환을 하지 않는다.
+        this.isGroupsRestored = false;
+        // -- WSL 터미널 --
+        // 터미널 id별 WSL 안의 현재 폴더(Windows 경로)·실행 프로그램. Windows 앱의 WSL 터미널만 채워진다.
+        this.wslTerminals = {};
+        this.windowsWslEnv = '';
+        // 터미널 id별로 셸이 프롬프트마다 알린 현재 폴더 주소(OSC 7). Windows 셸에서 쓴다.
+        this.reportedCwds = new Map();
+        // 이 Windows에 WSL 배포판이 설치돼 있는지와 그 홈 폴더의 경로 부분(/Ubuntu/home/me). 시작할 때 한 번 읽는다.
+        this.isWslReady = false;
+        this.wslHomePath = '';
     }
 
     // -- 명령·단축키 --
@@ -273,7 +305,8 @@ class PaddockWorkspace {
     showRootOf(
         widget,
     ) {
-        const root = widget && !this.isSwitchingRoot ? this.rootOf(widget) : null;
+        // 저장된 묶음 소속을 읽기 전에는 모든 터미널이 제각각 상단 묶음으로 보여, 되살린 분할 배치를 터미널별로 쪼갠다.
+        const root = widget && this.isGroupsRestored && !this.isSwitchingRoot ? this.rootOf(widget) : null;
         if (root && this.needsRootSwitch(root, widget)) this.showRoot(root, widget);
     }
 
@@ -291,17 +324,17 @@ class PaddockWorkspace {
      * 다음 실행은 시작 때 묶음별로 다시 나눈다. 닫기가 취소되면 주기 갱신이 현재 묶음만 남긴다.
      */
     onWillStop() {
+        // 다음 실행이 같은 묶음으로 시작하도록 지금 보는 위젯을 남긴다. 창이 닫히기 전에 끝나는 동기 저장이다.
+        this.storage.setData(STORAGE.SHOWN_WIDGET, this.currentWidget()?.id ?? '');
         this.isSwitchingRoot = true;
         try {
             const panel = this.shell.mainPanel;
-            let merged = panel.saveLayout().main;
-            for (const [root, area] of this.rootLayouts) {
-                if (root !== this.displayedRoot) {
-                    for (const item of layoutModel.widgetsOf(layoutModel.withoutDisposed(area))) {
-                        if (!layoutModel.includes(merged, item)) merged = layoutModel.withWidget(merged, item);
-                    }
-                }
-            }
+            const shown = panel.saveLayout().main;
+            // 다른 묶음은 탭으로 합치지 않고 칸 나눔째 옆에 붙인다. 탭으로 합치면 다음 실행에 그 묶음의 분할이 사라진다.
+            const others = [...this.rootLayouts]
+                .filter(([root]) => root !== this.displayedRoot)
+                .map(([, area]) => layoutModel.prune(area, item => !item.isDisposed && !layoutModel.includes(shown, item)));
+            const merged = layoutModel.besides([shown, ...others]);
             if (merged) panel.restoreLayout({ main: merged });
         } finally {
             this.isSwitchingRoot = false;
@@ -333,6 +366,15 @@ class PaddockWorkspace {
         this.messages = this.container.get(MessageService);
         this.files = this.container.get(FileService);
         this.terminals = this.container.get(TerminalService);
+        // 모든 새 터미널(Theia의 첫 실행 터미널·셸 프로필·확장이 여는 터미널 포함)에 재시작해도 바뀌지 않는 화면 id를 붙인다.
+        // 작업 폴더·묶음 소속과 칸 배치는 터미널 id로 저장하는데, Theia 기본 순번(terminal-0, 1…)은 재시작 때 되살리는 순서대로
+        // 다시 매겨져 소속이 다른 터미널에 붙는다. 정한 id는 배치 저장에 함께 남아 그대로 되살아나고, 여러 창끼리도 겹치지 않는다.
+        // 터미널 모듈이 이 모듈보다 늦게 로드돼 서비스 교체(rebind)를 쓸 수 없어, 레이아웃을 만들기 전인 여기서 감싼다.
+        const newTerminal = this.terminals.newTerminal.bind(this.terminals);
+        this.terminals.newTerminal = options => newTerminal({ id: `terminal-${crypto.randomUUID()}`, ...options });
+        // 저장된 배치가 없는 첫 실행에 Theia가 여는 터미널은 기본 셸 설정이 반영되기 전에 시스템 셸(Windows는 cmd.exe)로 뜬다.
+        // 첫 터미널은 onDidInitializeLayout이 기본 셸 프로필(없으면 대체 프로필)로 직접 연다.
+        this.terminals.initializeLayout = async () => undefined;
         this.profiles = this.container.get(TerminalProfileService);
         this.commands = this.container.get(CommandRegistry);
         this.opener = this.container.get(OpenerService);
@@ -351,6 +393,17 @@ class PaddockWorkspace {
         this.preferences = this.container.get(PreferenceService);
         this.applyInterfacePreferences();
         this.preferences.onPreferenceChanged(({ preferenceName }) => {
+            if ([STATUS_ITEMS.CLAUDE, STATUS_ITEMS.CODEX, STATUS_ITEMS.MEMORY].includes(preferenceName)) {
+                // 상태 줄 항목을 켜고 끄면 바로 다시 그린다. Claude는 Claude Code 상태 줄도 설정에 맞춘다.
+                this.usageKey = null;
+                this.claudeSyncTarget = undefined;
+                this.run(async () => {
+                    await this.refreshMemory();
+                    await this.refreshUsage();
+                });
+                const panel = this.shell.sidebar.node.querySelector('#quick-settings');
+                if (panel.matches(':popover-open')) this.renderQuickSettings();
+            }
             if (preferenceName === 'paddock.interfaceFontFamily' || preferenceName === 'paddock.sidebarIndent') {
                 this.applyInterfacePreferences();
                 if (preferenceName === 'paddock.sidebarIndent') this.refreshSoon();
@@ -503,7 +556,20 @@ class PaddockWorkspace {
             if (quickSettings.matches(':popover-open')) this.renderQuickSettings();
         });
         this.shell.footer.node.querySelector('.remote-indicator').addEventListener('click', () => this.run(() => this.commands.executeCommand('remote.select')));
-        this.files.onDidFilesChange(() => this.refreshSoon());
+        this.files.onDidFilesChange((event) => {
+            // 파일 내용 변경은 행 표시를 바꾸지 않는다. 추가·삭제 때는 수정 시각의 정밀도에 기대지 않고 목록을 다시 읽는다.
+            const changes = [...event.getAdded(), ...event.getDeleted()];
+            if (changes.length) {
+                this.n_directoryRevision += 1;
+                for (const key of this.directoryEntries.keys()) {
+                    const uri = new URI(key);
+                    if (changes.some(change => uri.isEqual(change.resource.parent) || change.resource.isEqualOrParent(uri))) {
+                        this.directoryEntries.delete(key);
+                    }
+                }
+            }
+            this.refreshSoon();
+        });
         this.acceptVsixDrops(sidebar.querySelector('[data-host="extensions"]'));
     }
 
@@ -549,6 +615,14 @@ class PaddockWorkspace {
         this.homePath = new URI(await this.env.getHomeDirUri()).path.toString();
         // 셸 메뉴에 운영체제 기본 셸의 실제 이름을 보이려고 백엔드의 기본 셸 경로를 읽어 둔다(Windows는 COMSPEC).
         this.systemShellPath = (await this.env.getValue('SHELL'))?.value || (await this.env.getValue('COMSPEC'))?.value || '';
+        // WSL 터미널에 표지를 넘길 때 사용자가 이미 정해 둔 WSLENV를 지우지 않으려고 읽어 둔다.
+        this.windowsWslEnv = (await this.env.getValue('WSLENV'))?.value || '';
+        // 첫 터미널을 열기 전에 WSL 배포판이 있는지 확인한다. 없으면 기본 셸(WSL) 대신 대체 셸로 연다.
+        if (OS.backend.type() === OS.Type.Windows) {
+            const { ready, home } = await this.fetchJson('/paddock/wsl-ready').catch(() => ({ ready: false, home: '' }));
+            this.isWslReady = ready === true;
+            this.wslHomePath = home ? URI.fromFilePath(home.replace(/\\/g, '/')).path.toString() : '';
+        }
         const saved = await this.storage.getData(STORAGE.WORK_FOLDERS, '');
         const liveIds = new Set(this.terminals.all.map(terminal => terminal.id));
         this.state = model.restore(saved || '', liveIds);
@@ -561,6 +635,7 @@ class PaddockWorkspace {
             this.innerTerminalRoots.clear();
             this.fileRoots.clear();
         }
+        this.isGroupsRestored = true;
         for (const terminal of this.terminals.all) {
             this.watchTerminal(terminal);
             if (this.shell.getAreaFor(terminal) !== 'main') {
@@ -568,9 +643,12 @@ class PaddockWorkspace {
             }
         }
         // 저장된 작업 폴더나 파일 화면이 있어도 상단 줄에는 추가 터미널 하나를 둔다. 첫 화면에서 바로 명령을 입력할 수 있다.
-        const extra = this.terminals.all.find(terminal => !model.folderOf(this.state, terminal.id) && !this.innerTerminalRoots.has(terminal.id));
-        if (extra) await this.activate(extra.id);
-        else await this.newExtraTerminal();
+        // 창을 닫을 때 보던 위젯의 묶음으로 시작한다. 그 위젯이 없으면 상단 첫 터미널이다.
+        // Theia는 닫을 때의 활성 위젯을 늘 남기지 않아(창이 닫히며 초점이 빠짐), 닫기 직전에 직접 저장한 위젯을 쓴다.
+        const restored = this.shell.getWidgetById(await this.storage.getData(STORAGE.SHOWN_WIDGET, '')) ?? this.currentWidget();
+        const extra = this.topTerminals()[0];
+        if (!extra) await this.newExtraTerminal();
+        else await this.activate((restored && this.rootOf(restored) ? restored : extra).id);
         this.selectedTopTerminal = this.currentWidget()?.id || null;
         this.selectedFolder = this.workFolderOf(this.currentWidget()) || this.state.folders[0]?.key || null;
         for (const folder of this.state.folders) {
@@ -657,6 +735,7 @@ class PaddockWorkspace {
 
     /** 이벤트가 없는 값(터미널 현재 폴더·프로그램·메모리)을 주기적으로 다시 읽는다. */
     async tick() {
+        await this.refreshWslTerminals();
         await Promise.all(this.terminals.all.map(terminal => this.readCwd(terminal)));
         await this.refreshPrograms();
         await this.promoteAgents();
@@ -679,7 +758,15 @@ class PaddockWorkspace {
             this.activity.set(terminal.id, agent.idle());
             terminal.onData((data) => this.activity.set(terminal.id, agent.noteInput(this.activity.get(terminal.id) ?? agent.idle(), data, Date.now())));
             terminal.onOutput(() => this.activity.set(terminal.id, agent.noteOutput(this.activity.get(terminal.id) ?? agent.idle(), Date.now())));
+            if (OS.backend.type() === OS.Type.Windows && cwdReport.isBashShell(terminal.options?.shellPath)) this.absorbResizeKeyLoss(terminal);
+            // 셸이 프롬프트마다 알리는 현재 폴더(OSC 7)를 기억한다. Windows 셸은 createTerminal이 이 알림을 켠다.
+            terminal.term?.parser?.registerOscHandler(7, (data) => {
+                const reported = cwdReport.parseCwdReport(data);
+                if (reported) this.reportedCwds.set(terminal.id, URI.fromFilePath(reported).toString());
+                return true;
+            });
             terminal.onDidDispose?.(() => {
+                this.reportedCwds.delete(terminal.id);
                 this.activity.delete(terminal.id);
                 this.programs.delete(terminal.id);
                 this.doneIds.delete(terminal.id);
@@ -711,6 +798,22 @@ class PaddockWorkspace {
                 }
             } catch {
                 // 원격 연결이 끊겼을 때 등. 다음 주기에 다시 묻는다.
+            }
+        }
+        // Windows 백엔드는 앞쪽 프로그램을 모르므로 WSL 터미널은 WSL 안에서 읽은 프로그램을 쓴다.
+        for (const terminal of terminals) {
+            const program = this.wslTerminals[terminal.id]?.program;
+            if (program) this.programs.set(terminal.id, program);
+        }
+    }
+
+    /** WSL 터미널이 있으면 WSL 안의 현재 폴더·실행 프로그램을 한 번에 읽어 둔다. 실패하면 지난 값을 둔다. */
+    async refreshWslTerminals() {
+        if (this.terminals.all.some(terminal => wsl.isWslShell(terminal.options?.shellPath))) {
+            try {
+                this.wslTerminals = await this.fetchJson('/paddock/wsl-terminals');
+            } catch {
+                // WSL이 시작 중이거나 원격 연결이 끊겼을 때. 다음 주기에 다시 읽는다.
             }
         }
     }
@@ -809,8 +912,14 @@ class PaddockWorkspace {
         terminal,
     ) {
         let cwd = this.cwdCache.get(terminal.id);
+        const inWsl = this.wslTerminals[terminal.id]?.cwd;
+        const reported = this.reportedCwds.get(terminal.id);
         try {
-            cwd = (await terminal.cwd).toString();
+            // Windows는 터미널 프로세스의 처음 폴더만 알려 준다. WSL 터미널은 WSL 안에서 읽은 폴더를,
+            // Git Bash·PowerShell·명령 프롬프트는 셸이 프롬프트마다 알린 폴더를 쓴다.
+            if (inWsl) cwd = URI.fromFilePath(inWsl.replace(/\\/g, '/')).toString();
+            else if (reported) cwd = reported;
+            else cwd = (await terminal.cwd).toString();
         } catch {
             // 셸이 막 끝났거나 현재 폴더를 보고하지 않으면 마지막으로 알던 폴더를 쓴다.
             cwd = cwd || terminal.lastCwd?.toString();
@@ -842,6 +951,23 @@ class PaddockWorkspace {
     }
 
     /** 위쪽 터미널 묶음의 시작 터미널. 내부 터미널·파일을 선택해도 같은 묶음을 가리킨다. */
+    /**
+     * 상단 줄 터미널(작업 폴더·묶음 안 탭이 아닌 터미널)을 만든 순서대로 돌려준다.
+     * `terminals.all`은 재시작 때 되살린 순서라 창을 다시 열면 탭 순서가 바뀐다. 만든 시각은 배치 저장에 함께 남아 순서가 유지된다.
+     * 만든 시각이 없는 터미널(확장이 연 터미널 등)은 뒤에 원래 순서대로 둔다.
+     */
+    topTerminals() {
+        const createdAt = terminal => {
+            const [time, counter] = String(terminal.options?.created ?? '').split('-').map(Number);
+            return Number.isFinite(time) && Number.isFinite(counter) ? [time, counter] : [Infinity, 0];
+        };
+        return this.terminals.all
+            .filter(terminal => !model.folderOf(this.state, terminal.id) && !this.innerTerminalRoots.has(terminal.id))
+            .map(terminal => ({ terminal, order: createdAt(terminal) }))
+            .sort((left, right) => left.order[0] - right.order[0] || left.order[1] - right.order[1])
+            .map(({ terminal }) => terminal);
+    }
+
     topTerminalOf(
         widget,
     ) {
@@ -874,19 +1000,52 @@ class PaddockWorkspace {
         return missing;
     }
 
-    async startTerminal(
-        cwd,
-        requested = this.profiles.defaultProfile,
+    /** 이 PC에서 열 수 있는 셸 프로필인지. 실행 파일이 없거나, WSL 배포판이 하나도 없는데 WSL 셸이면 false다. */
+    async isShellUsable(
+        profile,
     ) {
+        const isWsl = profile instanceof ShellTerminalProfile && wsl.isWslShell(profile.shellPath);
+        return Boolean(profile) && profile !== NULL_PROFILE && !(await this.isShellMissing(profile)) && (!isWsl || this.isWslReady);
+    }
+
+    /** 셸 프로필로 터미널을 만든다. 셸은 아직 시작하지 않았다 — 소속을 정한 뒤 openTerminal로 열면 시작된다. */
+    async createTerminal(
+        cwd,
+        profileChoice,
+    ) {
+        // Theia는 셸 프로필 설정을 비동기로 합친다. 첫 실행처럼 일찍 부르면 기본 프로필(Windows는 WSL)이 아직 정해지지 않아
+        // 다른 셸로 열리므로, 합치기가 끝난 뒤 기본 프로필을 읽는다.
+        await this.terminals.mergePreferencesPromise;
+        // WSL 안의 폴더(\\wsl.localhost\…)에서 여는 터미널은 셸을 따로 고르지 않았으면 WSL 셸로 연다. 그 폴더의 도구는 WSL에 있다.
+        const wslProfile = [...this.profiles.all].find(([, item]) => item instanceof ShellTerminalProfile && wsl.isWslShell(item.shellPath))?.[1];
+        const isWslFolder = new URI(cwd).authority.toLowerCase() === 'wsl.localhost';
+        const requested = profileChoice ?? (isWslFolder && wslProfile ? wslProfile : this.profiles.defaultProfile);
         let terminal;
         let profile = requested;
-        // 기본 셸(Windows는 Git Bash)이 이 PC에 없으면 오류 대신 대체 프로필(PowerShell)로 연다. 사용자가 고른 셸은 바꾸지 않는다.
-        const fallback = this.profiles.getProfile(FALLBACK_PROFILE);
-        if (requested === this.profiles.defaultProfile && fallback && fallback !== requested && await this.isShellMissing(requested)) {
-            profile = fallback;
+        // 기본 셸(Windows는 WSL)을 이 PC에서 열 수 없으면 오류 대신 대체 프로필(Git Bash → PowerShell)로 연다. 사용자가 고른 셸은 바꾸지 않는다.
+        if (requested === this.profiles.defaultProfile && !(await this.isShellUsable(requested))) {
+            for (const id of FALLBACK_PROFILES) {
+                const fallback = this.profiles.getProfile(id);
+                if (profile === requested && fallback && await this.isShellUsable(fallback)) profile = fallback;
+            }
         }
         if (profile && profile !== NULL_PROFILE && profile instanceof ShellTerminalProfile) {
-            const selected = profile.modify({ cwd, title: profile.shellPath?.split(/[\\/]/).pop() });
+            let selected = profile.modify({ cwd, title: profile.shellPath?.split(/[\\/]/).pop() });
+            if (wsl.isWslShell(profile.shellPath)) {
+                // WSL 안의 셸에 이 터미널의 id를 표지로 넘겨, 주기 갱신이 WSL 안의 현재 폴더·실행 프로그램을 찾게 한다.
+                // Windows 홈에서 열면 WSL도 Linux 홈에서 시작한다. 작업 폴더(\\wsl.localhost\…)에서 열면 wsl.exe가 그 폴더로 옮겨 준다.
+                const id = `terminal-${crypto.randomUUID()}`;
+                const isWindowsHome = new URI(cwd).path.toString() === this.homePath;
+                selected = selected.modify({
+                    id,
+                    env: { ...selected.options.env, [wsl.MARKER]: id, WSLENV: [this.windowsWslEnv, wsl.MARKER].filter(Boolean).join(':') },
+                    shellArgs: isWindowsHome ? ['--cd', '~', ...(selected.options.shellArgs || [])] : selected.options.shellArgs,
+                });
+            } else if (OS.backend.type() === OS.Type.Windows) {
+                // Windows 셸은 현재 폴더를 알 방법이 없어, 프롬프트마다 셸이 직접 알리게 한다(OSC 7).
+                const report = cwdReport.cwdReportOptions(profile.shellPath, selected.options.shellArgs || []);
+                if (report) selected = selected.modify({ env: { ...selected.options.env, ...report.env }, shellArgs: report.shellArgs });
+            }
             // 절대 경로(/bin/zsh, C:\...\pwsh.exe)만 미리 확인한다. 이름만 적힌 셸은 PATH에서 찾는다.
             if (await this.isShellMissing(profile)) {
                 throw new Error(`Cannot start shell: ${selected.shellPath}. Check the executable path.`);
@@ -897,13 +1056,53 @@ class PaddockWorkspace {
         } else {
             terminal = await this.terminals.newTerminal({ cwd });
         }
-        try {
-            await terminal.start();
-        } catch (error) {
-            terminal.dispose();
-            throw new Error('Cannot start the shell. Check the executable path.', { cause: error });
-        }
         return terminal;
+    }
+
+    /**
+     * 만든 터미널을 본문에 열고, 칸 크기에 맞춘 뒤 셸을 시작한다. 셸을 시작하지 못하면 터미널을 닫고 오류를 낸다.
+     * 기본 크기(80x24)로 셸을 띄운 뒤 칸에 맞춰 줄이면 셸이 시작하는 도중에 크기 변경 신호를 받는다 — Git Bash는 그 뒤 처음 친 글자를 잃었다.
+     * 이미 시작된 터미널(셸이 아닌 프로필이 연 터미널)은 열기만 한다.
+     */
+    async openTerminal(
+        terminal,
+        openOptions,
+    ) {
+        await this.terminals.open(terminal, openOptions);
+        // 시작 전 터미널의 id는 -1이다.
+        if (!(terminal.terminalId >= 0)) {
+            terminal.doResizeTerminal?.();
+            try {
+                await terminal.start();
+            } catch (error) {
+                terminal.dispose();
+                throw new Error('Cannot start the shell. Check the executable path.', { cause: error });
+            }
+        }
+    }
+
+    /**
+     * Git Bash(Windows)에서 터미널 크기가 바뀐 뒤 사용자가 처음 친 키가 사라지지 않게 한다.
+     * Git Bash는 크기 변경 신호를 바로 처리하지 않고 다음 키를 읽을 때 처리하는데, Windows 콘솔에서는 이때 그 키가 함께 사라진다.
+     * 터미널은 처음 열릴 때 화면에 맞춰 크기가 바뀌므로, 창이 뜨자마자 친 첫 글자가 사라졌다. 칸 나누기·창 크기 조절 뒤에도 같다.
+     * 크기가 바뀔 때마다 잠시 뒤 빈 키(NUL)를 먼저 보내 그 키가 대신 사라지게 한다. 사라지지 않고 읽혀도 NUL은 입력 줄 편집기에서
+     * 표시 위치만 기억하는 키(set-mark)라 화면과 입력에 흔적이 없다.
+     */
+    absorbResizeKeyLoss(
+        terminal,
+    ) {
+        const resize = terminal.resizeTerminalProcess.bind(terminal);
+        let size = '';
+        let timer = null;
+        terminal.resizeTerminalProcess = () => {
+            resize();
+            const next = `${terminal.term.cols}x${terminal.term.rows}`;
+            if (next !== size) {
+                size = next;
+                clearTimeout(timer);
+                timer = setTimeout(() => terminal.waitForConnection?.promise.then(connection => connection.getWriteBuffer().writeString('\0').commit()), RESIZE_KEY_GUARD_MS);
+            }
+        };
     }
 
     /** 현재 터미널과 같은 묶음의 터미널 id. 작업 폴더·내부 탭·상단 탭 중 한 줄의 순서다. */
@@ -915,7 +1114,7 @@ class PaddockWorkspace {
         let ids;
         if (folder) ids = model.terminalRows(this.state, folder).map(row => row.id);
         else if (root) ids = [...this.innerTerminalRoots].filter(([, owner]) => owner === root).map(([id]) => id);
-        else ids = this.terminals.all.filter(item => !model.folderOf(this.state, item.id) && !this.innerTerminalRoots.has(item.id)).map(item => item.id);
+        else ids = this.topTerminals().map(item => item.id);
         return ids;
     }
 
@@ -958,10 +1157,10 @@ class PaddockWorkspace {
         const root = this.shownTopTerminal();
         if (!root) throw new Error('Open a top terminal first.');
         const cwd = this.isTerminal(current) ? await this.readCwd(current) : current?.getResourceUri?.()?.parent?.toString();
-        const terminal = await this.startTerminal(cwd || `file://${this.homePath}`);
+        const terminal = await this.createTerminal(cwd || `file://${this.homePath}`);
         this.innerTerminalRoots.set(terminal.id, root);
         await this.saveInnerTabs();
-        await this.terminals.open(terminal, { widgetOptions: this.widgetOptions(split), mode: 'activate' });
+        await this.openTerminal(terminal, { widgetOptions: this.widgetOptions(split), mode: 'activate' });
         await this.refresh();
     }
 
@@ -982,8 +1181,8 @@ class PaddockWorkspace {
     ) {
         const current = this.currentWidget();
         const nearby = cwd || (split && this.isTerminal(current) ? await this.readCwd(current) : null);
-        const terminal = await this.startTerminal(nearby || `file://${this.homePath}`, profile);
-        await this.terminals.open(terminal, { widgetOptions: this.widgetOptions(split), mode: 'activate' });
+        const terminal = await this.createTerminal(nearby || `file://${this.homePath}`, profile);
+        await this.openTerminal(terminal, { widgetOptions: this.widgetOptions(split), mode: 'activate' });
         await this.refresh();
     }
 
@@ -997,13 +1196,13 @@ class PaddockWorkspace {
         if (!folderKey) {
             throw new Error('Choose a work folder first. Run claude or codex in a terminal to add its folder.');
         }
-        const terminal = await this.startTerminal(folderKey);
+        const terminal = await this.createTerminal(folderKey);
         const n_existing = model.terminalsOf(this.state, folderKey).length;
         this.state = model.assignTerminal(this.state, terminal.id, folderKey, n_existing ? `terminal ${n_existing + 1}` : 'terminal');
         this.cwdCache.set(terminal.id, folderKey);
         this.selectedFolder = model.folderOf(this.state, terminal.id);
         await this.save();
-        await this.terminals.open(terminal, { widgetOptions: this.widgetOptions(split), mode: 'activate' });
+        await this.openTerminal(terminal, { widgetOptions: this.widgetOptions(split), mode: 'activate' });
         this.view = 'work';
         await this.refresh();
     }
@@ -1092,18 +1291,41 @@ class PaddockWorkspace {
 
     // -- 표시 도우미 --
 
+    /** 폴더 주소가 속한 홈 폴더의 경로 부분. WSL 폴더(\\wsl.localhost\…)면 WSL 홈, 아니면 이 컴퓨터의 홈이다. 모르면 빈 문자열이다. */
+    homePathOf(
+        key,
+    ) {
+        return new URI(key).authority.toLowerCase() === 'wsl.localhost' ? this.wslHomePath : this.homePath;
+    }
+
+    /**
+     * 화면에 보일 폴더 경로. 홈 아래는 ~로 줄이고, 홈 밖의 WSL 폴더는 배포판 이름을 뺀 Linux 경로로 보인다.
+     *
+     * Examples
+     * --------
+     * | 폴더 주소                                         | 결과                  |
+     * | ------------------------------------------------- | --------------------- |
+     * | `file:///home/me/app` (홈 /home/me)               | `~/app`               |
+     * | `file://wsl.localhost/Ubuntu/home/me/app`         | `~/app` (WSL 홈 같음) |
+     * | `file://wsl.localhost/Ubuntu/srv/data`            | `/srv/data`           |
+     */
     displayPath(
         key,
     ) {
-        const path = new URI(key).path.toString();
-        return this.homePath && path.startsWith(this.homePath) ? `~${path.slice(this.homePath.length)}` : path;
+        const uri = new URI(key);
+        const path = uri.path.toString();
+        const home = this.homePathOf(key);
+        let shown = path;
+        if (home && (path === home || path.startsWith(`${home}/`))) shown = `~${path.slice(home.length)}`;
+        else if (uri.authority.toLowerCase() === 'wsl.localhost') shown = path.replace(/^\/[^/]+/, '') || '/';
+        return shown;
     }
 
     folderName(
         key,
     ) {
         const path = new URI(key).path;
-        const fallback = path.toString() === this.homePath ? '~' : path.base || this.displayPath(key);
+        const fallback = path.toString() === this.homePathOf(key) ? '~' : path.base || this.displayPath(key);
         return model.folderLabel(this.state, key) || model.folderLabel(this.displayWorkState || model.empty(), key) || fallback;
     }
 
@@ -1211,49 +1433,66 @@ class PaddockWorkspace {
 
     async renderWork() {
         const n_revision = ++this.n_sidebarRevision;
-        const node = element('div', 'work-view');
         const current = this.currentWidget();
         const currentId = current?.id;
         const merged = model.mergeWorkPresence(this.state, this.remoteWorkSnapshots);
         this.displayWorkState = merged.state;
         this.remoteWorkRows = merged.remote;
         const rows = model.visibleRows(merged.state, currentId, this.showAll);
-        node.append(this.sectionHeader('WORK', this.workExpanded, () => {
-            this.workExpanded = !this.workExpanded;
-            this.refreshSoon();
-        }));
-        if (this.workExpanded) {
-            const list = element('div', 'work-list');
-            if (!merged.state.folders.length) {
-                // 작업 폴더는 에이전트를 실행하면 생긴다. 등록 버튼 대신 그 다음 행동을 알려 준다.
-                list.append(element('p', 'work-empty', 'No work folders yet.'));
-                const steps = element('ol', 'work-steps');
-                steps.append(element('li', '', 'In a terminal, cd into a project folder.'));
-                steps.append(element('li', '', 'Run claude or codex. The folder appears here with that terminal.'));
-                list.append(steps);
-            }
-            for (const row of rows) {
-                list.append(this.renderRow(row, currentId));
-            }
-            node.append(list);
-        }
         const filesFolder = this.filesFolder();
-        if (filesFolder) {
-            node.append(this.sectionHeader(`${this.folderName(filesFolder).toUpperCase()} FILES`, this.filesExpanded, () => {
-                this.filesExpanded = !this.filesExpanded;
+        if (filesFolder !== this.directoryFolder) {
+            this.directoryEntries.clear();
+            this.directoryFolder = filesFolder;
+        }
+        const directory = filesFolder && this.filesExpanded ? await this.readDirectory(new URI(filesFolder)) : null;
+        // 표시할 내용이 같으면 기존 행을 유지한다. 큰 파일 목록의 재생성·배치가 터미널 입력을 막지 않게 한다.
+        const key = JSON.stringify([
+            merged.state.folders, rows, currentId, this.workExpanded, this.filesExpanded, filesFolder, directory,
+            current?.getResourceUri?.()?.toString(), this.sidebarIndent(),
+            rows.map(row => {
+                const terminal = this.shell.getWidgetById(row.id);
+                return [this.remoteWorkRows.get(row.id), terminal ? this.programOf(terminal) : '', this.doneIds.has(row.id)];
+            }),
+        ]);
+        if (n_revision === this.n_sidebarRevision && this.view === 'work' && key !== this.workRenderKey) {
+            const node = element('div', 'work-view');
+            node.append(this.sectionHeader('WORK', this.workExpanded, () => {
+                this.workExpanded = !this.workExpanded;
                 this.refreshSoon();
             }));
-            if (this.filesExpanded) {
-                const files = element('div', 'file-list');
-                await this.appendDirectory(files, new URI(filesFolder), 0);
-                node.append(files);
+            if (this.workExpanded) {
+                const list = element('div', 'work-list');
+                if (!merged.state.folders.length) {
+                    // 작업 폴더는 에이전트를 실행하면 생긴다. 등록 버튼 대신 그 다음 행동을 알려 준다.
+                    list.append(element('p', 'work-empty', 'No work folders yet.'));
+                    const steps = element('ol', 'work-steps');
+                    steps.append(element('li', '', 'In a terminal, cd into a project folder.'));
+                    steps.append(element('li', '', 'Run claude or codex. The folder appears here with that terminal.'));
+                    list.append(steps);
+                }
+                for (const row of rows) {
+                    list.append(this.renderRow(row, currentId));
+                }
+                node.append(list);
             }
-        }
-        if (this.pointerPressed) {
-            // 파일 목록을 읽는 동안 클릭이 시작됐으면 기존 행을 유지하고 다음 갱신에서 교체한다.
-            this.refreshAfterPointer = true;
-        } else if (n_revision === this.n_sidebarRevision && this.view === 'work') {
-            this.shell.sidebar.node.querySelector('[data-host="work"]').replaceChildren(node);
+            if (filesFolder) {
+                node.append(this.sectionHeader(`${this.folderName(filesFolder).toUpperCase()} FILES`, this.filesExpanded, () => {
+                    this.filesExpanded = !this.filesExpanded;
+                    this.refreshSoon();
+                }));
+                if (this.filesExpanded) {
+                    const files = element('div', 'file-list');
+                    this.appendDirectory(files, directory, 0);
+                    node.append(files);
+                }
+            }
+            if (this.pointerPressed) {
+                // 파일 목록을 읽는 동안 클릭이 시작됐으면 기존 행을 유지하고 다음 갱신에서 교체한다.
+                this.refreshAfterPointer = true;
+            } else {
+                this.shell.sidebar.node.querySelector('[data-host="work"]').replaceChildren(node);
+                this.workRenderKey = key;
+            }
         }
     }
 
@@ -1265,7 +1504,7 @@ class PaddockWorkspace {
         const current = this.currentWidget();
         const root = this.shownTopTerminal();
         const key = this.shownFolder() || (this.isTerminal(current) ? this.cwdCache.get(current.id) : root ? this.cwdCache.get(root) : null) || null;
-        const isHome = key && new URI(key).path.toString() === this.homePath;
+        const isHome = key && new URI(key).path.toString() === this.homePathOf(key);
         return key && !isHome ? key : null;
     }
 
@@ -1417,23 +1656,61 @@ class PaddockWorkspace {
         menu.style.top = `${Math.max(4, Math.min(point.y, window.innerHeight - size.height - 4))}px`;
     }
 
-    async appendDirectory(
-        parent,
+    /** 표시할 파일·폴더와 펼친 하위 목록. 읽기 실패와 빈 폴더를 구별하고, 화면에 쓰지 않는 파일 내용·수정 시각은 담지 않는다. */
+    async readDirectory(
         uri,
-        depth,
     ) {
-        const stat = await this.files.resolve(uri).catch(() => undefined);
-        if (!stat) {
-            parent.append(element('p', 'work-empty', 'Folder not found.'));
-        } else if (!stat.children?.length) {
-            parent.append(element('p', 'work-empty', 'Empty folder.'));
+        const directoryKey = uri.toString();
+        const n_revision = this.n_directoryRevision;
+        let stat;
+        try {
+            const provider = await this.files.activateProvider(uri.scheme);
+            // 폴더가 그대로면 파일 이름 목록 대신 수정 시각 하나만 읽는다. 시각 정보가 없으면 실제 목록을 확인한다.
+            const modified = (await provider.stat(uri)).mtime;
+            const cached = this.directoryEntries.get(directoryKey);
+            if (typeof modified === 'number' && cached?.modified === modified) {
+                stat = cached.stat;
+            } else {
+                stat = await this.files.resolve(uri);
+                if (typeof modified === 'number' && n_revision === this.n_directoryRevision) {
+                    this.directoryEntries.set(directoryKey, { modified, stat });
+                }
+            }
+        } catch {
+            this.directoryEntries.delete(directoryKey);
         }
         const hidden = this.hiddenNames();
         const entries = [...(stat?.children || [])].filter(entry => !hidden.has(entry.name)).sort((left, right) => Number(right.isDirectory) - Number(left.isDirectory) || left.name.localeCompare(right.name));
-        const current = this.currentWidget()?.getResourceUri?.()?.toString();
+        const children = [];
         for (const entry of entries) {
             const key = entry.resource.toString();
-            const expanded = this.expandedDirectories.has(key);
+            const expanded = entry.isDirectory && this.expandedDirectories.has(key);
+            children.push({
+                uri: key,
+                name: entry.name,
+                isDirectory: entry.isDirectory,
+                expanded,
+                directory: expanded ? await this.readDirectory(entry.resource) : null,
+            });
+        }
+        return { found: Boolean(stat), empty: !stat?.children?.length, children };
+    }
+
+    appendDirectory(
+        parent,
+        directory,
+        depth,
+    ) {
+        if (!directory.found) {
+            parent.append(element('p', 'work-empty', 'Folder not found.'));
+        } else if (directory.empty) {
+            parent.append(element('p', 'work-empty', 'Empty folder.'));
+        }
+        const current = this.currentWidget()?.getResourceUri?.()?.toString();
+        for (const entry of directory.children) {
+            const key = entry.uri;
+            const uri = new URI(key);
+            const expanded = entry.expanded;
             const icons = entry.isDirectory ? [codicon(expanded ? 'chevron-down' : 'chevron-right'), codicon(expanded ? 'folder-opened' : 'folder')] : [codicon('file')];
             const row = button([...icons, element('span', 'row-name', entry.name)], `file-row${entry.isDirectory ? '' : ' is-file'}${key === current ? ' is-current' : ''}`, () => this.run(async () => {
                 if (entry.isDirectory) {
@@ -1441,24 +1718,24 @@ class PaddockWorkspace {
                     else this.expandedDirectories.add(key);
                     await this.refresh();
                 } else {
-                    await this.openFile(entry.resource);
+                    await this.openFile(uri);
                 }
             }));
             row.style.paddingLeft = `${8 + depth * this.sidebarIndent()}px`;
-            row.title = entry.resource.path.toString();
+            row.title = uri.path.toString();
             row.dataset.uri = key;
             if (!entry.isDirectory) {
                 row.addEventListener('contextmenu', (event) => {
                     event.preventDefault();
                     const point = { x: event.clientX, y: event.clientY };
-                    const open = () => this.openFileMenu(entry.resource, point);
+                    const open = () => this.openFileMenu(uri, point);
                     if (event.buttons & 2) window.addEventListener('pointerup', () => setTimeout(open), { once: true, capture: true });
                     else open();
                 });
             }
             parent.append(row);
             if (entry.isDirectory && expanded) {
-                await this.appendDirectory(parent, entry.resource, depth + 1);
+                this.appendDirectory(parent, entry.directory, depth + 1);
             }
         }
     }
@@ -1739,7 +2016,7 @@ class PaddockWorkspace {
     renderTabs() {
         const strip = this.shell.tabs.node;
         const current = this.currentWidget();
-        const extras = this.terminals.all.filter(terminal => !model.folderOf(this.state, terminal.id) && !this.innerTerminalRoots.has(terminal.id));
+        const extras = this.topTerminals();
         strip.replaceChildren();
         for (const terminal of extras) {
             const isGroupShown = this.topTerminalOf(current) === terminal.id && !this.shownFolder();
@@ -1869,21 +2146,13 @@ class PaddockWorkspace {
      */
     async renderShellMenu() {
         const menu = this.shell.header.node.querySelector('#shell-menu');
-        const entries = [];
-        for (const [id, profile] of this.profiles.all) {
-            const shellPath = (profile instanceof ShellTerminalProfile && profile.shellPath) || (id === 'SHELL' ? this.systemShellPath : '');
-            const isUsable = profile !== NULL_PROFILE && !(await this.isShellMissing(profile));
-            const isDuplicate = entries.some(entry => shellPath && entry.shellPath === shellPath);
-            if (isUsable && !isDuplicate) {
-                const shellName = shellPath ? shellPath.split(/[\\/]/).pop().replace(/\.exe$/i, '') : id;
-                entries.push({ id, profile, shellPath, name: id === 'SHELL' ? shellName : id });
-            }
-        }
+        const entries = await this.shellEntries();
         menu.replaceChildren();
-        for (const { profile, shellPath, name } of entries) {
+        for (const { profile, shellPath, name, place } of entries) {
             const isDefault = profile === this.profiles.defaultProfile;
             const label = isDefault ? `${name} (default)` : name;
-            const item = button([codicon(isDefault ? 'check' : 'blank'), element('span', 'shell-option-name', name), element('span', 'shell-option-meta', isDefault ? 'default' : '')], 'shell-option', () => {
+            const meta = [place, isDefault ? 'default' : ''].filter(Boolean).join(' · ');
+            const item = button([codicon(isDefault ? 'check' : 'blank'), element('span', 'shell-option-name', name), element('span', 'shell-option-meta', meta)], 'shell-option', () => {
                 menu.hidePopover();
                 this.run(() => this.newExtraTerminal({ profile }));
             });
@@ -1891,6 +2160,28 @@ class PaddockWorkspace {
             item.title = shellPath || label;
             menu.append(item);
         }
+    }
+
+    /**
+     * 이 컴퓨터에서 열 수 있는 셸 프로필 목록. 실행 파일이 없는 셸은 빼고, 같은 실행 파일을 가리키는 항목은 한 번만 넣는다.
+     * 'SHELL'은 운영체제 기본 셸을 가리키는 Theia 내부 이름이라 실제 실행 파일 이름(bash·zsh 등)을 이름으로 쓴다.
+     */
+    async shellEntries() {
+        const entries = [];
+        const isWindows = OS.backend.type() === OS.Type.Windows;
+        // Windows 경로는 대소문자를 가리지 않아 C:\WINDOWS\system32\cmd.exe와 C:\Windows\System32\cmd.exe가 같은 셸이다.
+        const sameFile = (left, right) => (isWindows ? left.toLowerCase() === right.toLowerCase() : left === right);
+        for (const [id, profile] of this.profiles.all) {
+            const shellPath = (profile instanceof ShellTerminalProfile && profile.shellPath) || (id === 'SHELL' ? this.systemShellPath : '');
+            const isDuplicate = entries.some(entry => shellPath && sameFile(entry.shellPath, shellPath));
+            if (!isDuplicate && await this.isShellUsable(profile)) {
+                const shellName = shellPath ? shellPath.split(/[\\/]/).pop().replace(/\.exe$/i, '') : id;
+                // Windows에서는 셸이 Windows에서 도는지 WSL의 Linux에서 도는지 함께 보인다. 같은 bash라도 쓰는 도구와 파일이 다르다.
+                const place = !isWindows ? '' : wsl.isWslShell(shellPath) ? 'Linux' : 'Windows';
+                entries.push({ id, profile, shellPath, name: id === 'SHELL' ? shellName : id, place });
+            }
+        }
+        return entries;
     }
 
     // -- 빠른 설정 --
@@ -1999,6 +2290,21 @@ class PaddockWorkspace {
         fontRow.append(element('span', 'quick-label', 'Terminal font'), element('span', 'quick-space'), select);
         panel.append(fontRow);
 
+        // 새 터미널(＋)이 여는 셸. 고른 값은 이 운영체제의 기본 셸 설정에 저장되고, 이미 열린 터미널은 그대로다.
+        const shellRow = element('label', 'quick-row');
+        const shellSelect = element('select', 'quick-select');
+        shellRow.append(element('span', 'quick-label', 'Default shell'), element('span', 'quick-space'), shellSelect);
+        panel.append(shellRow);
+        void this.shellEntries().then((entries) => {
+            for (const { id, name, place } of entries) {
+                const option = element('option', '', place ? `${name} (${place})` : name);
+                option.value = id;
+                option.selected = this.profiles.getProfile(id) === this.profiles.defaultProfile;
+                shellSelect.append(option);
+            }
+        });
+        shellSelect.addEventListener('change', () => this.run(() => this.setPreference(`terminal.integrated.defaultProfile.${OS_PREFERENCE_KEY[OS.backend.type()]}`, shellSelect.value)));
+
         const interfaceFont = this.preferences.get('paddock.interfaceFontFamily', '');
         const interfaceRow = element('label', 'quick-row');
         const interfaceSelect = element('select', 'quick-select');
@@ -2030,6 +2336,18 @@ class PaddockWorkspace {
         increaseIndent.disabled = indent >= APPEARANCE.SIDEBAR_INDENT_MAX;
         indentRow.append(element('span', 'quick-label', 'Sidebar indent'), element('span', 'quick-space'), decreaseIndent, element('span', 'quick-value', `${indent}px`), increaseIndent);
         panel.append(indentRow);
+
+        // 상태 줄 오른쪽 항목을 켜고 끈다. 상태 줄에서 항목을 눌러도 같은 설정이 바뀐다.
+        panel.append(element('p', 'quick-title quick-section', 'Status bar'));
+        for (const [preferenceName, label] of [[STATUS_ITEMS.CLAUDE, 'Claude usage'], [STATUS_ITEMS.CODEX, 'Codex usage'], [STATUS_ITEMS.MEMORY, 'Memory']]) {
+            const row = element('label', 'quick-row');
+            const checkbox = element('input', 'quick-check');
+            checkbox.type = 'checkbox';
+            checkbox.checked = this.isStatusItemOn(preferenceName);
+            checkbox.addEventListener('change', () => this.run(() => this.setPreference(preferenceName, checkbox.checked)));
+            row.append(element('span', 'quick-label', label), element('span', 'quick-space'), checkbox);
+            panel.append(row);
+        }
 
         const all = button([codicon('settings-gear'), element('span', '', 'All settings')], 'quick-all', () => {
             panel.hidePopover();
@@ -2163,78 +2481,143 @@ class PaddockWorkspace {
         return body;
     }
 
+    /** 상태 줄의 Memory 항목을 그린다. 꺼져 있으면 다시 켜는 이름표만 둔다. */
     async refreshMemory() {
-        try {
-            const { percent } = await this.fetchJson('/paddock/memory');
-            if (percent !== null) {
-                this.fillMeter(this.shell.footer.node.querySelector('[data-meter="memory"]'), percent, `System memory in use: ${percent}%`);
+        const host = this.shell.footer.node.querySelector('.memory-usage');
+        const isOn = this.isStatusItemOn(STATUS_ITEMS.MEMORY);
+        if (host.dataset.state !== (isOn ? 'on' : 'off')) {
+            host.dataset.state = isOn ? 'on' : 'off';
+            host.replaceChildren(isOn ? this.memoryGroup() : this.offGroup('memory', 'Memory', STATUS_ITEMS.MEMORY));
+        }
+        if (isOn) {
+            try {
+                const { percent } = await this.fetchJson('/paddock/memory');
+                if (percent !== null) {
+                    this.fillMeter(host.querySelector('[data-meter="memory"]'), percent, `System memory in use: ${percent}%. Click to hide.`);
+                }
+            } catch {
+                // 요청이 실패하면 마지막 값을 그대로 둔다. 처음부터 실패면 "—"가 남는다.
             }
-        } catch {
-            // 요청이 실패하면 마지막 값을 그대로 둔다. 처음부터 실패면 "—"가 남는다.
         }
     }
 
-    /**
-     * Claude·Codex 사용량 게이지를 그린다. 값은 각 CLI가 터미널에서 실행될 때 남긴 마지막 기록이다.
-     * Claude 표시는 처음 한 번 자동으로 켜고(Claude Code 상태 줄에 Paddock 명령 등록), 끄기·켜기는 Claude 게이지 하나로 한다.
-     */
+    /** 켜진 Memory 항목. 누르면 숨긴다. */
+    memoryGroup() {
+        const group = this.usageGroup('memory', 'Memory', 'button');
+        group.title = 'Click to hide memory';
+        group.addEventListener('click', () => this.run(() => this.setPreference(STATUS_ITEMS.MEMORY, false)));
+        const meter = this.meter('memory', '', null, 'System memory in use. Click to hide.');
+        meter.querySelector('.meter-percent').textContent = '—';
+        group.append(meter);
+        return group;
+    }
+
+    /** 꺼진 상태 줄 항목: 표지·이름만 흐리게 보이고, 누르면 다시 켠다. 완전히 숨기면 다시 켤 곳이 없어 남겨 둔다. */
+    offGroup(
+        source,
+        name,
+        preferenceName,
+    ) {
+        const group = this.usageGroup(source, name, 'button');
+        group.classList.add('is-off');
+        group.title = `${name} is hidden. Click to show.`;
+        group.setAttribute('aria-pressed', 'false');
+        group.addEventListener('click', () => this.run(() => this.setPreference(preferenceName, true)));
+        return group;
+    }
+
+    /** 상태 줄 항목이 켜져 있는지. 설정이 없으면 켜짐이다. */
+    isStatusItemOn(
+        preferenceName,
+    ) {
+        return this.preferences.get(preferenceName, true) !== false;
+    }
+
     async refreshUsage() {
         let data = null;
         try {
             data = await this.fetchJson('/paddock/usage');
+            data = await this.syncClaudeUsage(data);
         } catch {
-            data = null;
-        }
-        if (data?.claude.state === 'unset' && !this.claudeAutoTried) {
-            this.claudeAutoTried = true;
-            await this.setClaudeUsage(true, true);
-            data = await this.fetchJson('/paddock/usage');
+            data = data ?? null;
         }
         const host = this.shell.footer.node.querySelector('.ai-usage');
+        const showsClaude = this.isStatusItemOn(STATUS_ITEMS.CLAUDE);
+        const showsCodex = this.isStatusItemOn(STATUS_ITEMS.CODEX);
         // 값이 그대로면 다시 그리지 않는다(마우스를 올린 말풍선이 깜빡이지 않게). 분 단위가 바뀌면 문구를 새로 쓴다.
-        const key = JSON.stringify([data, Math.floor(Date.now() / 60000)]);
+        const key = JSON.stringify([data, showsClaude, showsCodex, Math.floor(Date.now() / 60000)]);
         if (key !== this.usageKey && data) {
             this.usageKey = key;
             host.replaceChildren();
             const now = Math.floor(Date.now() / 1000);
             const updated = (seconds) => (seconds ? ` · updated ${usage.duration(Math.max(0, now - seconds))} ago` : '');
-            const toggle = () => this.run(() => this.toggleClaudeUsage());
             // 출처(Claude·Codex)마다 한 묶음: 표지·이름을 한 번 쓰고 그 뒤에 창(5h·week)별 게이지를 둔다.
             // 막대 색은 사용량 수준을 뜻하므로, 출처는 색이 아니라 표지·이름·구분선으로 가른다.
             const tooltip = (source, window, updatedAt) => `${source} ${usage.windowName(window.label)}: ${usage.describe(window, now)}${updated(updatedAt)}`;
-            if (data.claude.state === 'on') {
+            if (showsClaude) {
                 const group = this.usageGroup('claude', 'Claude', 'button');
-                group.title = 'Click to turn off Claude usage';
-                group.addEventListener('click', toggle);
-                const windows = usage.currentWindows(data.claude.windows, now);
+                group.title = 'Click to hide Claude usage';
+                group.addEventListener('click', () => this.run(() => this.hideClaudeUsage()));
+                const windows = data.claude.state === 'on' ? usage.currentWindows(data.claude.windows, now) : [];
                 if (!windows.length) {
-                    group.append(this.meter('claude', '', null, 'Claude usage appears after Claude Code answers in a terminal (Pro·Max plans). Click to turn off.'));
+                    group.append(this.meter('claude', '', null, 'Claude usage appears after Claude Code answers in a terminal (Pro·Max plans). Click to hide.'));
                 }
                 for (const window of windows) {
-                    group.append(this.meter(`claude-${window.label}`, window.label, window.used, `${tooltip('Claude', window, data.claude.updatedAt)}. Click to turn off.`));
+                    group.append(this.meter(`claude-${window.label}`, window.label, window.used, `${tooltip('Claude', window, data.claude.updatedAt)}. Click to hide.`));
                 }
                 host.append(group);
             } else {
-                const group = this.usageGroup('claude', null, 'span');
-                const button = element('button', 'usage-toggle');
-                button.type = 'button';
-                button.append(element('span', '', 'Show Claude usage'));
-                button.addEventListener('click', toggle);
-                group.append(button);
-                host.append(group);
+                host.append(this.offGroup('claude', 'Claude', STATUS_ITEMS.CLAUDE));
             }
-            const codexWindows = usage.currentWindows(data.codex.windows, now);
-            if (codexWindows.length) {
-                const group = this.usageGroup('codex', 'Codex', 'span');
+            if (showsCodex) {
+                const group = this.usageGroup('codex', 'Codex', 'button');
+                group.title = 'Click to hide Codex usage';
+                group.addEventListener('click', () => this.run(() => this.setPreference(STATUS_ITEMS.CODEX, false)));
+                const codexWindows = usage.currentWindows(data.codex.windows, now);
+                if (!codexWindows.length) {
+                    group.append(this.meter('codex', '', null, 'Codex usage appears after Codex runs in a terminal. Click to hide.'));
+                }
                 for (const window of codexWindows) {
-                    group.append(this.meter(`codex-${window.label}`, window.label, window.used, tooltip('Codex', window, data.codex.updatedAt)));
+                    group.append(this.meter(`codex-${window.label}`, window.label, window.used, `${tooltip('Codex', window, data.codex.updatedAt)}. Click to hide.`));
                 }
                 host.append(group);
+            } else {
+                host.append(this.offGroup('codex', 'Codex', STATUS_ITEMS.CODEX));
             }
         }
     }
 
-    /** 사용량 출처 한 묶음의 틀(표지 + 이름). `name`이 null이면 이름을 생략한다(켜기 버튼이 대신 말한다). */
+    /**
+     * Claude 표시 설정과 Claude Code 상태 줄 등록을 맞추고, 바뀌었으면 사용량을 다시 읽어 돌려준다.
+     * 표시를 켜면 Paddock 상태 줄을 넣고(처음 한 번은 자동), 끄면 원래 상태 줄로 되돌린다.
+     * 이전 버전에서 Claude 묶음을 눌러 꺼 둔 상태(설정 없이 꺼짐)는 표시 설정을 끈 것으로 옮긴다.
+     * 같은 목표로는 한 번만 시도한다 — Node.js가 없어 실패해도 주기마다 오류를 띄우지 않는다.
+     */
+    async syncClaudeUsage(
+        data,
+    ) {
+        const inspected = this.preferences.inspect(STATUS_ITEMS.CLAUDE);
+        const isChosen = inspected?.globalValue !== undefined || inspected?.workspaceValue !== undefined;
+        const wants = this.isStatusItemOn(STATUS_ITEMS.CLAUDE);
+        let next = data;
+        if (data.claude.state === 'off' && !isChosen) {
+            await this.setPreference(STATUS_ITEMS.CLAUDE, false);
+        } else if (data.claude.state === 'unset' && wants && !this.claudeAutoTried) {
+            this.claudeAutoTried = true;
+            await this.setClaudeUsage(true, true);
+            next = await this.fetchJson('/paddock/usage');
+        } else if (this.claudeSyncTarget !== wants && ((wants && data.claude.state === 'off') || (!wants && data.claude.state === 'on'))) {
+            this.claudeSyncTarget = wants;
+            try {
+                await this.setClaudeUsage(wants);
+            } catch (error) {
+                this.messages.error(error instanceof Error ? error.message : String(error));
+            }
+            next = await this.fetchJson('/paddock/usage');
+        }
+        return next;
+    }
+
     usageGroup(
         source,
         name,
@@ -2252,34 +2635,28 @@ class PaddockWorkspace {
         enabled,
         isAutomatic = false,
     ) {
-        await this.fetchJson('/paddock/usage/claude', 'POST', `?enabled=${enabled}`);
-        if (isAutomatic) {
+        const { state } = await this.fetchJson('/paddock/usage/claude', 'POST', `?enabled=${enabled}${isAutomatic ? '&automatic=true' : ''}`);
+        // 자동 켜기는 다른 Paddock이 이미 상태 줄을 쓰고 있으면 건너뛴다(state가 'unset'으로 남음). 그때는 알리지 않는다.
+        if (isAutomatic && state === 'on') {
             // 사용자 설정 파일을 바꾼 일이라 처음 한 번 알리고 바로 끌 수 있게 한다.
             // 알림 버튼을 기다리는 동안 게이지 그리기가 멈추지 않게 결과는 따로 처리한다.
             this.messages.info('Claude usage is now shown in the status bar (added a status line to Claude Code settings).', 'Turn off').then((action) => {
                 if (action === 'Turn off') {
-                    this.run(async () => {
-                        await this.setClaudeUsage(false);
-                        await this.refreshUsage();
-                    });
+                    this.run(() => this.setPreference(STATUS_ITEMS.CLAUDE, false));
                 }
             });
         }
     }
 
-    async toggleClaudeUsage() {
-        const { claude } = await this.fetchJson('/paddock/usage');
-        const turnOn = claude.state !== 'on';
-        const confirmed = turnOn || await new ConfirmDialog({
-            title: 'Turn off Claude usage',
+    /** Claude 항목을 숨긴다. Claude Code 설정의 상태 줄도 원래대로 되돌리므로 먼저 확인받는다. */
+    async hideClaudeUsage() {
+        const confirmed = await new ConfirmDialog({
+            title: 'Hide Claude usage',
             msg: 'Paddock will remove its status line from Claude Code settings and restore the one you had before.',
-            ok: 'Turn off',
+            ok: 'Hide',
             cancel: 'Cancel',
         }).open();
-        if (confirmed) {
-            await this.setClaudeUsage(turnOn);
-            await this.refreshUsage();
-        }
+        if (confirmed) await this.setPreference(STATUS_ITEMS.CLAUDE, false);
     }
 
     async refreshRemote() {

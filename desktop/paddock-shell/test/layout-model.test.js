@@ -56,3 +56,14 @@ test('C-layout.8: 배치의 위젯을 선택된 탭으로 만든다', () => {
     assert.equal(layout.select(area, b).children[1].currentIndex, 1);
     assert.equal(layout.includes(area, b), true);
 });
+
+test('C-layout.9: 여러 묶음의 배치를 나란히 이으면 묶음별로 다시 나눌 때 각 묶음의 칸 나눔이 돌아온다', () => {
+    const shown = split([tabs([w('a')]), split([tabs([w('b')]), tabs([w('c')])], undefined, 'vertical')]);
+    const other = split([tabs([w('x')]), tabs([w('y')])]);
+    const merged = layout.besides([shown, null, other]);
+    assert.deepEqual(ids(merged), ['a', 'b', 'c', 'x', 'y']);
+    assert.deepEqual(layout.prune(merged, widget => ['a', 'b', 'c'].includes(widget.id)), shown);
+    assert.deepEqual(layout.prune(merged, widget => ['x', 'y'].includes(widget.id)), other);
+    assert.equal(layout.besides([null, other]), other);
+    assert.equal(layout.besides([null]), null);
+});
