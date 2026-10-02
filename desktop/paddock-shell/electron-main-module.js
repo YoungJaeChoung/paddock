@@ -4,11 +4,12 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { app } = require('electron');
+const { app, screen } = require('electron');
 const { ContainerModule, injectable, decorate } = require('@theia/core/shared/inversify');
 const { ElectronMainApplication } = require('@theia/core/lib/electron-main/electron-main-application');
 const { isOSX } = require('@theia/core/lib/common/os');
 const { moveLegacyDirectory } = require('./legacy-directory');
+const { isViewportStale } = require('./window-fit');
 
 // macOS에서만 의미 있는 창 옵션. Windows에서 titleBarStyle을 넘기면 창 틀과 닫기 버튼이 사라진다.
 const MAC_ONLY_WINDOW_OPTIONS = ['titleBarStyle', 'trafficLightPosition'];
@@ -97,12 +98,52 @@ function useWslGpu() {
 }
 useWslGpu();
 
+// 최대화하거나 모니터 배율이 바뀐 뒤 화면이 창 크기를 따라왔는지 확인하기까지 기다리는 시간.
+// 배율이 다른 모니터에서는 정상이어도 화면이 따라오는 데 0.7초쯤 걸려, 그보다 넉넉히 둔다.
+const MAXIMIZE_CHECK_MS = 1500;
+
+/**
+ * 최대화한 창의 내용이 창 크기를 따라오지 못하고 멈춰 있으면 최대화를 한 번 풀었다 다시 건다.
+ * Windows에서 최대화한 창이 배율(DPI)이 다른 모니터에 걸리면 창 틀만 커지고 내용은 이전 크기로 남는 경우가 있다 —
+ * 사용자가 최소화했다 복원해야 맞춰졌다. 정상이면 아무것도 하지 않고, 한 번 바로잡은 뒤에는 다시 시도하지 않는다.
+ */
+function keepMaximizedContentFitted(
+    window,
+) {
+    let timer = null;
+    // 바로잡으려고 다시 최대화하면 이 확인이 또 돈다. 맞춰지면 0으로 돌리고, 맞춰지지 않아도 한 번만 다시 건다.
+    let n_refits = 0;
+    const check = () => {
+        clearTimeout(timer);
+        timer = setTimeout(async () => {
+            if (!window.isDestroyed() && window.isMaximized() && !window.isMinimized()) {
+                const viewport = await window.webContents.executeJavaScript('[innerWidth, innerHeight]').catch(() => null);
+                const isStale = Boolean(viewport) && isViewportStale(window.getContentSize(), viewport, window.webContents.getZoomFactor());
+                if (!isStale) {
+                    n_refits = 0;
+                } else if (n_refits < 1) {
+                    n_refits += 1;
+                    window.unmaximize();
+                    window.maximize();
+                }
+            }
+        }, MAXIMIZE_CHECK_MS);
+    };
+    window.on('maximize', check);
+    screen.on('display-metrics-changed', check);
+    window.once('closed', () => {
+        clearTimeout(timer);
+        screen.removeListener('display-metrics-changed', check);
+    });
+}
+
 /** Paddock 설정을 적용한 뒤 Theia 데스크톱 앱을 시작한다. */
 class PaddockMainApplication extends ElectronMainApplication {
     async start(
         config,
     ) {
         usePaddockDirectories();
+        if (process.platform === 'win32') app.on('browser-window-created', (event, window) => keepMaximizedContentFitted(window));
         await super.start(config);
     }
 

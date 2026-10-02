@@ -148,7 +148,7 @@
     "package:mac": "node scripts/package.cjs mac",
     "package:win": "node scripts/package.cjs win",
     "download:plugins": "theia download:plugins --rate-limit=15 --parallel=false",
-    "test": "node --test paddock-shell/test/work-model.test.js paddock-shell/test/work-presence.test.js paddock-shell/test/usage-model.test.js paddock-shell/test/agent-model.test.js paddock-shell/test/legacy-directory.test.js paddock-shell/test/layout-model.test.js paddock-shell/test/wsl-terminals.test.js paddock-shell/test/windows-processes.test.js paddock-shell/test/cwd-report.test.js"
+    "test": "node --test paddock-shell/test/work-model.test.js paddock-shell/test/work-presence.test.js paddock-shell/test/usage-model.test.js paddock-shell/test/agent-model.test.js paddock-shell/test/legacy-directory.test.js paddock-shell/test/layout-model.test.js paddock-shell/test/wsl-terminals.test.js paddock-shell/test/windows-processes.test.js paddock-shell/test/cwd-report.test.js paddock-shell/test/window-fit.test.js"
   },
   "theiaPluginsDir": "plugins",
   "theiaPlugins": {
