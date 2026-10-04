@@ -30,6 +30,7 @@ function bashArguments(
     provider,
     configDir,
     browserDirectory,
+    cliArguments,
 ) {
     const variable = provider === 'claude' ? 'CLAUDE_CONFIG_DIR' : 'CODEX_HOME';
     // Bash reads the user's aliases and PATH before applying the selected account.
@@ -48,7 +49,7 @@ function bashArguments(
         'PROMPT_COMMAND=("${__paddock_account_prompt[@]}")',
         'unset __paddock_account_prompt',
         'unset -f __paddock_start_account',
-        `if command -v ${provider} >/dev/null 2>&1; then command ${provider}; else printf '%s\\n' ${quotePosix(`${AccountLaunch.PROVIDERS[provider]} CLI was not found. Install it in this environment, then run ${provider}.`)}; fi`,
+        `if command -v ${provider} >/dev/null 2>&1; then command ${provider}${cliArguments.map(argument => ` ${quotePosix(argument)}`).join('')}; else printf '%s\\n' ${quotePosix(`${AccountLaunch.PROVIDERS[provider]} CLI was not found. Install it in this environment, then run ${provider}.`)}; fi`,
         '}',
         'PROMPT_COMMAND=__paddock_start_account',
     ].join('\n');
@@ -60,6 +61,7 @@ function powerShellArguments(
     provider,
     configDir,
     shellPath,
+    cliArguments,
 ) {
     const variable = provider === 'claude' ? 'CLAUDE_CONFIG_DIR' : 'CODEX_HOME';
     const report = cwdReportOptions(shellPath);
@@ -73,7 +75,7 @@ function powerShellArguments(
         `$env:${variable} = ${quotePowerShell(configDir)}`,
         `Write-Host ${quotePowerShell(`${AccountLaunch.PROVIDERS[provider]} account environment. Sign in through the official CLI if prompted.`)}`,
         `$paddockCli = Get-Command ${provider} -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1`,
-        `if ($paddockCli) { & $paddockCli.Source } else { Write-Host ${quotePowerShell(`${AccountLaunch.PROVIDERS[provider]} CLI was not found. Install it in this environment, then run ${provider}.`)} }`,
+        `if ($paddockCli) { & $paddockCli.Source${cliArguments.map(argument => ` ${quotePowerShell(argument)}`).join('')} } else { Write-Host ${quotePowerShell(`${AccountLaunch.PROVIDERS[provider]} CLI was not found. Install it in this environment, then run ${provider}.`)} }`,
     ].join('; ');
     return ['-NoLogo', '-NoExit', '-EncodedCommand', encodePowerShell(script)];
 }
@@ -86,10 +88,18 @@ function accountTerminalOptions(
     prepared,
     { cwd, isWindows, wslEnv = '' },
 ) {
-    const { profile, configDir, browserDirectory } = prepared;
+    const { profile, configDir, browserDirectory, resume } = prepared;
     if (!Object.hasOwn(AccountLaunch.PROVIDERS, profile.provider)) throw new Error('Choose a Claude or Codex account.');
     if (typeof configDir !== 'string' || !configDir || /[\u0000-\u001f\u007f]/.test(configDir)) throw new Error('The account configuration path is invalid.');
     if (browserDirectory !== undefined && (typeof browserDirectory !== 'string' || !browserDirectory.startsWith('/') || /[\u0000-\u001f\u007f]/.test(browserDirectory))) throw new Error('The account browser path is invalid.');
+    const cliArguments = [];
+    if (resume) {
+        if (profile.provider !== 'claude' || resume.provider !== profile.provider || resume.runtime !== profile.runtime
+            || (profile.runtime === 'wsl' && resume.wslDistribution?.toLowerCase() !== profile.wslDistribution.toLowerCase())) throw new Error('The conversation belongs to another CLI or environment.');
+        if (typeof resume.transcriptPath !== 'string' || !/^(?:\/|[a-z]:[\\/]|\\\\)/i.test(resume.transcriptPath)
+            || /[\u0000-\u001f\u007f]/.test(resume.transcriptPath)) throw new Error('The conversation path is invalid.');
+        cliArguments.push('--resume', resume.transcriptPath);
+    }
     const variable = profile.provider === 'claude' ? 'CLAUDE_CONFIG_DIR' : 'CODEX_HOME';
     const env = Object.fromEntries(AccountLaunch.AUTH_ENV.map(name => [name, null]));
     env[variable] = configDir;
@@ -99,21 +109,36 @@ function accountTerminalOptions(
     const options = {
         cwd, title: `${AccountLaunch.PROVIDERS[profile.provider]} · ${profile.label}`,
         paddockAccount: { ...profile }, env,
+        ...(browserDirectory ? { paddockBrowserDirectory: browserDirectory } : {}),
+        ...(resume ? { paddockResume: { ...resume } } : {}),
     };
     if (profile.runtime === 'wsl') {
         if (!isWindows || !profile.wslDistribution) throw new Error('Open this WSL account on its Windows device.');
         options.shellPath = 'C:\\Windows\\System32\\wsl.exe';
-        options.shellArgs = ['-d', profile.wslDistribution, '--cd', cwd, '-e', '/bin/bash', ...bashArguments(profile.provider, configDir, browserDirectory)];
+        options.shellArgs = ['-d', profile.wslDistribution, '--cd', cwd, '-e', '/bin/bash', ...bashArguments(profile.provider, configDir, browserDirectory, cliArguments)];
         // Keep existing WSL forwarding rules; Linux startup clears auth selectors and reapplies the chosen account.
         options.env = { ...env, WSLENV: wslEnv };
     } else if (isWindows) {
         options.shellPath = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
-        options.shellArgs = powerShellArguments(profile.provider, configDir, options.shellPath);
+        options.shellArgs = powerShellArguments(profile.provider, configDir, options.shellPath, cliArguments);
     } else {
         options.shellPath = '/bin/bash';
-        options.shellArgs = bashArguments(profile.provider, configDir, browserDirectory);
+        options.shellArgs = bashArguments(profile.provider, configDir, browserDirectory, cliArguments);
     }
     return options;
 }
 
-module.exports = { AccountLaunch, accountTerminalOptions, quotePosix };
+/** Keeps restored launches aligned with the conversation last observed in this account terminal. */
+function refreshAccountResume(
+    options,
+    resume,
+) {
+    const profile = options.paddockAccount;
+    const variable = profile?.provider === 'claude' ? 'CLAUDE_CONFIG_DIR' : 'CODEX_HOME';
+    const prepared = { profile, configDir: options.env?.[variable], browserDirectory: options.paddockBrowserDirectory, ...(resume ? { resume } : {}) };
+    const cwd = profile?.runtime === 'wsl' ? options.shellArgs?.[3] : options.cwd;
+    const refreshed = accountTerminalOptions(prepared, { cwd, isWindows: /^[a-z]:[\\/]/i.test(options.shellPath || ''), wslEnv: options.env?.WSLENV || '' });
+    return { ...options, ...refreshed, cwd: options.cwd, env: { ...options.env, ...refreshed.env }, paddockResume: resume ? { ...resume } : undefined };
+}
+
+module.exports = { AccountLaunch, accountTerminalOptions, refreshAccountResume, quotePosix };

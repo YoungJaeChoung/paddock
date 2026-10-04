@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { AccountLaunch, accountTerminalOptions, quotePosix } = require('../account-launch');
+const { AccountLaunch, accountTerminalOptions, refreshAccountResume, quotePosix } = require('../account-launch');
 
 function preparedAccount(
     provider,
@@ -112,4 +112,38 @@ test('L07 WSL browser selection survives shell startup and keeps helper paths co
         assert.equal(result.status, 0, result.stderr);
         assert.ok(result.stdout.includes(`BROWSER_FIXTURE|paddock-open-browser|${helper}`), result.stdout + result.stderr);
     }
+});
+
+test('C-ACCOUNT-RESUME-L01 passes the original conversation path as a quoted argument while choosing another account config', () => {
+    const resume = { provider: 'claude', sessionId: '00000000-0000-4000-8000-000000000011', runtime: 'native', transcriptPath: "/tmp/old account's folder/session.jsonl" };
+    const prepared = { ...preparedAccount('claude', 'native', '/tmp/new-account'), resume };
+    const options = accountTerminalOptions(prepared, { cwd: '/tmp/work', isWindows: false });
+    assert.equal(options.env.CLAUDE_CONFIG_DIR, '/tmp/new-account');
+    assert.deepEqual(options.paddockResume, resume);
+    assert.ok(options.shellArgs.at(-1).includes('--resume'));
+    const windows = accountTerminalOptions({ ...prepared, resume: { ...resume, transcriptPath: "C:\\old account's folder\\session.jsonl" } }, { cwd: 'C:\\work', isWindows: true });
+    const decoded = Buffer.from(windows.shellArgs.at(-1), 'base64').toString('utf16le');
+    assert.ok(decoded.includes("'--resume' 'C:\\old account''s folder\\session.jsonl'"));
+    assert.throws(() => accountTerminalOptions({ ...prepared, resume: { ...resume, transcriptPath: '/tmp/a\nb' } }, { cwd: '/tmp', isWindows: false }), /conversation path/);
+    assert.throws(() => accountTerminalOptions({ ...prepared, resume: { ...resume, provider: 'codex' } }, { cwd: '/tmp', isWindows: false }), /another CLI/);
+});
+
+test('C-ACCOUNT-RESUME-L02 refreshed restoration uses the latest conversation and preserves WSL browser and terminal markers', () => {
+    const prepared = { ...preparedAccount('claude', 'wsl', '/home/test/accounts/target'), browserDirectory: '/home/test/accounts/target/paddock-bin' };
+    const original = accountTerminalOptions(prepared, { cwd: '/home/test/work', isWindows: true, wslEnv: 'CUSTOM:PADDOCK_TERMINAL' });
+    original.env.PADDOCK_TERMINAL = 'terminal-123';
+    original.id = 'terminal-123';
+    original.cwd = 'file://wsl.localhost/Ubuntu%20Test/home/test/work';
+    const resumed = refreshAccountResume(original, { provider: 'claude', runtime: 'wsl', wslDistribution: 'Ubuntu Test', transcriptPath: '/home/test/source/projects/work/new.jsonl' });
+    assert.equal(resumed.id, original.id);
+    assert.equal(resumed.cwd, original.cwd);
+    assert.equal(resumed.shellArgs[3], '/home/test/work');
+    assert.equal(resumed.env.PADDOCK_TERMINAL, 'terminal-123');
+    assert.equal(resumed.env.WSLENV, original.env.WSLENV);
+    assert.equal(resumed.paddockBrowserDirectory, prepared.browserDirectory);
+    assert.ok(resumed.shellArgs.at(-1).includes('/home/test/source/projects/work/new.jsonl'));
+    const cleared = refreshAccountResume(resumed, null);
+    assert.equal(cleared.paddockResume, undefined);
+    assert.equal(cleared.shellArgs.at(-1).includes('--resume'), false);
+    assert.equal(cleared.env.CLAUDE_CONFIG_DIR, original.env.CLAUDE_CONFIG_DIR);
 });

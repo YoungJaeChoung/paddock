@@ -10,6 +10,7 @@ const { BackendApplicationContribution } = require('@theia/core/lib/node/backend
 const { ConnectionHandler, RpcConnectionHandler } = require('@theia/core/lib/common/messaging');
 const { AccountProfile, AccountProfiles } = require('./account-profiles');
 const { AccountUsage } = require('./account-usage');
+const { AccountSessions } = require('./account-session');
 const { readJson, codexUsage } = require('./usage-files');
 const { applyStatusLine } = require('./claude-usage-settings');
 const { memoryPercent } = require('./work-model');
@@ -71,7 +72,7 @@ class WindowsProcessList {
     static END = '__PADDOCK_PROCESSES_END__';
     static SCRIPT = [
         '$list = @(Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CommandLine,CreationDate | ForEach-Object {',
-        '[pscustomobject]@{ pid = $_.ProcessId; parentPid = $_.ParentProcessId; commandLine = $_.CommandLine; createdAt = $_.CreationDate.Ticks } });',
+        '[pscustomobject]@{ pid = $_.ProcessId; parentPid = $_.ParentProcessId; commandLine = $_.CommandLine; createdAt = $_.CreationDate.Ticks; startIdentity = $_.CreationDate.ToFileTimeUtc().ToString() } });',
         '[Console]::Out.WriteLine((ConvertTo-Json -Compress -InputObject $list));',
         "[Console]::Out.WriteLine('__PADDOCK_PROCESSES_END__')",
     ].join(' ');
@@ -182,6 +183,9 @@ function statusLineCommand(
     return runner ? `${runner} ${quote(script)} ${quote(usageFile)} ${quote(previousFile)}` : null;
 }
 
+const windowsProcessList = new WindowsProcessList();
+const accountSessions = new AccountSessions({ accounts, readWslInfo, readWindowsProcesses: () => windowsProcessList.read() });
+
 /**
  * `GET /paddock/memory` → `{ percent, total, free }`.
  * `GET /paddock/usage[?accountId=…]` → `{ claude: { state, windows, updatedAt }, codex: { windows, updatedAt } }`.
@@ -198,7 +202,7 @@ function statusLineCommand(
 class PaddockStatusRoutes {
     constructor() {
         this.workPresence = new WorkPresenceRegistry();
-        this.windowsProcesses = new WindowsProcessList();
+        this.windowsProcesses = windowsProcessList;
         this.accountUsage = new AccountUsage({
             accounts, readWslInfo,
             sourceScript: path.join(process.env.THEIA_APP_PROJECT_PATH || process.cwd(), 'paddock-shell', 'claude-statusline.cjs'),
@@ -345,5 +349,9 @@ exports.default = new ContainerModule((bind) => {
         rename: (id, label) => accounts.rename(id, label),
         remove: id => accounts.remove(id),
         prepare: id => accounts.prepare(id),
+        observeSession: request => accountSessions.observeSession(request),
+        observeSessions: requests => accountSessions.observeSessions(requests),
+        prepareResume: (id, request) => accountSessions.prepareResume(id, request),
+        stopSession: request => accountSessions.stopSession(request),
     })));
 });

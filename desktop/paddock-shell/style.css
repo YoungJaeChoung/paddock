@@ -367,6 +367,10 @@ body .theia-button.secondary:hover { background: var(--theia-button-secondaryHov
 .account-picker-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #account-menu { box-sizing: border-box; width: 284px; max-height: min(420px, 70vh); overflow-y: auto; margin: 0; padding: 6px; color: var(--p-fg); background: var(--p-popup-bg); border: 1px solid var(--p-border); border-radius: 6px; box-shadow: 0 8px 24px #0005; }
 #account-menu .shell-option { width: 100%; min-height: 32px; }
+#account-menu .shell-option-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#account-menu .shell-option:disabled { color: var(--p-fg-muted); cursor: default; }
+#account-menu .shell-option:disabled:hover { background: transparent; }
+.account-menu-new { margin-top: 6px; border-top: 1px solid var(--p-border) !important; }
 .account-menu-hint { margin: 5px 8px 8px; color: var(--p-fg-muted); font-size: 11px; line-height: 1.5; }
 .account-menu-manage { margin-top: 6px; border-top: 1px solid var(--p-border) !important; }
 .ai-usage[hidden] { display: none; }

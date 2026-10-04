@@ -40,7 +40,7 @@ const agent = require('./agent-model');
 const wsl = require('./wsl-terminals');
 const cwdReport = require('./cwd-report');
 const { AccountDialog } = require('./account-dialog');
-const { AccountLaunch, accountTerminalOptions } = require('./account-launch');
+const { AccountLaunch, accountTerminalOptions, refreshAccountResume } = require('./account-launch');
 const { UsagePanel } = require('./usage-panel');
 
 // 작업 목록, 상단 터미널 묶음의 내부 탭, 창을 닫을 때 보던 위젯과 묶음별 칸 배치를 각각 저장한다.
@@ -596,7 +596,7 @@ class PaddockWorkspace {
             }
         });
         accountMenu.addEventListener('keydown', event => {
-            const items = [...accountMenu.querySelectorAll('[role="menuitem"]')];
+            const items = [...accountMenu.querySelectorAll('[role="menuitem"]:not(:disabled)')];
             const index = items.indexOf(document.activeElement);
             let next;
             if (event.key === 'ArrowDown') next = (index + 1) % items.length;
@@ -968,9 +968,10 @@ class PaddockWorkspace {
     /** 터미널마다 셸의 앞쪽 프로그램을 백엔드에 묻는다. 실패하면 마지막 값을 둔다. */
     async refreshPrograms() {
         const terminals = this.terminals.all;
-        await Promise.all(terminals.filter(terminal => !this.shellPids.has(terminal.id)).map(async (terminal) => {
+        await Promise.all(terminals.filter(terminal => !terminal.paddockAccountSwitching && !this.shellPids.has(terminal.id)).map(async (terminal) => {
+            const terminalId = terminal.terminalId;
             const pid = await terminal.processId.catch(() => null);
-            if (pid) this.shellPids.set(terminal.id, pid);
+            if (pid && !terminal.paddockAccountSwitching && terminal.terminalId === terminalId) this.shellPids.set(terminal.id, pid);
         }));
         const pids = terminals.map(terminal => this.shellPids.get(terminal.id)).filter(Boolean);
         if (pids.length) {
@@ -989,6 +990,60 @@ class PaddockWorkspace {
             const program = this.wslTerminals[terminal.id]?.program;
             if (program) this.programs.set(terminal.id, program);
         }
+        await this.observeAccountSessions();
+    }
+
+    /** Identifies the terminal's own conversation while its CLI still exposes its process metadata. */
+    accountSessionRequest(
+        terminal,
+    ) {
+        const profile = terminal?.options?.paddockAccount;
+        const resume = terminal?.options?.paddockResume;
+        const program = this.programs.get(terminal?.id);
+        const provider = Object.hasOwn(AccountLaunch.PROVIDERS, program) ? program : profile?.provider || resume?.provider;
+        let request = null;
+        if (this.isTerminal(terminal) && Object.hasOwn(AccountLaunch.PROVIDERS, provider)) {
+            const runtime = profile?.runtime || (wsl.isWslShell(terminal.options?.shellPath) ? 'wsl' : 'native');
+            const args = Array.isArray(terminal.options?.shellArgs) ? terminal.options.shellArgs : [];
+            const distributionIndex = args.findIndex(argument => argument === '-d' || argument === '--distribution');
+            request = {
+                terminalId: terminal.id,
+                shellPid: this.shellPids.get(terminal.id),
+                accountId: profile?.id || null,
+                provider,
+                runtime,
+                ...(runtime === 'wsl' ? { wslDistribution: profile?.wslDistribution || (distributionIndex >= 0 ? args[distributionIndex + 1] : undefined) } : {}),
+                ...(resume ? { resume } : {}),
+            };
+        }
+        return request;
+    }
+
+    /** Retains verified IDs before Ctrl+C returns the terminal to its shell; no file-recency guess is used. */
+    async observeAccountSessions() {
+        if (!this.observingAccountSessions) {
+            const terminals = this.terminals.all.filter(terminal => !terminal.paddockAccountSwitching);
+            const requests = terminals.map(terminal => this.accountSessionRequest(terminal)).filter(request => request?.shellPid && request.provider === 'claude');
+            if (requests.length) {
+                this.observingAccountSessions = this.accounts.observeSessions(requests).then(sessions => {
+                    for (const terminal of terminals) {
+                        const resume = sessions[terminal.id];
+                        if (resume !== undefined && !terminal.isDisposed && !terminal.paddockAccountSwitching) {
+                            // /clear and /resume can change the conversation after an account switch.
+                            // A restored shell must use that current conversation, including a deliberately cleared one.
+                            if (terminal.hasReplacedProcess && terminal.options.paddockAccount) {
+                                terminal.options = refreshAccountResume(terminal.options, resume);
+                            } else if (resume) terminal.options.paddockResume = resume;
+                            else delete terminal.options.paddockResume;
+                        }
+                    }
+                }).catch(() => {
+                    // Metadata may be unavailable during CLI startup or a disconnected remote session.
+                    // The switch action checks again and reports a specific error before stopping anything.
+                }).finally(() => { this.observingAccountSessions = undefined; });
+            }
+        }
+        await this.observingAccountSessions;
     }
 
     /** WSL 터미널이 있으면 WSL 안의 현재 폴더·실행 프로그램을 한 번에 읽어 둔다. 실패하면 지난 값을 둔다. */
@@ -1605,23 +1660,111 @@ class PaddockWorkspace {
         return terminal;
     }
 
-    async renderAccountMenu() {
+    /** Restarts the chosen account in the existing tab only after its exact conversation is prepared. */
+    async switchTerminalAccount(
+        id,
+        terminal,
+    ) {
+        if (!this.isTerminal(terminal) || terminal.isDisposed) throw new Error('The original terminal is no longer open. Select a terminal and try again.');
+        if (terminal.paddockAccountSwitching) throw new Error('This terminal is already switching accounts. Wait for it to finish.');
+        terminal.paddockAccountSwitching = true;
+        this.renderFolderTabs();
+        try {
+            await this.observingAccountSessions;
+            const request = this.accountSessionRequest(terminal);
+            if (!request) throw new Error('No conversation has been identified in this terminal. Start Claude Code before switching accounts.');
+            request.shellPid = await terminal.processId.catch(() => request.shellPid);
+            const prepared = await this.accounts.prepareResume(id, request);
+            const cwd = await this.readCwd(terminal);
+            const directory = cwd && await this.files.resolve(new URI(cwd)).catch(() => undefined);
+            if (!directory?.isDirectory) throw new Error('The current folder is unavailable. Restore it before switching accounts.');
+            const isWindows = OS.backend.type() === OS.Type.Windows;
+            const launchCwd = prepared.profile.runtime === 'wsl' ? prepared.resume.cwd : cwd;
+            const options = accountTerminalOptions(prepared, { cwd: launchCwd, isWindows, wslEnv: this.windowsWslEnv });
+            const shellFile = await this.files.resolve(URI.fromFilePath(options.shellPath)).catch(() => undefined);
+            if (!shellFile?.isFile) throw new Error('The account shell is unavailable. Restore it before switching accounts.');
+            options.cwd = cwd;
+            options.id = terminal.id;
+            if (prepared.profile.runtime === 'wsl') {
+                options.env[wsl.MARKER] = terminal.id;
+                options.env.WSLENV = [this.windowsWslEnv, wsl.MARKER].filter(Boolean).join(':');
+            }
+            // Keep the verified source for retry even if the new shell fails after the old CLI exits.
+            if (terminal.options.paddockAccount) {
+                terminal.options = refreshAccountResume(terminal.options, prepared.resume);
+                // A failed first switch must also restore this conversation in the original account.
+                terminal.hasReplacedProcess = true;
+            } else {
+                terminal.options.paddockResume = prepared.resume;
+            }
+            const previousLabel = this.accountLabel(terminal);
+            await this.accounts.stopSession({ ...request, resume: prepared.resume });
+            await terminal.replaceProcess(options);
+            this.shellPids.delete(terminal.id);
+            const shellPid = await terminal.processId.catch(() => null);
+            if (shellPid) {
+                this.shellPids.set(terminal.id, shellPid);
+                // Bind the resumed process immediately; a quick Ctrl+C can precede the next periodic observation.
+                let resumed;
+                for (let n_attempts = 0; n_attempts < 20 && !resumed && !terminal.isDisposed; n_attempts += 1) {
+                    if (n_attempts) await new Promise(resolve => setTimeout(resolve, 150));
+                    resumed = await this.accounts.observeSession(this.accountSessionRequest(terminal)).catch(() => undefined);
+                }
+                if (resumed) terminal.options = refreshAccountResume(terminal.options, resumed);
+                else void this.messages.warn('The account shell opened, but Claude has not confirmed the resumed conversation. Keep Claude open until it loads before switching again.');
+            }
+            this.programs.delete(terminal.id);
+            this.reportedCwds.delete(terminal.id);
+            delete this.wslTerminals[terminal.id];
+            this.cwdCache.set(terminal.id, cwd);
+            this.activity.set(terminal.id, agent.idle());
+            this.doneIds.delete(terminal.id);
+            if (this.state.terminals[terminal.id]?.name === previousLabel) {
+                this.state = model.renameTerminal(this.state, terminal.id, this.accountLabel(terminal));
+            }
+            await this.save();
+            void this.refreshUsage();
+            for (const warning of prepared.warnings || []) void this.messages.warn(warning);
+            await this.activate(terminal.id);
+        } finally {
+            terminal.paddockAccountSwitching = false;
+            await this.refresh();
+        }
+    }
+
+    async renderAccountMenu(
+        { newConversation = false } = {},
+    ) {
         const menu = this.shell.folderBar.node.querySelector('#account-menu');
+        const terminal = this.currentWidget();
         menu.replaceChildren(element('p', 'account-menu-hint', 'Loading accounts…'));
         try {
             const profiles = await this.updateAccountLabels();
-            menu.replaceChildren(element('p', 'account-menu-hint', 'Open a new terminal'));
-            for (const profile of profiles) {
+            const source = this.accountSessionRequest(terminal);
+            const continueConversation = !newConversation && source?.provider === 'claude';
+            const choices = continueConversation ? profiles.filter(profile => profile.provider === source.provider && profile.runtime === source.runtime
+                && (source.runtime !== 'wsl' || !source.wslDistribution || profile.wslDistribution?.toLowerCase() === source.wslDistribution.toLowerCase())) : profiles;
+            menu.replaceChildren(element('p', 'account-menu-hint', continueConversation ? 'Continue this conversation with' : 'Open a new terminal'));
+            for (const profile of choices) {
+                const isCurrent = continueConversation && profile.id === source.accountId;
                 const item = button([
                     element('span', 'shell-option-name', `${AccountLaunch.PROVIDERS[profile.provider]} · ${profile.label}`),
-                    element('span', 'shell-option-meta', profile.runtime === 'wsl' ? 'WSL' : ''),
+                    element('span', 'shell-option-meta', isCurrent ? 'Current' : profile.runtime === 'wsl' ? 'WSL' : ''),
                 ], 'shell-option', () => {
                     menu.hidePopover();
-                    this.run(() => this.openAccount(profile.id));
+                    this.run(() => continueConversation ? this.switchTerminalAccount(profile.id, terminal) : this.openAccount(profile.id));
                 });
-                item.title = `${AccountLaunch.PROVIDERS[profile.provider]} · ${profile.label}`;
+                item.title = `${continueConversation ? 'Continue with' : 'New conversation with'} ${AccountLaunch.PROVIDERS[profile.provider]} · ${profile.label}`;
+                item.disabled = isCurrent || Boolean(terminal?.paddockAccountSwitching);
                 item.setAttribute('role', 'menuitem');
                 menu.append(item);
+            }
+            if (continueConversation) {
+                const create = button('New conversation…', 'shell-option account-menu-new', () => {
+                    this.run(() => this.renderAccountMenu({ newConversation: true }));
+                });
+                create.setAttribute('role', 'menuitem');
+                menu.append(create);
             }
         } catch {
             menu.replaceChildren(element('p', 'account-menu-hint', 'Accounts could not be loaded. Open Manage accounts to retry.'));
@@ -1632,7 +1775,7 @@ class PaddockWorkspace {
         });
         manage.setAttribute('role', 'menuitem');
         menu.append(manage);
-        if (menu.matches(':popover-open')) menu.querySelector('button')?.focus({ preventScroll: true });
+        if (menu.matches(':popover-open')) menu.querySelector('button:not(:disabled)')?.focus({ preventScroll: true });
     }
 
     /** 아래 ＋로 위쪽 터미널 묶음 안에 터미널을 연다. 같은 묶음의 터미널과 파일 탭 옆에 나타난다. */
@@ -2547,7 +2690,9 @@ class PaddockWorkspace {
         const accountLabel = this.accountLabel(this.currentWidget());
         const accountPicker = bar.node.querySelector('.account-picker');
         accountPicker.querySelector('.account-picker-label').textContent = accountLabel || 'Accounts';
-        accountPicker.title = accountLabel ? `${accountLabel} — open another account in a new terminal` : 'Open a new terminal with a Claude or Codex account';
+        const canContinue = this.accountSessionRequest(this.currentWidget())?.provider === 'claude';
+        accountPicker.title = canContinue ? `${accountLabel || 'Claude'} — change account or start a new conversation` : 'Open an account in a new terminal';
+        accountPicker.disabled = Boolean(this.currentWidget()?.paddockAccountSwitching);
         const key = this.shownFolder();
         this.selectRepositoryOf(key);
         const root = key ? null : this.shownTopTerminal();
