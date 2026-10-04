@@ -7,6 +7,11 @@ const { execFile, spawn, spawnSync } = require('node:child_process');
 const express = require('express');
 const { ContainerModule, injectable, decorate } = require('@theia/core/shared/inversify');
 const { BackendApplicationContribution } = require('@theia/core/lib/node/backend-application');
+const { ConnectionHandler, RpcConnectionHandler } = require('@theia/core/lib/common/messaging');
+const { AccountProfile, AccountProfiles } = require('./account-profiles');
+const { AccountUsage } = require('./account-usage');
+const { readJson, codexUsage } = require('./usage-files');
+const { applyStatusLine } = require('./claude-usage-settings');
 const { memoryPercent } = require('./work-model');
 const usage = require('./usage-model');
 const agent = require('./agent-model');
@@ -14,8 +19,7 @@ const { WorkPresenceRegistry } = require('./work-presence');
 const wsl = require('./wsl-terminals');
 const windowsProcesses = require('./windows-processes');
 
-// Codex 세션 기록 끝부분만 읽는다. 마지막 한도 기록은 파일 끝 가까이에 있다.
-const N_TAIL_BYTES = 512 * 1024;
+const accounts = new AccountProfiles();
 
 function usageDirectory() {
     const directory = path.join(process.env.THEIA_CONFIG_DIR || path.join(os.homedir(), '.paddock', 'config'), 'usage');
@@ -25,54 +29,6 @@ function usageDirectory() {
 
 function claudeSettingsPath() {
     return path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'settings.json');
-}
-
-function readJson(
-    file,
-    fallback,
-) {
-    let value = fallback;
-    try {
-        value = JSON.parse(fs.readFileSync(file, 'utf8'));
-    } catch {
-        value = fallback;
-    }
-    return value;
-}
-
-function readTail(
-    file,
-) {
-    const handle = fs.openSync(file, 'r');
-    const size = fs.fstatSync(handle).size;
-    const start = Math.max(0, size - N_TAIL_BYTES);
-    const buffer = Buffer.alloc(size - start);
-    fs.readSync(handle, buffer, 0, buffer.length, start);
-    fs.closeSync(handle);
-    return buffer.toString('utf8');
-}
-
-/** `root`(Codex 세션 폴더) 안의 가장 최근 세션 기록 파일. 날짜 폴더(YYYY/MM/DD)를 최신부터 훑어 처음 나온 이틀 치에서 고른다. 없으면 null. */
-function latestCodexSession(
-    root,
-) {
-    const newestFirst = (directory) => (fs.existsSync(directory) ? fs.readdirSync(directory).sort().reverse().map(name => path.join(directory, name)) : []);
-    const files = [];
-    for (const year of newestFirst(root)) {
-        for (const month of newestFirst(year)) {
-            for (const day of newestFirst(month)) {
-                if (files.length < 50 && fs.statSync(day).isDirectory()) {
-                    files.push(...newestFirst(day).filter(file => file.endsWith('.jsonl')));
-                }
-            }
-        }
-    }
-    let latest = null;
-    for (const file of files) {
-        const modified = fs.statSync(file).mtimeMs;
-        if (!latest || modified > latest.modified) latest = { file, modified };
-    }
-    return latest;
 }
 
 /**
@@ -174,38 +130,42 @@ class WindowsProcessList {
     }
 }
 
-let wslInfoPromise = null;
+const wslInfoPromises = new Map();
 
 /**
- * Windows에 설치된 기본 WSL 배포판의 정보: `{ ready, home, linuxHome, node }`.
+ * Windows에 설치된 지정 WSL 배포판의 정보: `{ ready, home, linuxHome, node }`. 생략하면 기본 배포판이다.
  * home은 홈 폴더의 Windows 경로(\\wsl.localhost\…), linuxHome은 Linux 경로, node는 WSL 안 node 실행 파일(없으면 '')이다.
  * Windows가 아니거나 배포판이 없으면 ready가 false다. 성공한 결과만 기억하고, 실패하면 다음 호출에서 다시 읽는다.
  */
-function readWslInfo() {
-    if (!wslInfoPromise) {
+function readWslInfo(
+    distribution = '',
+) {
+    if (!wslInfoPromises.has(distribution)) {
         const empty = { ready: false, home: '', linuxHome: '', node: '' };
-        wslInfoPromise = process.platform !== 'win32' ? Promise.resolve(empty) : new Promise((resolve) => {
+        const pending = process.platform !== 'win32' ? Promise.resolve(empty) : new Promise((resolve) => {
             // wsl.exe -l은 UTF-16으로 배포판 이름을 한 줄씩 출력한다. 배포판이 없으면 오류로 끝난다.
             execFile('wsl.exe', ['-l', '-q'], { encoding: 'buffer', timeout: 5000, windowsHide: true }, (error, stdout) => {
                 const names = error ? [] : stdout.toString('utf16le').split(/\r?\n/).map(name => name.replace(/\0/g, '').trim()).filter(Boolean);
-                if (!names.length) {
+                if (!names.length || (distribution && !names.some(name => name.toLowerCase() === distribution.toLowerCase()))) {
                     resolve(empty);
                 } else {
                     // nvm처럼 대화형 셸 설정에서 PATH를 잡는 node도 찾도록 bash -i로 읽는다. 설정 파일이 찍는 글은 앞쪽 줄이라 끝 세 줄만 쓴다.
                     // WSL을 켜는 데 몇 초 걸릴 수 있다.
                     const probe = 'printf "\\n%s\\n%s\\n%s" "$(wslpath -w "$HOME")" "$HOME" "$(command -v node)"';
-                    execFile('wsl.exe', ['-e', 'bash', '-ic', probe], { encoding: 'utf8', timeout: 20000, windowsHide: true }, (probeError, output) => {
+                    const selectedDistribution = distribution ? ['--distribution', distribution] : [];
+                    execFile('wsl.exe', [...selectedDistribution, '-e', 'bash', '-ic', probe], { encoding: 'utf8', timeout: 20000, windowsHide: true }, (probeError, output) => {
                         const [home = '', linuxHome = '', node = ''] = (probeError ? '' : output).replace(/\r/g, '').split('\n').slice(-3);
                         resolve({ ready: true, home: home.trim(), linuxHome: linuxHome.trim(), node: node.trim() });
                     });
                 }
             });
         });
-        wslInfoPromise.then((info) => {
-            if (process.platform === 'win32' && (!info.ready || !info.home)) wslInfoPromise = null;
+        wslInfoPromises.set(distribution, pending);
+        pending.then((info) => {
+            if (process.platform === 'win32' && (!info.ready || !info.home)) wslInfoPromises.delete(distribution);
         });
     }
-    return wslInfoPromise;
+    return wslInfoPromises.get(distribution);
 }
 
 function statusLineCommand(
@@ -215,7 +175,7 @@ function statusLineCommand(
 ) {
     const finder = process.platform === 'win32' ? 'where' : 'which';
     const found = spawnSync(finder, ['node'], { encoding: 'utf8' }).stdout?.split(/\r?\n/)[0]?.trim();
-    const quote = (value) => `"${value}"`;
+    const quote = (value) => usage.quoteStatusLineArgument(value, process.platform === 'win32');
     let runner = null;
     if (found) runner = quote(found);
     else if (process.platform !== 'win32') runner = `ELECTRON_RUN_AS_NODE=1 ${quote(process.execPath)}`;
@@ -224,13 +184,14 @@ function statusLineCommand(
 
 /**
  * `GET /paddock/memory` → `{ percent, total, free }`.
- * `GET /paddock/usage` → `{ claude: { state, windows, updatedAt }, codex: { windows, updatedAt } }`.
+ * `GET /paddock/usage[?accountId=…]` → `{ claude: { state, windows, updatedAt }, codex: { windows, updatedAt } }`.
+ * accountId가 있으면 등록된 그 계정만 읽고, 다른 도구의 값은 빈 목록이다. 생략하면 기존 기본 CLI 폴더를 읽는다.
  * `GET /paddock/foreground?pids=1,2` → `{ "1": "claude", "2": "bash" }` 셸 pid별 실행 중 프로그램 이름(모르면 null). Windows는 프로세스 목록으로 찾는다.
  * `GET /paddock/wsl-terminals` → `{ [터미널 id]: { cwd, program } }` Windows 앱의 WSL 터미널별 현재 폴더(Windows 경로)·실행 중 프로그램.
  *   Windows가 아니거나 WSL을 읽지 못하면 `{}`다.
  * `GET /paddock/wsl-ready` → `{ ready, home }` 이 Windows에 WSL 배포판이 하나라도 설치돼 있는지와 기본 배포판의 홈 폴더(Windows 경로).
  *   wsl.exe만 있고 배포판이 없으면 `{ ready: false, home: '' }`다.
- * `POST /paddock/usage/claude?enabled=true|false[&automatic=true]` → Claude Code 설정에 Paddock 상태 줄을 넣거나 원래대로 되돌린다.
+ * `POST /paddock/usage/claude?enabled=true|false[&automatic=true][&accountId=…]` → 해당 Claude Code 설정에 Paddock 상태 줄을 넣거나 원래대로 되돌린다.
  *   automatic이면(처음 실행의 자동 켜기) 다른 Paddock 설정 폴더의 상태 줄이 살아 있을 때 바꾸지 않고 `{ state: 'unset' }`을 돌려준다.
  * Claude의 `state`는 'unset'(아직 정한 적 없음)·'on'·'off'다.
  */
@@ -238,6 +199,11 @@ class PaddockStatusRoutes {
     constructor() {
         this.workPresence = new WorkPresenceRegistry();
         this.windowsProcesses = new WindowsProcessList();
+        this.accountUsage = new AccountUsage({
+            accounts, readWslInfo,
+            sourceScript: path.join(process.env.THEIA_APP_PROJECT_PATH || process.cwd(), 'paddock-shell', 'claude-statusline.cjs'),
+            commandForNative: statusLineCommand,
+        });
     }
 
     configure(
@@ -290,25 +256,26 @@ class PaddockStatusRoutes {
             readWslInfo().then(({ ready, home }) => response.json({ ready, home }));
         });
         app.get('/paddock/usage', async (request, response) => {
-            const directory = usageDirectory();
-            const state = readJson(path.join(directory, 'state.json'), {}).claude || 'unset';
-            // Windows 앱이면 WSL에서 실행한 Claude·Codex의 기록도 함께 보고 더 최근 것을 쓴다. CLI를 어느 쪽에서 실행했는지 모른다.
-            const wslHome = (await readWslInfo()).home;
-            const claudeFiles = [path.join(directory, 'claude.json'), ...(wslHome ? [path.win32.join(wslHome, '.paddock', 'config', 'usage', 'claude.json')] : [])];
-            const claudeFile = claudeFiles.map(file => readJson(file, null)).filter(Boolean)
-                .sort((left, right) => (right.updated_at ?? 0) - (left.updated_at ?? 0))[0] ?? null;
-            let codex = { windows: [], updatedAt: null };
             try {
-                const roots = [path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'sessions'), ...(wslHome ? [path.win32.join(wslHome, '.codex', 'sessions')] : [])];
-                const session = roots.map(root => latestCodexSession(root)).filter(Boolean).sort((left, right) => right.modified - left.modified)[0];
-                if (session) codex = { windows: usage.codexWindows(readTail(session.file)), updatedAt: Math.floor(session.modified / 1000) };
-            } catch {
-                // 기록을 못 읽으면 게이지를 비워 둔다.
+                if (Object.hasOwn(request.query, 'accountId')) {
+                    response.json(await this.accountUsage.read(request.query.accountId));
+                } else {
+                    const directory = usageDirectory();
+                    const state = readJson(path.join(directory, 'state.json'), {}).claude || 'unset';
+                    // Windows 앱이면 WSL에서 실행한 Claude·Codex의 기록도 함께 보고 더 최근 것을 쓴다. CLI를 어느 쪽에서 실행했는지 모른다.
+                    const wslHome = (await readWslInfo()).home;
+                    const claudeFiles = [path.join(directory, 'claude.json'), ...(wslHome ? [path.win32.join(wslHome, '.paddock', 'config', 'usage', 'claude.json')] : [])];
+                    const claudeFile = claudeFiles.map(file => readJson(file, null)).filter(Boolean)
+                        .sort((left, right) => (right.updated_at ?? 0) - (left.updated_at ?? 0))[0] ?? null;
+                    const roots = [path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'sessions'), ...(wslHome ? [path.win32.join(wslHome, '.codex', 'sessions')] : [])];
+                    response.json({
+                        claude: { state, windows: claudeFile ? usage.claudeWindows(claudeFile) : [], updatedAt: claudeFile?.updated_at ?? null },
+                        codex: codexUsage(roots),
+                    });
+                }
+            } catch (error) {
+                response.status(error.statusCode || 500).json({ error: error.message || 'Usage could not be read.' });
             }
-            response.json({
-                claude: { state, windows: claudeFile ? usage.claudeWindows(claudeFile) : [], updatedAt: claudeFile?.updated_at ?? null },
-                codex,
-            });
         });
         app.post('/paddock/usage/claude', (request, response) => {
             const { enabled } = request.query;
@@ -316,9 +283,12 @@ class PaddockStatusRoutes {
                 // 값이 빠진 요청을 "끄기"로 오해해 사용자 설정을 바꾸지 않는다.
                 response.status(400).json({ error: 'enabled must be true or false' });
             } else {
-                this.setClaude(enabled === 'true', request.query.automatic === 'true')
+                const operation = Object.hasOwn(request.query, 'accountId')
+                    ? this.accountUsage.setClaude(request.query.accountId, enabled === 'true', request.query.automatic === 'true')
+                    : this.setClaude(enabled === 'true', request.query.automatic === 'true');
+                operation
                     .then(result => response.json(result))
-                    .catch(error => response.status(500).json({ error: error instanceof Error ? error.message : String(error) }));
+                    .catch(error => response.status(error.statusCode || 500).json({ error: error instanceof Error ? error.message : String(error) }));
             }
         });
     }
@@ -344,7 +314,7 @@ class PaddockStatusRoutes {
         if (enabled && !command) {
             throw new Error('Node.js is needed to show Claude usage. Install Node.js and try again.');
         }
-        const state = this.applyStatusLine({ settingsPath: claudeSettingsPath(), previousFile, command, enabled, isAutomatic, toLocal: file => file });
+        const state = applyStatusLine({ settingsPath: claudeSettingsPath(), previousFile, command, enabled, isAutomatic, toLocal: file => file });
         fs.writeFileSync(path.join(directory, 'state.json'), JSON.stringify({ claude: state }));
         const wslInfo = await readWslInfo();
         if (wslInfo.home && wslInfo.linuxHome && wslInfo.node) {
@@ -355,57 +325,25 @@ class PaddockStatusRoutes {
             const linuxDirectory = `${wslInfo.linuxHome}/.paddock/config/usage`;
             fs.mkdirSync(toLocal(linuxDirectory), { recursive: true });
             fs.copyFileSync(source, toLocal(`${linuxDirectory}/claude-statusline.cjs`));
-            const quote = value => `"${value}"`;
+            const quote = value => usage.quoteStatusLineArgument(value);
             const linuxCommand = [wslInfo.node, `${linuxDirectory}/claude-statusline.cjs`, `${linuxDirectory}/claude.json`, `${linuxDirectory}/previous-statusline.json`].map(quote).join(' ');
-            this.applyStatusLine({ settingsPath: toLocal(`${wslInfo.linuxHome}/.claude/settings.json`), previousFile: toLocal(`${linuxDirectory}/previous-statusline.json`), command: linuxCommand, enabled, isAutomatic, toLocal });
+            applyStatusLine({ settingsPath: toLocal(`${wslInfo.linuxHome}/.claude/settings.json`), previousFile: toLocal(`${linuxDirectory}/previous-statusline.json`), command: linuxCommand, enabled, isAutomatic, toLocal });
         }
         return { state };
     }
 
-    /**
-     * Claude Code 설정 파일 하나에 Paddock 상태 줄을 넣거나 되돌리고 결과 상태를 돌려준다.
-     * Claude Code 설정은 컴퓨터(또는 WSL)마다 하나뿐이라, 다른 설정 폴더의 Paddock(설치본·시험용 실행)이 이미 쓰는 중이면
-     * 자동 켜기는 빼앗지 않고 'unset'을 돌려준다. 그 스크립트가 지워졌으면(끝난 시험용 실행) 주인이 없는 것으로 보고 넘겨받는다.
-     * `toLocal`은 명령 속 경로를 이 프로세스가 읽을 수 있는 경로로 바꾼다(WSL 쪽이면 Linux 경로 → \\wsl.localhost\…).
-     */
-    applyStatusLine(
-        { settingsPath, previousFile, command, enabled, isAutomatic, toLocal },
-    ) {
-        let settings = {};
-        if (fs.existsSync(settingsPath)) {
-            settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-            // 처음 바꿀 때 한 번만 원본을 남긴다.
-            if (!fs.existsSync(`${settingsPath}.paddock-backup`)) fs.copyFileSync(settingsPath, `${settingsPath}.paddock-backup`);
-        }
-        const owner = usage.paddockStatusLineFiles(settings.statusLine?.command);
-        const isTakenByOther = Boolean(owner) && settings.statusLine.command !== command && fs.existsSync(toLocal(owner.script));
-        let state = enabled ? 'on' : 'off';
-        if (enabled && isAutomatic && isTakenByOther) {
-            state = 'unset';
-        } else {
-            let next = settings;
-            if (enabled) {
-                const installed = usage.installStatusLine(settings, command);
-                // 다른 Paddock 명령을 바꾸면 그 명령이 이어 부르던 원래 상태 줄을 넘겨받는다. Paddock 명령끼리는 잇지 않는다.
-                const inherited = installed.replaced ? readJson(toLocal(installed.replaced.previousFile), null) : null;
-                const previous = installed.previous || (inherited && !usage.paddockStatusLineFiles(inherited.command) ? inherited : null);
-                if (previous) fs.writeFileSync(previousFile, JSON.stringify(previous));
-                next = installed.settings;
-            } else if (settings.statusLine?.command === command) {
-                next = usage.restoreStatusLine(settings, readJson(previousFile, null));
-                fs.rmSync(previousFile, { force: true });
-            }
-            if (next !== settings) {
-                fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-                fs.writeFileSync(settingsPath, `${JSON.stringify(next, null, 2)}\n`);
-            }
-        }
-        return state;
-    }
 }
 decorate(injectable(), PaddockStatusRoutes);
 
 exports.default = new ContainerModule((bind) => {
     bind(PaddockStatusRoutes).toSelf().inSingletonScope();
     bind(BackendApplicationContribution).toService(PaddockStatusRoutes);
+    // Expose account actions only; filesystem helpers are not remotely callable.
+    bind(ConnectionHandler).toConstantValue(new RpcConnectionHandler(AccountProfile.SERVICE_PATH, () => ({
+        list: () => accounts.list(),
+        create: input => accounts.create(input),
+        rename: (id, label) => accounts.rename(id, label),
+        remove: id => accounts.remove(id),
+        prepare: id => accounts.prepare(id),
+    })));
 });

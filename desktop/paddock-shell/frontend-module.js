@@ -30,12 +30,12 @@ const PaddockPreferenceSchema = {
         'paddock.statusBar.claude': {
             type: 'boolean',
             default: true,
-            description: 'Show Claude usage in the status bar. Turning it off removes the Paddock status line from Claude Code settings and restores the one you had before.',
+            description: 'Show Claude account usage in the status bar. Turning it off restores the previous status line in the default environment and registered Claude accounts.',
         },
         'paddock.statusBar.codex': {
             type: 'boolean',
             default: true,
-            description: 'Show Codex usage in the status bar.',
+            description: 'Show Codex account usage in the status bar.',
         },
         'paddock.statusBar.memory': {
             type: 'boolean',
@@ -52,6 +52,7 @@ const PaddockPreferenceSchema = {
     },
 };
 require('./style.css');
+require('./usage-panel.css');
 
 exports.default = new ContainerModule((bind, unbind, isBound, rebind) => {
     rebind(ApplicationShell).to(PaddockShell).inSingletonScope();

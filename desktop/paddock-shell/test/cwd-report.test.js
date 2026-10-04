@@ -2,6 +2,11 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const report = require('../cwd-report');
 
+test('C-cwd.3: PowerShell preserves complete Unicode paths when encoding startup commands', () => {
+    const script = "$env:CODEX_HOME = 'C:\\Users\\작업😀\\accounts'";
+    assert.equal(Buffer.from(report.encodePowerShell(script), 'base64').toString('utf16le'), script);
+});
+
 test('C-cwd.1: 셸마다 현재 폴더 알림을 켜는 옵션을 고르고, 모르는 셸은 null이다', () => {
     const bash = report.cwdReportOptions('C:\\Program Files\\Git\\bin\\bash.exe', ['--login', '-i']);
     assert.match(bash.env.PROMPT_COMMAND, /\]7;/);

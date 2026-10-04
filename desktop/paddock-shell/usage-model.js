@@ -139,9 +139,22 @@ function describe(
 function paddockStatusLineFiles(
     command,
 ) {
-    const quoted = [...String(command || '').matchAll(/"([^"]*)"/g)].map(match => match[1]);
+    const quoted = [...String(command || '').matchAll(/"((?:\\.|[^"\\])*)"/g)].map(match => {
+        const value = match[1];
+        // Windows paths keep their separators; POSIX double-quoted arguments escape shell expansion characters.
+        return /^[A-Za-z]:[\\/]|^\\\\/.test(value) ? value : value.replace(/\\(["\\$`])/g, '$1');
+    });
     const index = quoted.findIndex(part => /[\\/]claude-statusline\.cjs$/.test(part));
     return index >= 0 ? { script: quoted[index], usageFile: quoted[index + 1] ?? '', previousFile: quoted[index + 2] ?? '' } : null;
+}
+
+/** Quotes a status-line path without expanding shell syntax in POSIX home or application folder names. */
+function quoteStatusLineArgument(
+    value,
+    isWindows = false,
+) {
+    const escaped = isWindows ? value : value.replace(/["\\$`]/g, character => `\\${character}`);
+    return `"${escaped}"`;
 }
 
 /**
@@ -183,6 +196,7 @@ module.exports = {
     describe,
     duration,
     paddockStatusLineFiles,
+    quoteStatusLineArgument,
     installStatusLine,
     restoreStatusLine,
 };

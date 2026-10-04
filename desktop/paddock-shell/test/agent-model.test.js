@@ -10,6 +10,7 @@ test('C-agent-A1.1: 명령줄에서 프로그램 이름을 뽑고 에이전트�
     assert.equal(agent.programName(['node', 'server.js']), 'server');
     assert.equal(agent.programName(['-bash']), 'bash');
     assert.equal(agent.programName(['/bin/bash', '/home/me/bin/claude']), 'claude');
+    assert.equal(agent.programName(['/bin/bash', '--rcfile', '/dev/fd/56', '-i']), 'bash');
     assert.equal(agent.programName(['/bin/zsh', '-l']), 'zsh');
     assert.equal(agent.programName([]), null);
     assert.equal(agent.isAgent('claude'), true);
@@ -51,18 +52,29 @@ test('C-agent-A2.3: 일하는 동안 에이전트였으면 끝나며 셸로 돌�
 test('C-agent-A3.1: 입력 전·응답 전·출력 중을 구분하고 출력이 3초 멎으면 대기로 표시한다', () => {
     const { QUIET_MS } = agent.ACTIVITY;
     const initial = agent.idle();
-    assert.equal(agent.activityState(initial, 0, true), 'idle');
-    assert.equal(agent.activityState(agent.noteInput(initial, 'typing', 100), 100, true), 'idle');
+    assert.equal(agent.activityState(initial, 0, true), 'quiet');
+    assert.equal(agent.activityState(agent.noteInput(initial, 'typing', 100), 100, true), 'quiet');
     const submitted = agent.noteInput(initial, 'run\r', 200);
     assert.equal(agent.activityState(submitted, 300, true), 'waiting');
     const output = agent.noteOutput(submitted, 400);
     assert.equal(agent.activityState(output, 400 + QUIET_MS - 1, true), 'working');
-    assert.equal(agent.activityState(output, 400 + QUIET_MS, true), 'idle');
-    assert.equal(agent.activityState(agent.settle(output, 400 + QUIET_MS, true).activity, 400 + QUIET_MS, true), 'idle');
+    assert.equal(agent.activityState(output, 400 + QUIET_MS, true), 'quiet');
+    assert.equal(agent.activityState(agent.settle(output, 400 + QUIET_MS, true).activity, 400 + QUIET_MS, true), 'quiet');
 });
 
 test('C-agent-A3.2: 에이전트가 종료돼 셸로 돌아오면 활동 기록이 남아도 상태를 표시하지 않는다', () => {
     const output = agent.noteOutput(agent.noteInput(agent.idle(), '\r', 0), 100);
     assert.equal(agent.activityState(output, 200, false), null);
     assert.equal(agent.activityState(agent.idle(), 200, false), null);
+});
+
+test('C-agent-A3.3: 한동안 조용하다가 Enter 없이 출력이 재개돼도 작업 중 표시가 돌아온다', () => {
+    const { QUIET_MS } = agent.ACTIVITY;
+    const output = agent.noteOutput(agent.noteInput(agent.idle(), '\r', 0), 100);
+    const paused = agent.settle(output, 100 + QUIET_MS, true).activity;
+    assert.equal(agent.activityState(paused, 100 + QUIET_MS, true), 'quiet');
+    const resumed = agent.noteOutput(paused, 5000);
+    assert.equal(agent.activityState(resumed, 5000, true), 'working');
+    assert.equal(agent.settle(resumed, 5000 + QUIET_MS, true).finished, false, '무입력 출력은 완료 알림을 반복하지 않는다');
+    assert.equal(agent.activityState(agent.noteOutput(agent.idle(), 0), 1, true), 'working', '시작 화면 출력도 최근 활동으로 표시한다');
 });

@@ -6,8 +6,9 @@ function encodePowerShell(
     script,
 ) {
     let binary = '';
-    for (const character of script) {
-        const code = character.charCodeAt(0);
+    // PowerShell expects UTF-16 code units, including both halves of supplementary characters.
+    for (let offset = 0; offset < script.length; offset += 1) {
+        const code = script.charCodeAt(offset);
         binary += String.fromCharCode(code & 0xff, code >> 8);
     }
     return btoa(binary);

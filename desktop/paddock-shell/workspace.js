@@ -10,6 +10,7 @@ const { OpenWithService } = require('@theia/core/lib/browser/open-with-service')
 const { WidgetManager } = require('@theia/core/lib/browser/widget-manager');
 const { StorageService } = require('@theia/core/lib/browser/storage-service');
 const { Endpoint } = require('@theia/core/lib/browser/endpoint');
+const { ServiceConnectionProvider } = require('@theia/core/lib/browser/messaging/service-connection-provider');
 const { CommandRegistry } = require('@theia/core/lib/common/command');
 const { KeybindingRegistry } = require('@theia/core/lib/browser/keybinding');
 const { EnvVariablesServer } = require('@theia/core/lib/common/env-variables');
@@ -35,10 +36,12 @@ const model = require('./work-model');
 const layoutModel = require('./layout-model');
 const tabOverflow = require('./tab-overflow');
 const { PaddockTerminal } = require('./terminal');
-const usage = require('./usage-model');
 const agent = require('./agent-model');
 const wsl = require('./wsl-terminals');
 const cwdReport = require('./cwd-report');
+const { AccountDialog } = require('./account-dialog');
+const { AccountLaunch, accountTerminalOptions } = require('./account-launch');
+const { UsagePanel } = require('./usage-panel');
 
 // 작업 목록, 상단 터미널 묶음의 내부 탭, 창을 닫을 때 보던 위젯과 묶음별 칸 배치를 각각 저장한다.
 class STORAGE {
@@ -64,7 +67,7 @@ const SOURCE_MARKS = {
     memory: '▦',
 };
 
-// 상태 줄 오른쪽 항목별 표시 설정. 설정 화면·빠른 설정·항목 클릭이 같은 값을 바꾼다. 기본은 모두 켜짐이다.
+// 상태 줄 오른쪽 항목별 표시 설정. 설정 화면·빠른 설정이 같은 값을 바꾸고, 사용량 항목은 전체 계정 목록을 연다. 기본은 모두 켜짐이다.
 class STATUS_ITEMS {
     static CLAUDE = 'paddock.statusBar.claude';
     static CODEX = 'paddock.statusBar.codex';
@@ -73,6 +76,7 @@ class STATUS_ITEMS {
 
 // 본문 나누기·탭 이동·사이드바 명령. 새 터미널·터미널 분할·사이드바 단축키는 VS Code와 같다.
 const PADDOCK_COMMANDS = {
+    accounts: { id: 'paddock.accounts.manage', label: 'Paddock: Manage Accounts' },
     toggleSidebar: { id: 'paddock.sidebar.toggle', label: 'Paddock: Toggle Sidebar' },
     splitDown: { id: 'paddock.work.splitDown', label: 'Paddock: New Terminal Below' },
     splitRight: { id: 'paddock.work.splitRight', label: 'Paddock: New Terminal to the Side' },
@@ -215,6 +219,7 @@ class PaddockWorkspace {
     registerCommands(
         commands,
     ) {
+        commands.registerCommand(PADDOCK_COMMANDS.accounts, { execute: () => this.run(() => this.manageAccounts()) });
         commands.registerCommand(PADDOCK_COMMANDS.toggleSidebar, { execute: () => this.shell.toggleSidebar() });
         commands.registerCommand(PADDOCK_COMMANDS.splitDown, { execute: () => this.run(() => this.newTerminalHere({ split: 'split-bottom' })) });
         commands.registerCommand(PADDOCK_COMMANDS.splitRight, { execute: () => this.run(() => this.newTerminalHere({ split: 'split-right' })) });
@@ -458,6 +463,7 @@ class PaddockWorkspace {
         this.plugins = this.container.get(HostedPluginSupport);
         this.widgets = this.container.get(WidgetManager);
         this.storage = this.container.get(StorageService);
+        this.accounts = ServiceConnectionProvider.createProxy(this.container, '/services/paddock-accounts');
         this.workWindowId = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
         window.addEventListener('pagehide', () => {
             const url = `${new Endpoint({ path: '/paddock/work-presence' }).getRestUrl().toString()}?windowId=${encodeURIComponent(this.workWindowId)}`;
@@ -467,15 +473,35 @@ class PaddockWorkspace {
         this.env = this.container.get(EnvVariablesServer);
         this.remoteStatus = this.container.get(RemoteStatusService);
         this.preferences = this.container.get(PreferenceService);
+        this.usagePanel = new UsagePanel({
+            host: this.shell.footer.node.querySelector('.ai-usage'),
+            fetchJson: this.fetchJson.bind(this),
+            listProfiles: () => this.accounts.list(),
+            isEnabled: provider => this.isStatusItemOn(provider === 'claude' ? STATUS_ITEMS.CLAUDE : STATUS_ITEMS.CODEX),
+            meter: this.meter.bind(this),
+            onOpen: profile => this.openUsageAccount(profile),
+            onManage: () => this.run(() => this.manageAccounts()),
+            isClaudeChosen: () => {
+                const inspected = this.preferences.inspect(STATUS_ITEMS.CLAUDE);
+                return inspected?.globalValue !== undefined || inspected?.workspaceValue !== undefined;
+            },
+            onLegacyDisabled: () => this.setPreference(STATUS_ITEMS.CLAUDE, false),
+            onAutomaticSetup: () => {
+                // 사용자 설정 파일을 바꾼 일이라 처음 한 번 알리고 바로 끌 수 있게 한다.
+                // 알림 응답을 기다리는 동안 게이지 그리기가 멈추지 않게 결과는 따로 처리한다.
+                void this.messages.info('Claude usage is now shown in the status bar (added a status line to Claude Code settings).', 'Turn off').then(action => {
+                    if (action === 'Turn off') this.run(() => this.setPreference(STATUS_ITEMS.CLAUDE, false));
+                });
+            },
+        });
         this.applyInterfacePreferences();
         this.preferences.onPreferenceChanged(({ preferenceName }) => {
             if ([STATUS_ITEMS.CLAUDE, STATUS_ITEMS.CODEX, STATUS_ITEMS.MEMORY].includes(preferenceName)) {
-                // 상태 줄 항목을 켜고 끄면 바로 다시 그린다. Claude는 Claude Code 상태 줄도 설정에 맞춘다.
-                this.usageKey = null;
-                this.claudeSyncTarget = undefined;
+                // 상태 줄 항목을 켜고 끄면 바로 다시 그린다. Claude는 기본 환경과 등록된 모든 계정의 상태 줄도 맞춘다.
+                if (preferenceName !== STATUS_ITEMS.MEMORY) this.usagePanel.data.preferencesChanged();
                 this.run(async () => {
                     await this.refreshMemory();
-                    await this.refreshUsage();
+                    if (preferenceName !== STATUS_ITEMS.MEMORY) await this.usagePanel.refresh({ settings: preferenceName === STATUS_ITEMS.CLAUDE });
                 });
                 const panel = this.shell.sidebar.node.querySelector('#quick-settings');
                 if (panel.matches(':popover-open')) this.renderQuickSettings();
@@ -559,6 +585,31 @@ class PaddockWorkspace {
         window.addEventListener('resize', updateMaximizeButton);
         updateMaximizeButton();
         this.shell.folderBar.node.querySelector('.folder-tab-add').addEventListener('click', () => this.run(() => this.newTerminalFromFolderBar()));
+        const accountPicker = this.shell.folderBar.node.querySelector('.account-picker');
+        const accountMenu = this.shell.folderBar.node.querySelector('#account-menu');
+        accountMenu.addEventListener('beforetoggle', event => {
+            if (event.newState === 'open') {
+                const bounds = accountPicker.getBoundingClientRect();
+                accountMenu.style.left = `${Math.max(8, Math.min(bounds.left, window.innerWidth - 292))}px`;
+                accountMenu.style.top = `${bounds.bottom + 6}px`;
+                this.run(() => this.renderAccountMenu());
+            }
+        });
+        accountMenu.addEventListener('keydown', event => {
+            const items = [...accountMenu.querySelectorAll('[role="menuitem"]')];
+            const index = items.indexOf(document.activeElement);
+            let next;
+            if (event.key === 'ArrowDown') next = (index + 1) % items.length;
+            else if (event.key === 'ArrowUp') next = (index - 1 + items.length) % items.length;
+            else if (event.key === 'Home') next = 0;
+            else if (event.key === 'End') next = items.length - 1;
+            else if (event.key === 'Escape') {
+                accountMenu.hidePopover();
+                accountPicker.focus();
+            }
+            if (next !== undefined) items[next]?.focus();
+            if (next !== undefined || event.key === 'Escape') event.preventDefault();
+        });
         this.shell.folderBar.node.querySelector('.markdown-view-actions').addEventListener('click', (event) => {
             const target = event.target.closest('[data-markdown-view]');
             if (target) this.run(() => this.setMarkdownView(target.dataset.markdownView));
@@ -720,6 +771,7 @@ class PaddockWorkspace {
         this.showRootOf(this.currentWidget());
         this.bindKeys();
         this.layoutReady = true;
+        void this.updateAccountLabels().catch(() => {});
         this.refreshRemote();
         setInterval(() => this.run(() => this.tick()), REFRESH_INTERVAL);
         void this.refreshWorkPresence();
@@ -877,12 +929,16 @@ class PaddockWorkspace {
                     this.refreshSoon();
                 }
             });
-            terminal.onOutput(() => {
+            // 입력 직후 첫 출력은 동기로 처리되어 Theia의 출력 수집보다 먼저 알림이 온다.
+            // 화면에 파싱된 출력을 직접 관찰하면 그 첫 출력과 시작할 때 모아 둔 출력도 빠뜨리지 않는다.
+            terminal.term.onWriteParsed(() => {
+                const now = Date.now();
                 const before = this.activity.get(terminal.id) ?? agent.idle();
-                const after = agent.noteOutput(before, Date.now());
+                const after = agent.noteOutput(before, now);
                 this.activity.set(terminal.id, after);
-                // 첫 출력은 즉시 표시하고, 계속되는 출력은 기존 주기 갱신에 맡긴다.
-                if (before.busySince === null && after.busySince !== null) this.refreshSoon();
+                // 첫 출력과 잠시 멎었다가 재개된 출력은 즉시 표시한다. 계속되는 출력은 기존 주기 갱신에 맡긴다.
+                const agentNow = agent.isAgent(this.programs.get(terminal.id));
+                if (agent.activityState(before, now, agentNow) !== agent.activityState(after, now, agentNow)) this.refreshSoon();
             });
             if (OS.backend.type() === OS.Type.Windows && cwdReport.isBashShell(terminal.options?.shellPath)) this.absorbResizeKeyLoss(terminal);
             // 셸이 프롬프트마다 알리는 현재 폴더(OSC 7)를 기억한다. Windows 셸은 createTerminal이 이 알림을 켠다.
@@ -959,6 +1015,8 @@ class PaddockWorkspace {
             this.state = state;
             let innerChanged = false;
             for (const id of promoted) {
+                const terminal = this.terminals.all.find(item => item.id === id);
+                if (this.accountLabel(terminal)) this.state = model.renameTerminal(this.state, id, this.accountLabel(terminal));
                 innerChanged = this.innerTerminalRoots.delete(id) || innerChanged;
                 const folder = model.folderOf(this.state, id);
                 for (const [childId, root] of this.innerTerminalRoots) {
@@ -1403,8 +1461,8 @@ class PaddockWorkspace {
         { split } = {},
     ) {
         const folderKey = this.workFolderOf(this.currentWidget());
-        if (folderKey) await this.newWorkTerminal({ folderKey, split });
-        else await this.newInnerTerminal({ split });
+        const terminal = folderKey ? await this.newWorkTerminal({ folderKey, split }) : await this.newInnerTerminal({ split });
+        return terminal;
     }
 
     /** 본문 위 탭 줄의 ＋: 작업 폴더가 보이면 그 안에, 아니면 현재 터미널의 폴더에 추가 터미널을 연다. */
@@ -1415,6 +1473,166 @@ class PaddockWorkspace {
         } else {
             await this.newInnerTerminal();
         }
+    }
+
+    /** Shows labels chosen by the user; the official CLI owns login and account identity. */
+    async manageAccounts() {
+        const isWindows = OS.backend.type() === OS.Type.Windows;
+        const runtimeOptions = [{ value: 'native', label: isWindows ? 'Windows' : 'This device' }];
+        if (isWindows && this.isWslReady) runtimeOptions.push({ value: 'wsl', label: 'WSL' });
+        const current = this.currentWidget();
+        const prefersWsl = isWindows && this.isWslReady && (wsl.isWslShell(current?.options?.shellPath)
+            || wsl.isWslShell(this.profiles.defaultProfile?.shellPath));
+        let opened;
+        await new AccountDialog({
+            service: this.accounts,
+            runtimeOptions,
+            defaultRuntime: prefersWsl ? 'wsl' : 'native',
+            onOpen: async profile => { opened = await this.openAccount(profile.id); },
+        }).open();
+        await this.updateAccountLabels().catch(() => {});
+        await this.usagePanel.data.updateProfiles();
+        void this.refreshUsage();
+        // Dialog disposal restores the previous focus. Activate the new terminal only after that finishes.
+        if (opened && !opened.isDisposed) await this.activate(opened.id);
+        this.refreshSoon();
+    }
+
+    async updateAccountLabels() {
+        const profiles = await this.accounts.list();
+        let changed = false;
+        for (const terminal of this.terminals.all) {
+            const previous = terminal.options?.paddockAccount;
+            const current = previous && profiles.find(profile => profile.id === previous.id);
+            if (current && current.label !== previous.label) {
+                const oldLabel = this.accountLabel(terminal);
+                Object.assign(previous, current);
+                changed = true;
+                if (this.state.terminals[terminal.id]?.name === oldLabel) {
+                    this.state = model.renameTerminal(this.state, terminal.id, this.accountLabel(terminal));
+                }
+            }
+        }
+        if (changed) {
+            await this.save();
+            this.refreshSoon();
+        }
+        return profiles;
+    }
+
+    /** Opens the requested CLI in a new terminal; a default launch uses the normal shell environment. */
+    async openUsageAccount(
+        profile,
+    ) {
+        let terminal;
+        if (profile.id) {
+            terminal = await this.openAccount(profile.id);
+        } else if (Object.hasOwn(AccountLaunch.PROVIDERS, profile.provider)) {
+            terminal = await this.newTerminalHere();
+            await terminal.sendText(`${profile.provider}\n`);
+        } else {
+            throw new Error('Choose Claude or Codex.');
+        }
+        return terminal;
+    }
+
+    accountLabel(
+        terminal,
+    ) {
+        const profile = terminal?.options?.paddockAccount;
+        return profile ? `${AccountLaunch.PROVIDERS[profile.provider]} · ${profile.label}` : '';
+    }
+
+    /** Opens the chosen environment beside the current terminal without changing its process or history. */
+    async openAccount(
+        id,
+    ) {
+        const current = this.currentWidget();
+        const folderKey = this.shownFolder();
+        const root = this.shownTopTerminal();
+        const fileRoot = this.isFileOnlyGroup(current) ? this.fileRoots.get(current.id) : null;
+        const cwd = (this.isTerminal(current) ? await this.readCwd(current) : current?.getResourceUri?.()?.parent?.toString())
+            || folderKey || `file://${this.homePath}`;
+        const directory = await this.files.resolve(new URI(cwd)).catch(() => undefined);
+        if (!directory?.isDirectory) throw new Error('The current folder is unavailable. Open an existing folder and try the account again.');
+        const prepared = await this.accounts.prepare(id);
+        const uri = new URI(cwd);
+        const isWindows = OS.backend.type() === OS.Type.Windows;
+        let launchCwd = cwd;
+        if (prepared.profile.runtime === 'wsl') {
+            const authority = uri.authority.toLowerCase();
+            if (authority === 'wsl.localhost' || authority === 'wsl$') {
+                const [distribution, ...segments] = uri.path.toString().replace(/^\//, '').split('/');
+                if (distribution.toLowerCase() !== prepared.profile.wslDistribution.toLowerCase()) {
+                    throw new Error('This folder belongs to a different WSL distribution. Open a terminal in the account’s distribution first.');
+                }
+                launchCwd = `/${segments.join('/')}`;
+            } else if (uri.path.toString() === this.homePath) {
+                launchCwd = '~';
+            } else {
+                launchCwd = uri.path.fsPath();
+            }
+        } else if (isWindows && ['wsl.localhost', 'wsl$'].includes(uri.authority.toLowerCase())) {
+            throw new Error('Choose a WSL account for this Linux folder, or open a Windows folder first.');
+        }
+        const options = accountTerminalOptions(prepared, { cwd: launchCwd, isWindows, wslEnv: this.windowsWslEnv });
+        const shellFile = await this.files.resolve(URI.fromFilePath(options.shellPath)).catch(() => undefined);
+        if (!shellFile?.isFile) throw new Error('The account shell is unavailable. Install Bash, PowerShell, or WSL for the selected environment and try again.');
+        options.cwd = cwd;
+        if (prepared.profile.runtime === 'wsl') {
+            options.id = `terminal-${crypto.randomUUID()}`;
+            options.env[wsl.MARKER] = options.id;
+            options.env.WSLENV = [this.windowsWslEnv, wsl.MARKER].filter(Boolean).join(':');
+        }
+        const terminal = await this.terminals.newTerminal(options);
+        if (folderKey) {
+            this.state = model.assignTerminal(this.state, terminal.id, folderKey, options.title);
+            this.cwdCache.set(terminal.id, cwd);
+            await this.save();
+        } else if (root) {
+            this.innerTerminalRoots.set(terminal.id, root);
+            await this.saveInnerTabs();
+        } else if (fileRoot) {
+            this.moveFileGroup(fileRoot, terminal.id);
+            await this.saveInnerTabs();
+        }
+        const widgetOptions = current && !current.isDisposed
+            ? { area: 'main', mode: fileRoot ? 'split-left' : 'tab-after', ref: current }
+            : { area: 'main' };
+        await this.openTerminal(terminal, { widgetOptions, mode: 'activate' });
+        for (const warning of prepared.warnings || []) void this.messages.warn(warning);
+        await this.refresh();
+        return terminal;
+    }
+
+    async renderAccountMenu() {
+        const menu = this.shell.folderBar.node.querySelector('#account-menu');
+        menu.replaceChildren(element('p', 'account-menu-hint', 'Loading accounts…'));
+        try {
+            const profiles = await this.updateAccountLabels();
+            menu.replaceChildren(element('p', 'account-menu-hint', 'Open a new terminal'));
+            for (const profile of profiles) {
+                const item = button([
+                    element('span', 'shell-option-name', `${AccountLaunch.PROVIDERS[profile.provider]} · ${profile.label}`),
+                    element('span', 'shell-option-meta', profile.runtime === 'wsl' ? 'WSL' : ''),
+                ], 'shell-option', () => {
+                    menu.hidePopover();
+                    this.run(() => this.openAccount(profile.id));
+                });
+                item.title = `${AccountLaunch.PROVIDERS[profile.provider]} · ${profile.label}`;
+                item.setAttribute('role', 'menuitem');
+                menu.append(item);
+            }
+        } catch {
+            menu.replaceChildren(element('p', 'account-menu-hint', 'Accounts could not be loaded. Open Manage accounts to retry.'));
+        }
+        const manage = button('Manage accounts…', 'shell-option account-menu-manage', () => {
+            menu.hidePopover();
+            this.run(() => this.manageAccounts());
+        });
+        manage.setAttribute('role', 'menuitem');
+        menu.append(manage);
+        if (menu.matches(':popover-open')) menu.querySelector('button')?.focus({ preventScroll: true });
     }
 
     /** 아래 ＋로 위쪽 터미널 묶음 안에 터미널을 연다. 같은 묶음의 터미널과 파일 탭 옆에 나타난다. */
@@ -1433,6 +1651,7 @@ class PaddockWorkspace {
         const widgetOptions = fileRoot ? { area: 'main', mode: split || 'split-left', ref: current } : this.widgetOptions(split);
         await this.openTerminal(terminal, { widgetOptions, mode: 'activate' });
         await this.refresh();
+        return terminal;
     }
 
     /** 나눠 열 때 기준 칸. 나누지 않으면 본문의 새 탭으로 연다. */
@@ -1476,6 +1695,7 @@ class PaddockWorkspace {
         await this.openTerminal(terminal, { widgetOptions: this.widgetOptions(split), mode: 'activate' });
         this.view = 'work';
         await this.refresh();
+        return terminal;
     }
 
     openRepository(
@@ -1825,22 +2045,24 @@ class PaddockWorkspace {
             const select = button([element('span', 'prompt-mark', '›_'), element('span', 'row-name', row.name), element('span', 'row-suffix', row.suffix)], 'row-main', () => this.run(() => this.activate(row.id)));
             select.addEventListener('dblclick', () => this.run(() => this.renameTerminal(row.id)));
             select.title = this.doneIds.has(row.id) ? `${row.name} — agent output paused; double-click to rename` : `${row.name} — double-click to rename`;
-            const program = element('span', 'row-meta', terminal ? this.programOf(terminal) : '');
+            const programName = terminal ? this.programOf(terminal) : '';
             const state = agent.activityState(this.activity.get(row.id) ?? agent.idle(), Date.now(), agent.isAgent(this.programs.get(row.id)));
+            // 기본 이름이 프로그램명과 같으면 한 번만 적는다. 사용자가 바꾼 이름 옆에는 실행 프로그램을 유지한다.
+            const program = element('span', 'row-meta', state && row.name.toLowerCase() === programName.toLowerCase() ? '' : programName);
+            node.append(select, program);
             if (terminal && state) {
                 const labels = {
-                    working: ['Working', 'Response output is active after Enter.'],
+                    working: ['Working', 'Recent terminal output was detected; this can include prompt redraws.'],
                     waiting: ['Waiting', 'Enter was sent; no response output has been detected yet.'],
-                    idle: ['Idle', 'No recent response output. The agent may be waiting for input or still thinking.'],
+                    quiet: ['Quiet', 'No terminal output in the last 3 seconds. The agent may be waiting for input or still thinking.'],
                 };
                 const [label, detail] = labels[state];
-                program.textContent = label;
-                program.classList.add('agent-status', `is-${state}`);
-                program.title = `${this.programOf(terminal)} — ${detail} Estimated from terminal input and output.`;
-                program.setAttribute('aria-label', `${this.programOf(terminal)}: ${label}`);
+                const status = element('span', `agent-status is-${state}`, label);
+                status.title = `${programName} — ${detail} Estimated from terminal input and output.`;
+                status.setAttribute('aria-label', `${programName}: ${label}`);
+                node.append(status);
                 node.dataset.agentState = state;
             }
-            node.append(select, program);
             this.attachTerminalMenu(node, row.id);
             node.dataset.widgetId = row.id;
             if (row.id === currentId) node.setAttribute('aria-current', 'true');
@@ -2322,6 +2544,10 @@ class PaddockWorkspace {
      */
     renderFolderTabs() {
         const bar = this.shell.folderBar;
+        const accountLabel = this.accountLabel(this.currentWidget());
+        const accountPicker = bar.node.querySelector('.account-picker');
+        accountPicker.querySelector('.account-picker-label').textContent = accountLabel || 'Accounts';
+        accountPicker.title = accountLabel ? `${accountLabel} — open another account in a new terminal` : 'Open a new terminal with a Claude or Codex account';
         const key = this.shownFolder();
         this.selectRepositoryOf(key);
         const root = key ? null : this.shownTopTerminal();
@@ -2369,7 +2595,7 @@ class PaddockWorkspace {
                     if (terminal) {
                         n_inner += 1;
                         const tab = element('div', `tab${terminal === this.currentWidget() ? ' is-active' : ''}`);
-                        const label = `terminal ${n_inner}`;
+                        const label = this.accountLabel(terminal) || `terminal ${n_inner}`;
                         const select = button(label, 'tab-select', () => this.run(() => this.activate(id)));
                         select.setAttribute('role', 'tab');
                         select.setAttribute('aria-selected', String(terminal === this.currentWidget()));
@@ -2630,7 +2856,7 @@ class PaddockWorkspace {
         indentRow.append(element('span', 'quick-label', 'Sidebar indent'), element('span', 'quick-space'), decreaseIndent, element('span', 'quick-value', `${indent}px`), increaseIndent);
         panel.append(indentRow);
 
-        // 상태 줄 오른쪽 항목을 켜고 끈다. 상태 줄에서 항목을 눌러도 같은 설정이 바뀐다.
+        // 상태 줄 오른쪽 항목을 켜고 끈다. 사용량은 Quick settings에서 숨기며, 끄면 Claude의 원래 상태 줄도 되돌린다.
         panel.append(element('p', 'quick-title quick-section', 'Status bar'));
         for (const [preferenceName, label] of [[STATUS_ITEMS.CLAUDE, 'Claude usage'], [STATUS_ITEMS.CODEX, 'Codex usage'], [STATUS_ITEMS.MEMORY, 'Memory']]) {
             const row = element('label', 'quick-row');
@@ -2718,9 +2944,12 @@ class PaddockWorkspace {
     renderStatus() {
         const current = this.currentWidget();
         const status = this.shell.footer.node.querySelector('#statusbar-right');
+        // Each gauge reads its selected CLI environment; default values never describe a named account.
+        const account = current?.options?.paddockAccount;
+        this.usagePanel?.observe(current?.id, account, this.programs.get(current?.id));
         const saveable = current && Saveable.get(current);
         status.replaceChildren();
-        const label = element('span', '', saveable ? (saveable.dirty ? 'Unsaved changes' : 'Saved') : this.isTerminal(current) ? (this.remote.alive ? `${this.remote.name}` : 'Local shell') : 'Ready');
+        const label = element('span', '', account ? this.accountLabel(current) : saveable ? (saveable.dirty ? 'Unsaved changes' : 'Saved') : this.isTerminal(current) ? (this.remote.alive ? `${this.remote.name}` : 'Local shell') : 'Ready');
         status.append(label);
         if (saveable?.dirty) {
             const save = button('Save', 'save-action', () => this.run(async () => {
@@ -2830,89 +3059,9 @@ class PaddockWorkspace {
         return this.preferences.get(preferenceName, true) !== false;
     }
 
+    /** Reads account-scoped values; empty data and failed requests remain visible in the status bar. */
     async refreshUsage() {
-        let data = null;
-        try {
-            data = await this.fetchJson('/paddock/usage');
-            data = await this.syncClaudeUsage(data);
-        } catch {
-            data = data ?? null;
-        }
-        const host = this.shell.footer.node.querySelector('.ai-usage');
-        const showsClaude = this.isStatusItemOn(STATUS_ITEMS.CLAUDE);
-        const showsCodex = this.isStatusItemOn(STATUS_ITEMS.CODEX);
-        // 값이 그대로면 다시 그리지 않는다(마우스를 올린 말풍선이 깜빡이지 않게). 분 단위가 바뀌면 문구를 새로 쓴다.
-        const key = JSON.stringify([data, showsClaude, showsCodex, Math.floor(Date.now() / 60000)]);
-        if (key !== this.usageKey && data) {
-            this.usageKey = key;
-            host.replaceChildren();
-            const now = Math.floor(Date.now() / 1000);
-            const updated = (seconds) => (seconds ? ` · updated ${usage.duration(Math.max(0, now - seconds))} ago` : '');
-            // 출처(Claude·Codex)마다 한 묶음: 표지·이름을 한 번 쓰고 그 뒤에 창(5h·week)별 게이지를 둔다.
-            // 막대 색은 사용량 수준을 뜻하므로, 출처는 색이 아니라 표지·이름·구분선으로 가른다.
-            const tooltip = (source, window, updatedAt) => `${source} ${usage.windowName(window.label)}: ${usage.describe(window, now)}${updated(updatedAt)}`;
-            if (showsClaude) {
-                const group = this.usageGroup('claude', 'Claude', 'button');
-                group.title = 'Click to hide Claude usage';
-                group.addEventListener('click', () => this.run(() => this.hideClaudeUsage()));
-                const windows = data.claude.state === 'on' ? usage.currentWindows(data.claude.windows, now) : [];
-                if (!windows.length) {
-                    group.append(this.meter('claude', '', null, 'Claude usage appears after Claude Code answers in a terminal (Pro·Max plans). Click to hide.'));
-                }
-                for (const window of windows) {
-                    group.append(this.meter(`claude-${window.label}`, window.label, window.used, `${tooltip('Claude', window, data.claude.updatedAt)}. Click to hide.`));
-                }
-                host.append(group);
-            } else {
-                host.append(this.offGroup('claude', 'Claude', STATUS_ITEMS.CLAUDE));
-            }
-            if (showsCodex) {
-                const group = this.usageGroup('codex', 'Codex', 'button');
-                group.title = 'Click to hide Codex usage';
-                group.addEventListener('click', () => this.run(() => this.setPreference(STATUS_ITEMS.CODEX, false)));
-                const codexWindows = usage.currentWindows(data.codex.windows, now);
-                if (!codexWindows.length) {
-                    group.append(this.meter('codex', '', null, 'Codex usage appears after Codex runs in a terminal. Click to hide.'));
-                }
-                for (const window of codexWindows) {
-                    group.append(this.meter(`codex-${window.label}`, window.label, window.used, `${tooltip('Codex', window, data.codex.updatedAt)}. Click to hide.`));
-                }
-                host.append(group);
-            } else {
-                host.append(this.offGroup('codex', 'Codex', STATUS_ITEMS.CODEX));
-            }
-        }
-    }
-
-    /**
-     * Claude 표시 설정과 Claude Code 상태 줄 등록을 맞추고, 바뀌었으면 사용량을 다시 읽어 돌려준다.
-     * 표시를 켜면 Paddock 상태 줄을 넣고(처음 한 번은 자동), 끄면 원래 상태 줄로 되돌린다.
-     * 이전 버전에서 Claude 묶음을 눌러 꺼 둔 상태(설정 없이 꺼짐)는 표시 설정을 끈 것으로 옮긴다.
-     * 같은 목표로는 한 번만 시도한다 — Node.js가 없어 실패해도 주기마다 오류를 띄우지 않는다.
-     */
-    async syncClaudeUsage(
-        data,
-    ) {
-        const inspected = this.preferences.inspect(STATUS_ITEMS.CLAUDE);
-        const isChosen = inspected?.globalValue !== undefined || inspected?.workspaceValue !== undefined;
-        const wants = this.isStatusItemOn(STATUS_ITEMS.CLAUDE);
-        let next = data;
-        if (data.claude.state === 'off' && !isChosen) {
-            await this.setPreference(STATUS_ITEMS.CLAUDE, false);
-        } else if (data.claude.state === 'unset' && wants && !this.claudeAutoTried) {
-            this.claudeAutoTried = true;
-            await this.setClaudeUsage(true, true);
-            next = await this.fetchJson('/paddock/usage');
-        } else if (this.claudeSyncTarget !== wants && ((wants && data.claude.state === 'off') || (!wants && data.claude.state === 'on'))) {
-            this.claudeSyncTarget = wants;
-            try {
-                await this.setClaudeUsage(wants);
-            } catch (error) {
-                this.messages.error(error instanceof Error ? error.message : String(error));
-            }
-            next = await this.fetchJson('/paddock/usage');
-        }
-        return next;
+        await this.usagePanel.refresh();
     }
 
     usageGroup(
@@ -2926,34 +3075,6 @@ class PaddockWorkspace {
         group.append(element('span', 'source-mark', SOURCE_MARKS[source]));
         if (name) group.append(element('span', 'source-name', name));
         return group;
-    }
-
-    async setClaudeUsage(
-        enabled,
-        isAutomatic = false,
-    ) {
-        const { state } = await this.fetchJson('/paddock/usage/claude', 'POST', `?enabled=${enabled}${isAutomatic ? '&automatic=true' : ''}`);
-        // 자동 켜기는 다른 Paddock이 이미 상태 줄을 쓰고 있으면 건너뛴다(state가 'unset'으로 남음). 그때는 알리지 않는다.
-        if (isAutomatic && state === 'on') {
-            // 사용자 설정 파일을 바꾼 일이라 처음 한 번 알리고 바로 끌 수 있게 한다.
-            // 알림 버튼을 기다리는 동안 게이지 그리기가 멈추지 않게 결과는 따로 처리한다.
-            this.messages.info('Claude usage is now shown in the status bar (added a status line to Claude Code settings).', 'Turn off').then((action) => {
-                if (action === 'Turn off') {
-                    this.run(() => this.setPreference(STATUS_ITEMS.CLAUDE, false));
-                }
-            });
-        }
-    }
-
-    /** Claude 항목을 숨긴다. Claude Code 설정의 상태 줄도 원래대로 되돌리므로 먼저 확인받는다. */
-    async hideClaudeUsage() {
-        const confirmed = await new ConfirmDialog({
-            title: 'Hide Claude usage',
-            msg: 'Paddock will remove its status line from Claude Code settings and restore the one you had before.',
-            ok: 'Hide',
-            cancel: 'Cancel',
-        }).open();
-        if (confirmed) await this.setPreference(STATUS_ITEMS.CLAUDE, false);
     }
 
     async refreshRemote() {

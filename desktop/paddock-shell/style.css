@@ -67,7 +67,7 @@ body {
 .paddock-shell #theia-top-panel[data-menu-visibility="compact"] .paddock-titlebar-menu,
 .paddock-shell #theia-top-panel[data-menu-visibility="toggle"] .paddock-titlebar-menu { display: block; }
 .paddock-shell #theia-top-panel[data-menu-visibility="hidden"] .paddock-titlebar-menu { display: none; }
-.paddock-shell .sidebar { min-width: 180px; max-width: 520px; background: var(--p-sidebar-bg); display: flex; flex-direction: column; overflow: hidden; }
+.paddock-shell .sidebar { min-width: 180px; max-width: 520px; background: var(--p-sidebar-bg); display: flex; flex-direction: column; overflow: hidden; container: paddock-sidebar / inline-size; }
 .paddock-shell .statusbar { min-height: 27px; max-height: 27px; }
 /* 상태 줄은 위쪽 창 줄과 같은 바탕을 쓴다. 선택한 테마가 상태 줄만 파란색으로 지정해도 창 틀이 한 덩어리로 보이게 한다. */
 .paddock-shell .statusbar { --p-fg-muted: var(--p-status-fg); --p-fg-soft: var(--p-status-fg); --p-border: color-mix(in srgb, var(--p-status-fg) 25%, var(--p-status-bg)); }
@@ -137,9 +137,18 @@ body {
 .paddock-shell .row-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .paddock-shell .row-suffix, .paddock-shell .row-meta { flex: none; color: var(--p-fg-muted); font-size: 12px; }
 .paddock-shell .row-meta { max-width: 70px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.paddock-shell .agent-status { max-width: none; margin-left: 4px; padding: 1px 6px; border-radius: 4px; background: var(--p-control-bg); line-height: 18px; }
-.paddock-shell .agent-status.is-working { color: var(--p-accent); background: color-mix(in srgb, var(--p-accent) 12%, transparent); }
+.paddock-shell .terminal-row[data-agent-state] > .row-meta { margin-left: 6px; }
+.paddock-shell .agent-status { display: inline-flex; flex: 0 0 65px; align-items: center; gap: 5px; margin-left: 8px; color: var(--p-fg-muted); font-size: 12px; white-space: nowrap; }
+.paddock-shell .agent-status::before { content: ''; flex: none; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.paddock-shell .agent-status.is-working { color: var(--p-accent); }
 .paddock-shell .agent-status.is-waiting { color: var(--p-warning); }
+/* 좁은 사이드바에서는 이름의 클릭 영역을 첫 줄에 확보하고, 프로그램과 상태를 둘째 줄에 둔다. */
+@container paddock-sidebar (max-width: 239px) {
+    .paddock-shell .terminal-row[data-agent-state] { display: grid; grid-template-columns: minmax(0, 1fr) 65px; grid-template-rows: 26px 16px; column-gap: 8px; padding-bottom: 4px; }
+    .paddock-shell .terminal-row[data-agent-state] .row-main { grid-column: 1 / -1; grid-row: 1; width: 100%; height: 26px; }
+    .paddock-shell .terminal-row[data-agent-state] .row-meta { grid-column: 1; grid-row: 2; margin-left: calc(22px + var(--p-sidebar-indent, 12px)); line-height: 16px; }
+    .paddock-shell .terminal-row[data-agent-state] .agent-status { grid-column: 2; grid-row: 2; margin-left: 0; line-height: 16px; }
+}
 .paddock-shell .folder-row.is-current .row-meta { color: var(--p-fg-soft); }
 .paddock-shell .prompt-mark { font-family: ui-monospace, monospace; font-size: 11px; color: var(--p-fg-muted); }
 .paddock-shell .row-action { display: none; place-items: center; width: 20px; height: 20px; margin-left: 4px; border: 0; border-radius: 4px; background: transparent; color: var(--p-fg-muted); }
@@ -352,3 +361,12 @@ body .theia-button.secondary:hover { background: var(--theia-button-secondaryHov
 .paddock-binary-notice .binary-notice-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 10px; }
 .paddock-binary-notice .binary-notice-action { height: 26px; padding: 0 12px; border: 1px solid var(--p-popup-border, #454545); border-radius: 5px; background: transparent; color: inherit; font-size: 12px; }
 .paddock-binary-notice .binary-notice-action:hover { background: var(--p-hover-bg, #2a2d2e); color: var(--p-fg-strong, #ffffff); }
+.account-picker { display: flex; align-items: center; gap: 6px; max-width: 210px; flex-shrink: 0; height: 28px; padding: 0 8px; color: var(--p-fg-muted); background: transparent; border: 1px solid transparent; border-radius: 4px; cursor: pointer; }
+.account-picker:hover { background: var(--p-hover); color: var(--p-fg); }
+.account-picker:focus-visible { outline: 1px solid var(--p-accent); outline-offset: -1px; }
+.account-picker-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#account-menu { box-sizing: border-box; width: 284px; max-height: min(420px, 70vh); overflow-y: auto; margin: 0; padding: 6px; color: var(--p-fg); background: var(--p-popup-bg); border: 1px solid var(--p-border); border-radius: 6px; box-shadow: 0 8px 24px #0005; }
+#account-menu .shell-option { width: 100%; min-height: 32px; }
+.account-menu-hint { margin: 5px 8px 8px; color: var(--p-fg-muted); font-size: 11px; line-height: 1.5; }
+.account-menu-manage { margin-top: 6px; border-top: 1px solid var(--p-border) !important; }
+.ai-usage[hidden] { display: none; }

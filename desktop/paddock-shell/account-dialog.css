@@ -1,0 +1,91 @@
+.lm-Widget.dialogOverlay.paddock-account-dialog .dialogBlock {
+  width: min(640px, calc(100vw - 40px));
+  min-width: 0;
+  max-height: calc(100vh - 48px);
+  color: var(--p-fg);
+  background: var(--p-popup-bg);
+  border: 1px solid var(--p-border);
+  border-radius: 8px;
+}
+.lm-Widget.dialogOverlay.paddock-account-dialog .dialogContent {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 20px 4px;
+}
+.lm-Widget.dialogOverlay.paddock-account-dialog .dialogTitle { min-height: 44px; padding: 0 20px; }
+.lm-Widget.dialogOverlay.paddock-account-dialog .dialogControl { padding: 16px 20px; }
+.lm-Widget.dialogOverlay.paddock-account-dialog .theia-button {
+  min-height: 30px;
+  margin: 0;
+  padding: 5px 12px;
+  border: 1px solid var(--p-border);
+  border-radius: 4px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+.lm-Widget.dialogOverlay.paddock-account-dialog .theia-button.main {
+  border-color: var(--p-badge-bg);
+  color: var(--p-badge-fg);
+  background: var(--p-badge-bg);
+}
+.lm-Widget.dialogOverlay.paddock-account-dialog .theia-button.secondary {
+  color: var(--p-fg);
+  background: var(--p-control-bg);
+}
+.lm-Widget.dialogOverlay.paddock-account-dialog .theia-button:not(:disabled):hover { filter: brightness(1.12); }
+.lm-Widget.dialogOverlay.paddock-account-dialog button:disabled,
+.lm-Widget.dialogOverlay.paddock-account-dialog input:disabled,
+.lm-Widget.dialogOverlay.paddock-account-dialog select:disabled { opacity: .55; cursor: default; }
+.lm-Widget.dialogOverlay.paddock-account-dialog button:focus-visible,
+.lm-Widget.dialogOverlay.paddock-account-dialog input:focus-visible,
+.lm-Widget.dialogOverlay.paddock-account-dialog select:focus-visible,
+.lm-Widget.dialogOverlay.paddock-account-dialog [role=button]:focus-visible {
+  outline: 2px solid var(--p-accent);
+  outline-offset: 2px;
+}
+.paddock-account-intro { margin: 0 0 16px; line-height: 1.5; color: var(--p-fg-muted); }
+.paddock-account-list { display: grid; gap: 8px; list-style: none; margin: 0 0 16px; padding: 0; }
+.paddock-account-list:empty { display: none; }
+.paddock-account-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--p-border);
+  border-radius: 6px;
+  background: var(--p-control-bg);
+}
+.paddock-account-summary { flex: 1; min-width: 140px; display: grid; gap: 4px; }
+.paddock-account-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.paddock-account-detail { color: var(--p-fg-muted); font-size: 12px; line-height: 17px; }
+.paddock-account-actions,
+.paddock-account-form-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.paddock-account-empty { margin: 0 0 16px; line-height: 1.5; color: var(--p-fg-muted); }
+.paddock-account-form { margin-top: 8px; padding-top: 16px; border-top: 1px solid var(--p-border); }
+.paddock-account-form h3 { margin: 0 0 12px; font-size: 13px; font-weight: 600; }
+.paddock-account-fields { display: flex; flex-wrap: wrap; gap: 12px; }
+.paddock-account-field { display: flex; flex: 1; min-width: 120px; flex-direction: column; gap: 6px; }
+.paddock-account-field-label { color: var(--p-fg-muted); font-size: 12px; }
+.paddock-account-input,
+.paddock-account-select {
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 1px solid var(--p-border);
+  border-radius: 4px;
+  color: var(--p-fg);
+  background: var(--p-control-bg);
+  font: inherit;
+}
+.paddock-account-hint { margin: 12px 0 14px; color: var(--p-fg-muted); font-size: 12px; line-height: 1.5; }
+.paddock-account-row-form { display: flex; flex-wrap: wrap; align-items: end; gap: 6px; width: 100%; }
+.paddock-account-row-form .paddock-account-field { flex: 1; }
+.paddock-account-remove { width: 100%; }
+.paddock-account-remove p { margin: 0 0 10px; line-height: 1.5; }
+.paddock-account-remove button + button { margin-left: 6px !important; }
+.paddock-account-error { margin-top: 16px; padding: 10px 12px; border-left: 2px solid var(--p-danger); background: var(--p-control-bg); }
+.paddock-account-error p { margin: 0; color: var(--p-danger); line-height: 1.5; }
+.paddock-account-error button { margin-top: 10px !important; }

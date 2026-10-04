@@ -1,5 +1,5 @@
 /**
- * 터미널 안 AI 에이전트(claude·codex 등)의 "작업이 끝났다" 판단에 쓰는 순수 계산.
+ * 터미널 안 AI 에이전트(claude·codex 등)의 활동 표시와 "작업이 끝났다" 추정에 쓰는 순수 계산.
  *
  * 에이전트는 일하는 동안 화면(스피너·스트리밍 출력)을 계속 고쳐 쓰고, 끝나거나 사용자 답을 기다리면 조용해진다.
  * 그래서 사용자가 Enter를 누른 뒤 출력이 한동안 이어지다가 멈추면 "끝남"으로 본다.
@@ -42,7 +42,9 @@ function programName(
     let name = null;
     if (argv.length && argv[0]) {
         const executable = baseName(argv[0]).replace(/^-/, '');
-        const script = RUNTIMES.includes(executable) ? argv.slice(1).find(arg => arg && !arg.startsWith('-')) : null;
+        // Interactive Bash can name its startup file with --rcfile. That file is not the running program.
+        const interactiveBash = executable === 'bash' && argv.slice(1).some(arg => /^-[^-]*i/.test(arg));
+        const script = RUNTIMES.includes(executable) && !interactiveBash ? argv.slice(1).find(arg => arg && !arg.startsWith('-')) : null;
         const lookIn = [executable, ...(script ? script.split(/[\\/]/) : [])].map(part => part.toLowerCase());
         const agent = AGENT_NAMES.find(agentName => lookIn.some(part => part === agentName || part.replace(/\.(js|mjs|cjs)$/, '') === agentName || part === `${agentName}-code`));
         name = agent || (script ? baseName(script) : executable);
@@ -70,18 +72,22 @@ function noteInput(
     return data.includes('\r') ? { ...idle(), armedAt: now } : activity;
 }
 
-/** 프로그램 출력. Enter 뒤의 출력만 센다(시작 화면·프롬프트 다시 그리기는 세지 않는다). */
+/**
+ * 프로그램 출력을 최근 활동으로 기록한다. 완료 알림의 작업 시간은 Enter 뒤의 출력만 센다.
+ * 시작 화면·프롬프트 다시 그리기는 완료 알림으로 세지 않지만, 출력이 재개됐다는 표시는 유지한다.
+ */
 function noteOutput(
     activity,
     now,
 ) {
-    return activity.armedAt === null ? activity : { ...activity, busySince: activity.busySince ?? now, lastOutput: now };
+    return { ...activity, busySince: activity.armedAt === null ? activity.busySince : activity.busySince ?? now, lastOutput: now };
 }
 
 /**
  * 터미널 입력·출력으로 관찰한 에이전트 상태. 실행 중인 에이전트가 아니면 null이다.
  *
- * Enter 뒤 첫 출력을 기다리면 waiting, 최근 출력이 있으면 working, 그 밖에는 idle이다.
+ * Enter 뒤 첫 출력을 기다리면 waiting, 최근 출력이 있으면 working, 그 밖에는 quiet이다.
+ * 초기 화면이나 프롬프트를 다시 그리는 출력도 최근 활동에 포함된다.
  * 출력이 멎어도 내부 계산이나 사용자 답을 기다리는지는 알 수 없으므로 완료 여부는 확정하지 않는다.
  * 완료 알림의 최소 작업 시간과 달리 짧은 응답도 같은 표시 규칙을 쓴다.
  */
@@ -92,7 +98,7 @@ function activityState(
 ) {
     let state = null;
     if (agentNow) {
-        state = 'idle';
+        state = 'quiet';
         if (activity.armedAt !== null && activity.busySince === null) {
             state = 'waiting';
         } else if (activity.lastOutput !== null && now - activity.lastOutput < ACTIVITY.QUIET_MS) {

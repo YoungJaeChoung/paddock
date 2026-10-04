@@ -1,0 +1,50 @@
+/* Account names stay attached to their own limits, while the full list remains reachable at narrow widths. */
+.paddock-shell .status-left { min-width: 0; overflow: hidden; }
+.paddock-shell #statusbar-right { min-width: 0; overflow: hidden; }
+.paddock-shell #statusbar-right > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.paddock-shell .status-right { flex-shrink: 0; gap: 8px; }
+.paddock-shell .ai-usage { gap: 5px; }
+.paddock-shell .account-usage-selected { min-width: 0; gap: 6px; padding-left: 10px; }
+.paddock-shell .account-usage-selected .source-name { flex-shrink: 0; font-weight: 600; }
+.account-usage-name { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--p-fg-muted); }
+.account-usage-state { color: var(--p-fg-muted); font-size: 12px; white-space: nowrap; }
+.paddock-shell .account-usage-selected .meter { margin-left: 2px; }
+.account-usage-compact { display: none; align-items: center; padding: 0 8px; border: 0; background: transparent; color: inherit; font: inherit; }
+.account-usage-popup { position: fixed; inset: auto 12px 34px auto; box-sizing: border-box; width: 560px; max-width: calc(100vw - 24px); max-height: min(640px, calc(100vh - 72px)); margin: 0; padding: 14px; border: 1px solid var(--p-popup-border); border-radius: 8px; background: var(--p-popup-bg); color: var(--p-fg); box-shadow: 0 12px 32px #0006; font: 13px var(--p-interface-font, -apple-system), BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.account-usage-popup:popover-open { display: flex; flex-direction: column; gap: 10px; }
+.account-usage-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.account-usage-heading > strong { font-size: 15px; }
+.account-usage-popup button { min-height: 30px; padding: 4px 9px; border: 1px solid var(--p-popup-border); border-radius: 4px; background: var(--p-control-bg); color: var(--p-fg); font: inherit; }
+.account-usage-popup button:hover { background: var(--p-hover-bg); }
+.account-usage-popup button:disabled { opacity: .5; cursor: wait; }
+.account-usage-popup button:focus-visible, .account-usage-popup input:focus-visible { outline: 2px solid var(--p-accent); outline-offset: 2px; }
+.account-usage-hint, .account-usage-notice { margin: 0; color: var(--p-fg-muted); font-size: 12px; line-height: 1.5; }
+.account-usage-notice { color: var(--p-danger); overflow-wrap: anywhere; }
+.account-usage-notice:empty { display: none; }
+.account-usage-search { width: 100%; min-height: 32px; padding: 5px 8px; border: 1px solid var(--p-popup-border); border-radius: 4px; background: var(--p-control-bg); color: var(--p-fg); }
+.account-usage-search[hidden] { display: none; }
+.account-usage-rows { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.account-usage-section h3 { position: sticky; top: 0; z-index: 1; margin: 0; padding: 6px 0; background: var(--p-popup-bg); font-size: 12px; font-weight: 600; color: var(--p-fg-muted); }
+.account-usage-section + .account-usage-section { margin-top: 14px; }
+.account-usage-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--p-border-subtle); }
+.account-usage-summary { flex: 1; min-width: 0; }
+.account-usage-row-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.account-usage-row-title { display: flex; align-items: center; gap: 8px; }
+.account-usage-selected-badge { flex-shrink: 0; padding: 1px 5px; border-radius: 3px; background: var(--p-selected-bg); color: var(--p-fg-strong); font-size: 10px; }
+.account-usage-environment { display: block; margin-top: 3px; color: var(--p-fg-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-usage-updated { display: block; min-height: 12px; margin-top: 4px; color: var(--p-fg-muted); font-size: 10px; }
+.account-usage-values { display: flex; min-height: 15px; flex-wrap: wrap; gap: 6px 14px; margin-top: 6px; }
+.account-usage-open { flex-shrink: 0; }
+.account-usage-actions { display: flex; flex-shrink: 0; gap: 8px; justify-content: flex-end; padding-top: 4px; }
+@media (max-width: 1150px) {
+    .account-usage-name { max-width: 68px; }
+    .paddock-shell .account-usage-selected .meter-bar { display: none; }
+}
+@media (max-width: 780px) {
+    .paddock-shell .account-usage-selected { display: none; }
+    .account-usage-compact { display: flex; }
+}
+@media (max-width: 440px) {
+    .account-usage-row { align-items: flex-start; flex-direction: column; gap: 8px; }
+    .account-usage-summary { width: 100%; }
+}

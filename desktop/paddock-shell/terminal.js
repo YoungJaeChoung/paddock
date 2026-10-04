@@ -8,6 +8,23 @@ const { injectable, inject, decorate } = require('@theia/core/shared/inversify')
  * 탭 버튼·메뉴·단축키는 같은 닫기 계약을 쓰며, 셸 프로세스가 스스로 끝날 때의 dispose는 확인 없이 유지한다.
  */
 class PaddockTerminal extends TerminalWidgetImpl {
+    /** Keeps the last account label when the launch entry was renamed and then removed. */
+    storeState() {
+        const state = super.storeState();
+        if (this.options.paddockAccount) state.paddockAccountLabel = this.options.paddockAccount.label;
+        return state;
+    }
+
+    restoreState(
+        oldState,
+    ) {
+        const label = oldState.paddockAccountLabel;
+        if (this.options.paddockAccount && typeof label === 'string' && label.trim() && label.length <= 64 && !/[\u0000-\u001f\u007f]/.test(label)) {
+            this.options.paddockAccount.label = label;
+        }
+        super.restoreState(oldState);
+    }
+
     init() {
         super.init();
         // 밝은 테마에서도 명령과 출력의 색을 읽을 수 있도록 배경과의 최소 명암비를 유지한다.

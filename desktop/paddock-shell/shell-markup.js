@@ -36,6 +36,8 @@ module.exports = {
             <button type="button" class="folder-tab-add" aria-label="New terminal here" title="New terminal here"><span class="codicon codicon-add"></span></button>
         </div>
         <div class="folder-bar-space"></div>
+        <button type="button" class="account-picker" popovertarget="account-menu" aria-haspopup="menu" title="Open a new terminal with a Claude or Codex account"><span class="codicon codicon-account"></span><span class="account-picker-label">Accounts</span><span class="codicon codicon-chevron-down"></span></button>
+        <div id="account-menu" popover role="menu" aria-label="Agent accounts"></div>
         <div class="markdown-view-actions" role="group" aria-label="Markdown view" hidden>
             <button type="button" data-markdown-view="file" aria-pressed="true">File</button>
             <button type="button" data-markdown-view="preview" aria-pressed="false">Preview</button>
