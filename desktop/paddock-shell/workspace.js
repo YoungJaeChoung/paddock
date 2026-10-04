@@ -40,6 +40,7 @@ const agent = require('./agent-model');
 const wsl = require('./wsl-terminals');
 const cwdReport = require('./cwd-report');
 const { AccountDialog } = require('./account-dialog');
+const { retryAccountStorage } = require('./account-access-dialog');
 const { AccountLaunch, accountTerminalOptions, refreshAccountResume } = require('./account-launch');
 const { UsagePanel } = require('./usage-panel');
 
@@ -1610,7 +1611,7 @@ class PaddockWorkspace {
             || folderKey || `file://${this.homePath}`;
         const directory = await this.files.resolve(new URI(cwd)).catch(() => undefined);
         if (!directory?.isDirectory) throw new Error('The current folder is unavailable. Open an existing folder and try the account again.');
-        const prepared = await this.accounts.prepare(id);
+        const prepared = await retryAccountStorage(() => this.accounts.prepare(id), this.accounts, { accountId: id });
         const uri = new URI(cwd);
         const isWindows = OS.backend.type() === OS.Type.Windows;
         let launchCwd = cwd;
@@ -1674,7 +1675,7 @@ class PaddockWorkspace {
             const request = this.accountSessionRequest(terminal);
             if (!request) throw new Error('No conversation has been identified in this terminal. Start Claude Code before switching accounts.');
             request.shellPid = await terminal.processId.catch(() => request.shellPid);
-            const prepared = await this.accounts.prepareResume(id, request);
+            const prepared = await retryAccountStorage(() => this.accounts.prepareResume(id, request), this.accounts, { accountId: id });
             const cwd = await this.readCwd(terminal);
             const directory = cwd && await this.files.resolve(new URI(cwd)).catch(() => undefined);
             if (!directory?.isDirectory) throw new Error('The current folder is unavailable. Restore it before switching accounts.');

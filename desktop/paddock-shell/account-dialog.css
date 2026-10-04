@@ -1,4 +1,4 @@
-.lm-Widget.dialogOverlay.paddock-account-dialog .dialogBlock {
+.lm-Widget.dialogOverlay:is(.paddock-account-dialog, .paddock-account-access-dialog) .dialogBlock {
   width: min(640px, calc(100vw - 40px));
   min-width: 0;
   max-height: calc(100vh - 48px);
@@ -7,14 +7,14 @@
   border: 1px solid var(--p-border);
   border-radius: 8px;
 }
-.lm-Widget.dialogOverlay.paddock-account-dialog .dialogContent {
+.lm-Widget.dialogOverlay:is(.paddock-account-dialog, .paddock-account-access-dialog) .dialogContent {
   min-height: 0;
   overflow-y: auto;
   padding: 16px 20px 4px;
 }
-.lm-Widget.dialogOverlay.paddock-account-dialog .dialogTitle { min-height: 44px; padding: 0 20px; }
-.lm-Widget.dialogOverlay.paddock-account-dialog .dialogControl { padding: 16px 20px; }
-.lm-Widget.dialogOverlay.paddock-account-dialog .theia-button {
+.lm-Widget.dialogOverlay:is(.paddock-account-dialog, .paddock-account-access-dialog) .dialogTitle { min-height: 44px; padding: 0 20px; }
+.lm-Widget.dialogOverlay:is(.paddock-account-dialog, .paddock-account-access-dialog) .dialogControl { padding: 16px 20px; }
+.lm-Widget.dialogOverlay:is(.paddock-account-dialog, .paddock-account-access-dialog) .theia-button {
   min-height: 30px;
   margin: 0;
   padding: 5px 12px;
@@ -23,23 +23,23 @@
   line-height: 18px;
   white-space: nowrap;
 }
-.lm-Widget.dialogOverlay.paddock-account-dialog .theia-button.main {
+.lm-Widget.dialogOverlay:is(.paddock-account-dialog, .paddock-account-access-dialog) .theia-button.main {
   border-color: var(--p-badge-bg);
   color: var(--p-badge-fg);
   background: var(--p-badge-bg);
 }
-.lm-Widget.dialogOverlay.paddock-account-dialog .theia-button.secondary {
+.lm-Widget.dialogOverlay:is(.paddock-account-dialog, .paddock-account-access-dialog) .theia-button.secondary {
   color: var(--p-fg);
   background: var(--p-control-bg);
 }
-.lm-Widget.dialogOverlay.paddock-account-dialog .theia-button:not(:disabled):hover { filter: brightness(1.12); }
-.lm-Widget.dialogOverlay.paddock-account-dialog button:disabled,
-.lm-Widget.dialogOverlay.paddock-account-dialog input:disabled,
-.lm-Widget.dialogOverlay.paddock-account-dialog select:disabled { opacity: .55; cursor: default; }
-.lm-Widget.dialogOverlay.paddock-account-dialog button:focus-visible,
-.lm-Widget.dialogOverlay.paddock-account-dialog input:focus-visible,
-.lm-Widget.dialogOverlay.paddock-account-dialog select:focus-visible,
-.lm-Widget.dialogOverlay.paddock-account-dialog [role=button]:focus-visible {
+.lm-Widget.dialogOverlay:is(.paddock-account-dialog, .paddock-account-access-dialog) .theia-button:not(:disabled):hover { filter: brightness(1.12); }
+.lm-Widget.dialogOverlay:is(.paddock-account-dialog, .paddock-account-access-dialog) button:disabled,
+.lm-Widget.dialogOverlay:is(.paddock-account-dialog, .paddock-account-access-dialog) input:disabled,
+.lm-Widget.dialogOverlay:is(.paddock-account-dialog, .paddock-account-access-dialog) select:disabled { opacity: .55; cursor: default; }
+.lm-Widget.dialogOverlay:is(.paddock-account-dialog, .paddock-account-access-dialog) button:focus-visible,
+.lm-Widget.dialogOverlay:is(.paddock-account-dialog, .paddock-account-access-dialog) input:focus-visible,
+.lm-Widget.dialogOverlay:is(.paddock-account-dialog, .paddock-account-access-dialog) select:focus-visible,
+.lm-Widget.dialogOverlay:is(.paddock-account-dialog, .paddock-account-access-dialog) [role=button]:focus-visible {
   outline: 2px solid var(--p-accent);
   outline-offset: 2px;
 }

@@ -52,6 +52,10 @@ class PaddockShell extends ApplicationShell {
         sidebarToggle.addEventListener('click', () => this.toggleSidebar());
         this.tabs = { node: this.header.node.querySelector('#tab-strip') };
         this.footer = new Widget({ node: markup.footer() });
+        // Recalculate the workspace when zoom or a narrow window changes the footer's CSS height.
+        const footerResize = new ResizeObserver(() => this.fit());
+        footerResize.observe(this.footer.node);
+        this.disposed.connect(() => footerResize.disconnect());
         this.folderBar = new Widget({ node: markup.folderBar() });
         // 작업 폴더가 없어도 빈 탭 줄은 남긴다. workspace.js가 선택한 폴더의 탭과 버튼을 채운다.
         const body = new Panel({ layout: this.createBoxLayout(

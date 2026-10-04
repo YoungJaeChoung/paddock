@@ -1,8 +1,8 @@
 /**
  * 상태 줄의 AI 사용량 게이지가 쓰는 순수 계산.
  *
- * 로그인 없이, 각 CLI가 스스로 남긴 값만 읽는다.
- * - Codex: 세션 기록(`~/.codex/sessions/…/rollout-*.jsonl`)의 `rate_limits`.
+ * 앱이 로그인을 처리하지 않고, 각 공식 CLI가 보고한 값만 표시한다.
+ * - Codex: 공식 CLI의 계정 한도 조회 또는 구버전 세션 기록(`~/.codex/sessions/…/rollout-*.jsonl`)의 `rate_limits`.
  * - Claude Code: 상태 줄(statusline) 명령이 받는 입력의 `rate_limits`(Pro·Max 구독).
  * 창(window) 하나는 `{ label: '5h' | 'week' | …, used: 0~100 정수, resetsAt: 초 단위 Unix 시각 또는 null }`이다.
  * 7일 창은 '7d' 대신 'week'로 적는다 — 상태 줄의 작은 글자에서 '5h'와 한 글자만 달라 헷갈리지 않게 모양부터 다르게 하고,

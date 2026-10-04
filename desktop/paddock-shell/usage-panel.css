@@ -1,16 +1,18 @@
 /* Account names stay attached to their own limits, while the full list remains reachable at narrow widths. */
+.paddock-shell .statusbar { max-width: 100vw; }
 .paddock-shell .status-left { min-width: 0; overflow: hidden; }
 .paddock-shell #statusbar-right { min-width: 0; overflow: hidden; }
 .paddock-shell #statusbar-right > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .paddock-shell .status-right { flex-shrink: 0; gap: 8px; }
-.paddock-shell .ai-usage { gap: 5px; }
-.paddock-shell .account-usage-selected { min-width: 0; gap: 6px; padding-left: 10px; }
+.paddock-shell .ai-usage { align-items: center; gap: 8px; }
+/* Each provider owns its account name and limits inside one visible, clickable boundary. */
+.paddock-shell .account-usage-selected { box-sizing: border-box; min-width: 0; height: 22px; gap: 6px; padding: 0 8px; border: 1px solid var(--p-border); border-radius: 4px; background: color-mix(in srgb, var(--p-status-fg) 6%, var(--p-status-bg)); }
+.paddock-shell .account-usage-selected::before { display: none; }
 .paddock-shell .account-usage-selected .source-name { flex-shrink: 0; font-weight: 600; }
 .account-usage-name { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--p-fg-muted); }
 .account-usage-state { color: var(--p-fg-muted); font-size: 12px; white-space: nowrap; }
 .paddock-shell .account-usage-selected .meter { margin-left: 2px; }
 .account-usage-compact { display: none; align-items: center; gap: 7px; min-width: 0; padding: 0 8px; border: 0; background: transparent; color: inherit; font: inherit; }
-.account-usage-compact-name { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--p-fg-muted); }
 .account-usage-compact.is-only { display: flex; }
 .account-usage-popup { position: fixed; inset: auto 12px 34px auto; box-sizing: border-box; width: 560px; max-width: calc(100vw - 24px); max-height: min(640px, calc(100vh - 72px)); margin: 0; padding: 14px; border: 1px solid var(--p-popup-border); border-radius: 8px; background: var(--p-popup-bg); color: var(--p-fg); box-shadow: 0 12px 32px #0006; font: 13px var(--p-interface-font, -apple-system), BlinkMacSystemFont, "Segoe UI", sans-serif; }
 .account-usage-popup:popover-open { display: flex; flex-direction: column; gap: 10px; }
@@ -27,9 +29,11 @@
 .account-usage-search { width: 100%; min-height: 32px; padding: 5px 8px; border: 1px solid var(--p-popup-border); border-radius: 4px; background: var(--p-control-bg); color: var(--p-fg); }
 .account-usage-search[hidden] { display: none; }
 .account-usage-rows { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
-.account-usage-section h3 { position: sticky; top: 0; z-index: 1; margin: 0; padding: 6px 0; background: var(--p-popup-bg); font-size: 12px; font-weight: 600; color: var(--p-fg-muted); }
-.account-usage-section + .account-usage-section { margin-top: 14px; }
+.account-usage-section { padding: 8px 10px; border: 1px solid var(--p-popup-border); border-radius: 6px; background: var(--p-control-bg); }
+.account-usage-section h3 { position: sticky; top: 0; z-index: 1; margin: 0; padding: 4px 0 8px; background: var(--p-control-bg); font-size: 13px; font-weight: 600; color: var(--p-fg-strong); }
+.account-usage-section + .account-usage-section { margin-top: 12px; }
 .account-usage-row { display: flex; flex-direction: column; gap: 6px; padding: 12px 0; border-bottom: 1px solid var(--p-border-subtle); }
+.account-usage-row:last-child { border-bottom: 0; padding-bottom: 4px; }
 .account-usage-row-header { display: flex; align-items: center; gap: 12px; width: 100%; }
 .account-usage-summary { flex: 1; min-width: 0; }
 .account-usage-row-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
@@ -47,11 +51,31 @@
     .paddock-shell .account-usage-selected .meter-bar { display: none; }
 }
 @media (max-width: 780px) {
-    .paddock-shell .account-usage-selected { display: none; }
-    .account-usage-compact { display: flex; }
+    .paddock-shell .account-usage-selected { gap: 4px; padding-left: 7px; }
+    .paddock-shell .account-usage-selected .source-name,
+    .paddock-shell .account-usage-selected .meter ~ .meter,
+    .paddock-shell .memory-usage .source-name,
+    .paddock-shell .memory-usage .meter-bar { display: none; }
+    .account-usage-name { max-width: 58px; }
+}
+/* Two rows preserve the account and period when a narrow window or zoom leaves little room. */
+@media (max-width: 600px) {
+    .paddock-shell .statusbar { min-height: 50px; max-height: 50px; padding-right: 8px; gap: 8px; }
+    .paddock-shell .status-left { flex-shrink: 0; }
+    .paddock-shell #statusbar-right { display: none; }
+    .paddock-shell .status-right, .paddock-shell .ai-usage { flex: 1; min-width: 0; gap: 6px; }
+    .paddock-shell .account-usage-selected { display: grid; grid-template-columns: 12px minmax(0, 1fr); grid-template-rows: 18px 18px; align-content: center; flex: 1; height: 44px; gap: 0 4px; padding: 2px 6px; }
+    .paddock-shell .account-usage-selected .source-mark { grid-row: 1; grid-column: 1; }
+    .paddock-shell .account-usage-selected .account-usage-name { grid-row: 1; grid-column: 2; max-width: none; min-width: 0; text-align: left; }
+    .paddock-shell .account-usage-selected .meter,
+    .paddock-shell .account-usage-selected .account-usage-state { grid-row: 2; grid-column: 1 / -1; margin-left: 0; min-width: 0; }
+    .paddock-shell .account-usage-selected .meter { justify-content: space-between; }
+    .paddock-shell .account-usage-selected .account-usage-state { overflow: hidden; text-overflow: ellipsis; text-align: left; }
+    .paddock-shell .memory-usage .usage-group { padding-left: 8px; }
+    .paddock-shell .memory-usage .meter { margin-left: 0; }
+    .account-usage-popup { bottom: 56px; }
 }
 @media (max-width: 440px) {
-    .account-usage-compact-name { max-width: 72px; }
     .account-usage-row-header { align-items: flex-start; flex-direction: column; gap: 8px; }
     .account-usage-summary { width: 100%; flex: auto; }
 }

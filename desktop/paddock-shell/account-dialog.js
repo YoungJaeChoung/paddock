@@ -1,4 +1,5 @@
 const { AbstractDialog } = require('@theia/core/lib/browser/dialogs');
+const { retryAccountStorage } = require('./account-access-dialog');
 require('./account-dialog.css');
 
 class AccountLabels {
@@ -347,7 +348,7 @@ class AccountDialog extends AbstractDialog {
         this.error = '';
         this.render();
         try {
-            this.profiles = await this.options.service.list();
+            this.profiles = await retryAccountStorage(() => this.options.service.list(), this.options.service, {});
             this.formVisible = this.profiles.length === 0;
             this.draft.label = this.suggestLabel();
         } catch {
@@ -377,7 +378,8 @@ class AccountDialog extends AbstractDialog {
                 this.render();
                 let profile;
                 try {
-                    profile = await this.options.service.create({ ...this.draft, label });
+                    const draft = { ...this.draft, label };
+                    profile = await retryAccountStorage(() => this.options.service.create(draft), this.options.service, { runtime: draft.runtime });
                     this.profiles.push(profile);
                     this.formVisible = false;
                 } catch {

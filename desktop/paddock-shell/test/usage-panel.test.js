@@ -17,13 +17,13 @@ function response(
     };
 }
 
-test('C-account-usage-isolation: each source keeps its own usage while only the active account is selected', async () => {
+test('C-account-usage-isolation: each provider keeps its last selected account and its own usage', async () => {
     const claude = { id: 'c', provider: 'claude', label: 'Main' };
     const codex = { id: 'x', provider: 'codex', label: 'Main' };
     const data = new UsageData({
         listProfiles: async () => [claude, codex],
         isEnabled: () => true,
-        fetchJson: async (_path, _method, query) => response(query.includes('=c') ? 12 : query.includes('=x') ? 73 : 99),
+        fetchJson: async (_path, _method, query) => response(query === '?accountId=c' ? 12 : query === '?accountId=x' ? 73 : 99),
     });
     await data.refresh();
     data.select(claude);
@@ -45,7 +45,7 @@ test('C-account-usage-active: shell selection clears the active account and an u
     const data = new UsageData({
         listProfiles: async () => [profile],
         isEnabled: () => true,
-        fetchJson: async (_path, _method, query) => response(query ? 17 : 88),
+        fetchJson: async (_path, _method, query) => response(query.includes('accountId=') ? 17 : 88),
         onChange: () => { n_changes += 1; },
     });
     assert.equal(data.active, null);

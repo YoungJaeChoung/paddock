@@ -2,6 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { AccountProfile } = require('./account-profiles');
+const { CodexUsage } = require('./codex-usage');
 const usage = require('./usage-model');
 const { assertPlainPath, usageError, readJson, codexUsage } = require('./usage-files');
 const { applyStatusLine, writeJson } = require('./claude-usage-settings');
@@ -32,12 +33,13 @@ function wslFileMapping(
 
 class AccountUsage {
     constructor(
-        { accounts, readWslInfo, sourceScript, commandForNative },
+        { accounts, readWslInfo, sourceScript, commandForNative, liveCodexUsage = new CodexUsage() },
     ) {
         this.accounts = accounts;
         this.readWslInfo = readWslInfo;
         this.sourceScript = sourceScript;
         this.commandForNative = commandForNative;
+        this.liveCodexUsage = liveCodexUsage;
         this.pendingWrites = Promise.resolve();
     }
 
@@ -87,7 +89,17 @@ class AccountUsage {
             const record = readJson(usageFile, null);
             result.claude = { state: readJson(stateFile, {}).claude || 'unset', windows: record ? usage.claudeWindows(record) : [], updatedAt: record?.updated_at ?? null };
         } else {
-            result.codex = codexUsage([scope.toLocal(scope.sessionsDirectory)]);
+            let liveError = null;
+            try {
+                result.codex = await this.liveCodexUsage.read(scope);
+            } catch (error) {
+                liveError = error;
+            }
+            if (!result.codex.windows.length) {
+                const recorded = codexUsage([scope.toLocal(scope.sessionsDirectory)]);
+                if (recorded.windows.length) result.codex = recorded;
+                else if (liveError) throw liveError;
+            }
         }
         return result;
     }

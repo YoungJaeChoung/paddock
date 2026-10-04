@@ -8,6 +8,7 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { WslScripts, runWsl } = require('./account-profile-wsl');
 const { BrowserBridge } = require('./account-browser');
+const { inspectDirectories, repairDirectory, storageAccessResult, openFolderSettings } = require('./account-storage-access');
 
 class AccountProfile {
     static SERVICE_PATH = '/services/paddock-accounts';
@@ -61,6 +62,7 @@ function privateDirectory(
         if (error.code !== 'ENOENT') throw error;
     }
     if (existing && (!existing.isDirectory() || existing.isSymbolicLink())) throw new Error('An account folder is not a regular directory. Restore the folder before trying again.');
+    if (existing && process.platform !== 'win32' && (existing.mode & 0o700) !== 0o700) throw new Error('Account folder access is restricted. Allow access before opening this account.');
     if (!existing) fs.mkdirSync(directory, { mode: 0o700 });
     if (process.platform !== 'win32') fs.chmodSync(directory, 0o700);
 }
@@ -100,11 +102,17 @@ class AccountProfiles {
         this.codexDirectory = path.resolve(codexDirectory || process.env.CODEX_HOME || path.join(this.homeDirectory, '.codex'));
         this.metadataFile = path.join(this.configDirectory, AccountProfile.METADATA_FILE);
         this.pendingMutation = Promise.resolve();
+        this.accessDenials = new Map();
     }
 
     /** Returns display metadata only. Missing metadata is a first run; corrupt metadata is never silently reset. */
     async list() {
-        const profiles = this.readProfiles();
+        this.accessDenials.delete(this.accessKey({}));
+        let profiles;
+        try { profiles = this.readProfiles(); } catch (error) {
+            this.rememberAccessDenial(error, {});
+            throw error;
+        }
         return profiles;
     }
 
@@ -135,7 +143,7 @@ class AccountProfiles {
             await this.prepareProfile(next);
             this.writeProfiles([...profiles, next]);
             return next;
-        });
+        }, { runtime: input?.runtime || 'native' });
         return profile;
     }
 
@@ -150,7 +158,7 @@ class AccountProfiles {
             this.assertUniqueLabel(profiles, next);
             this.writeProfiles(profiles.map(item => item.id === next.id ? next : item));
             return next;
-        });
+        }, { accountId: id });
         return profile;
     }
 
@@ -162,7 +170,7 @@ class AccountProfiles {
             const profiles = this.readProfiles();
             this.findProfile(profiles, id);
             this.writeProfiles(profiles.filter(item => item.id !== id));
-        });
+        }, { accountId: id });
     }
 
     async prepare(
@@ -172,8 +180,137 @@ class AccountProfiles {
             const profile = this.findProfile(this.readProfiles(), id);
             const result = await this.prepareProfile(profile);
             return result;
-        });
+        }, { accountId: id });
         return prepared;
+    }
+
+    /** Resolves access requests from saved account IDs or a new-account runtime, never a client path. */
+    checkedAccessRequest(
+        request,
+    ) {
+        if (!request || typeof request !== 'object' || Array.isArray(request)
+            || Object.keys(request).some(key => !['accountId', 'runtime'].includes(key))
+            || (request.accountId !== undefined && request.runtime !== undefined)) throw new Error('Choose an account or account environment to check access.');
+        if (request.accountId !== undefined) checkedId(request.accountId);
+        if (request.runtime !== undefined && !['native', 'wsl'].includes(request.runtime)) throw new Error('Choose a native or WSL account environment.');
+        return request;
+    }
+
+    metadataDirectories() {
+        const base = path.join(this.homeDirectory, '.paddock');
+        const directories = [];
+        if (this.configDirectory === base || this.configDirectory.startsWith(`${base}${path.sep}`)) directories.push(base);
+        directories.push(this.configDirectory);
+        return directories;
+    }
+
+    accessKey(
+        request,
+    ) {
+        return request.accountId ? `account:${request.accountId}` : request.runtime ? `new:${request.runtime}` : 'list';
+    }
+
+    /** Windows access() ignores ACLs, so an actual denied file operation supplies the permission evidence. */
+    rememberAccessDenial(
+        error,
+        request,
+    ) {
+        const base = path.join(this.homeDirectory, '.paddock');
+        if (process.platform === 'win32' && ['EACCES', 'EPERM'].includes(error.code) && typeof error.path === 'string') {
+            const failed = path.resolve(error.path);
+            if (failed === this.configDirectory || failed.startsWith(`${this.configDirectory}${path.sep}`)
+                || (failed === base && this.configDirectory.startsWith(`${base}${path.sep}`))) {
+                let directory = failed;
+                try { if (!fs.lstatSync(failed).isDirectory()) directory = path.dirname(failed); } catch { /* A denied or missing folder remains an OS settings target. */ }
+                this.accessDenials.set(this.accessKey(request), { directory, time: Date.now() });
+                while (this.accessDenials.size > 32) this.accessDenials.delete(this.accessDenials.keys().next().value);
+            }
+        }
+    }
+
+    accessDirectories(
+        profile,
+    ) {
+        const directories = this.metadataDirectories();
+        if (!profile || profile.runtime === 'native') directories.push(path.join(this.configDirectory, 'agent-profiles'));
+        if (profile?.runtime === 'native') {
+            const accountDirectory = path.join(this.configDirectory, 'agent-profiles', profile.id);
+            const configDir = path.join(accountDirectory, profile.provider);
+            directories.push(accountDirectory, configDir, path.join(configDir, 'skills'), path.join(configDir, 'paddock-bin'));
+        }
+        return directories;
+    }
+
+    async storageAccessIssue(
+        request,
+    ) {
+        this.checkedAccessRequest(request);
+        let directories = this.metadataDirectories();
+        let issue = inspectDirectories(directories);
+        // Reading the shared account list can fail before a target-specific preparation begins.
+        const denied = this.accessDenials.get(this.accessKey(request)) || this.accessDenials.get('list');
+        if (!issue && denied && Date.now() - denied.time < 60000) {
+            issue = inspectDirectories([...directories, denied.directory]) || { status: 'settings', directory: denied.directory };
+        }
+        let runtime = 'native';
+        let distribution;
+        let profile;
+        if (!issue) {
+            // Metadata is application-owned, but automatic recovery changes directories only.
+            try { fs.accessSync(this.metadataFile, fs.constants.R_OK); } catch (error) {
+                if (error.code !== 'ENOENT') issue = { status: 'settings', directory: this.configDirectory };
+            }
+        }
+        if (!issue) {
+            profile = request.accountId ? this.findProfile(this.readProfiles(), request.accountId) : null;
+            runtime = profile?.runtime || request.runtime || 'native';
+            if (runtime === 'wsl') {
+                if (process.platform !== 'win32') throw new Error('WSL account access can only be checked from Windows.');
+                distribution = profile?.wslDistribution || (await runWsl(WslScripts.IDENTITY, [], null))[1];
+                const output = await runWsl(WslScripts.ACCESS, ['inspect', profile?.id || '', profile?.provider || ''], distribution);
+                if (output[0] !== 'ready') issue = { status: output[0], directory: output[1], reason: output[2] };
+                if (!['ready', 'repair', 'settings', 'blocked'].includes(output[0])) throw new Error('WSL account access could not be checked.');
+            } else {
+                directories = this.accessDirectories(profile);
+                issue = inspectDirectories(directories);
+            }
+        }
+        return { issue, runtime, distribution, profile, directories };
+    }
+
+    async inspectStorageAccess(
+        request,
+    ) {
+        const { issue, runtime } = await this.storageAccessIssue(request);
+        return storageAccessResult(issue, runtime);
+    }
+
+    /** Only the explicit access action may restore owner permissions; no CLI-owned files are modified. */
+    async allowStorageAccess(
+        request,
+    ) {
+        const result = await this.mutate(async () => {
+            let state = await this.storageAccessIssue(request);
+            let n_repairs = 0;
+            while (state.issue?.status === 'repair' && n_repairs < 16) {
+                if (state.runtime === 'wsl') {
+                    await runWsl(WslScripts.ACCESS, ['repair', state.profile?.id || '', state.profile?.provider || ''], state.distribution);
+                } else repairDirectory(state.directories, state.issue);
+                n_repairs += 1;
+                state = await this.storageAccessIssue(request);
+            }
+            if (state.issue) throw new Error(storageAccessResult(state.issue, state.runtime).message);
+            return storageAccessResult(null, state.runtime);
+        });
+        return result;
+    }
+
+    async openStorageSettings(
+        request,
+    ) {
+        const { issue, runtime, distribution } = await this.storageAccessIssue(request);
+        if (!issue || issue.status !== 'settings') throw new Error('Restore the account folder permissions in its environment, then choose Retry.');
+        await openFolderSettings(issue.directory, runtime, distribution);
     }
 
     findProfile(
@@ -206,7 +343,12 @@ class AccountProfiles {
             if (new Set(profiles.map(profile => profile.id)).size !== profiles.length) throw new Error('Duplicate account identifiers.');
             for (const profile of profiles) this.assertUniqueLabel(profiles, profile);
         } catch (error) {
-            if (error.code !== 'ENOENT') throw new Error('The saved account list cannot be read. Restore account-profiles.json before changing accounts.');
+            if (error.code !== 'ENOENT') {
+                const failure = new Error('The saved account list cannot be read. Restore account-profiles.json before changing accounts.');
+                // Preserve only the filesystem failure classification for the server's permission recovery path.
+                if (['EACCES', 'EPERM'].includes(error.code)) Object.assign(failure, { code: error.code, path: error.path });
+                throw failure;
+            }
         }
         return profiles;
     }
@@ -227,8 +369,17 @@ class AccountProfiles {
     /** Serializes asynchronous WSL preparation with metadata edits so concurrent windows cannot lose entries. */
     async mutate(
         action,
+        accessRequest,
     ) {
-        const result = this.pendingMutation.then(action);
+        const result = this.pendingMutation.then(async () => {
+            if (accessRequest) this.accessDenials.delete(this.accessKey(accessRequest));
+            let value;
+            try { value = await action(); } catch (error) {
+                if (accessRequest) this.rememberAccessDenial(error, accessRequest);
+                throw error;
+            }
+            return value;
+        });
         this.pendingMutation = result.catch(() => {});
         return result;
     }

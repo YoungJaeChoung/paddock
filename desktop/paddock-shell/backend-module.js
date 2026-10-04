@@ -10,8 +10,9 @@ const { BackendApplicationContribution } = require('@theia/core/lib/node/backend
 const { ConnectionHandler, RpcConnectionHandler } = require('@theia/core/lib/common/messaging');
 const { AccountProfile, AccountProfiles } = require('./account-profiles');
 const { AccountUsage } = require('./account-usage');
+const { CodexUsage } = require('./codex-usage');
 const { AccountSessions } = require('./account-session');
-const { readJson, codexUsage } = require('./usage-files');
+const { readJson, usageError } = require('./usage-files');
 const { applyStatusLine } = require('./claude-usage-settings');
 const { memoryPercent } = require('./work-model');
 const usage = require('./usage-model');
@@ -188,8 +189,9 @@ const accountSessions = new AccountSessions({ accounts, readWslInfo, readWindows
 
 /**
  * `GET /paddock/memory` → `{ percent, total, free }`.
- * `GET /paddock/usage[?accountId=…]` → `{ claude: { state, windows, updatedAt }, codex: { windows, updatedAt } }`.
- * accountId가 있으면 등록된 그 계정만 읽고, 다른 도구의 값은 빈 목록이다. 생략하면 기존 기본 CLI 폴더를 읽는다.
+ * `GET /paddock/usage[?accountId=…|?provider=claude|codex]` → `{ claude: { state, windows, updatedAt }, codex: { windows, updatedAt } }`.
+ * accountId가 있으면 등록된 그 계정만 읽고, 다른 도구의 값은 빈 목록이다. 생략하면 기본 CLI 환경을 읽는다.
+ * provider를 지정하면 다른 도구의 설정이나 사용량을 읽지 않는다. 둘 다 생략하면 두 도구를 읽는다.
  * `GET /paddock/foreground?pids=1,2` → `{ "1": "claude", "2": "bash" }` 셸 pid별 실행 중 프로그램 이름(모르면 null). Windows는 프로세스 목록으로 찾는다.
  * `GET /paddock/wsl-terminals` → `{ [터미널 id]: { cwd, program } }` Windows 앱의 WSL 터미널별 현재 폴더(Windows 경로)·실행 중 프로그램.
  *   Windows가 아니거나 WSL을 읽지 못하면 `{}`다.
@@ -203,8 +205,9 @@ class PaddockStatusRoutes {
     constructor() {
         this.workPresence = new WorkPresenceRegistry();
         this.windowsProcesses = windowsProcessList;
+        this.liveCodexUsage = new CodexUsage();
         this.accountUsage = new AccountUsage({
-            accounts, readWslInfo,
+            accounts, readWslInfo, liveCodexUsage: this.liveCodexUsage,
             sourceScript: path.join(process.env.THEIA_APP_PROJECT_PATH || process.cwd(), 'paddock-shell', 'claude-statusline.cjs'),
             commandForNative: statusLineCommand,
         });
@@ -261,21 +264,30 @@ class PaddockStatusRoutes {
         });
         app.get('/paddock/usage', async (request, response) => {
             try {
+                const provider = request.query.provider;
+                if (provider !== undefined && provider !== 'claude' && provider !== 'codex') throw usageError('provider must be claude or codex.', 400);
                 if (Object.hasOwn(request.query, 'accountId')) {
                     response.json(await this.accountUsage.read(request.query.accountId));
                 } else {
-                    const directory = usageDirectory();
-                    const state = readJson(path.join(directory, 'state.json'), {}).claude || 'unset';
-                    // Windows 앱이면 WSL에서 실행한 Claude·Codex의 기록도 함께 보고 더 최근 것을 쓴다. CLI를 어느 쪽에서 실행했는지 모른다.
-                    const wslHome = (await readWslInfo()).home;
-                    const claudeFiles = [path.join(directory, 'claude.json'), ...(wslHome ? [path.win32.join(wslHome, '.paddock', 'config', 'usage', 'claude.json')] : [])];
-                    const claudeFile = claudeFiles.map(file => readJson(file, null)).filter(Boolean)
-                        .sort((left, right) => (right.updated_at ?? 0) - (left.updated_at ?? 0))[0] ?? null;
-                    const roots = [path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'sessions'), ...(wslHome ? [path.win32.join(wslHome, '.codex', 'sessions')] : [])];
-                    response.json({
-                        claude: { state, windows: claudeFile ? usage.claudeWindows(claudeFile) : [], updatedAt: claudeFile?.updated_at ?? null },
-                        codex: codexUsage(roots),
-                    });
+                    const result = { claude: { state: 'unset', windows: [], updatedAt: null }, codex: { windows: [], updatedAt: null } };
+                    const wslInformation = await readWslInfo();
+                    const wslHome = wslInformation.home;
+                    if (provider !== 'codex') {
+                        const directory = usageDirectory();
+                        const state = readJson(path.join(directory, 'state.json'), {}).claude || 'unset';
+                        // Windows 앱이면 WSL의 기본 Claude 수집 기록도 함께 보고 더 최근 것을 쓴다.
+                        const claudeFiles = [path.join(directory, 'claude.json'), ...(wslHome ? [path.win32.join(wslHome, '.paddock', 'config', 'usage', 'claude.json')] : [])];
+                        const claudeFile = claudeFiles.map(file => readJson(file, null)).filter(Boolean)
+                            .sort((left, right) => (right.updated_at ?? 0) - (left.updated_at ?? 0))[0] ?? null;
+                        result.claude = { state, windows: claudeFile ? usage.claudeWindows(claudeFile) : [], updatedAt: claudeFile?.updated_at ?? null };
+                    }
+                    if (provider !== 'claude') {
+                        const nativeCodex = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+                        const codexScopes = [{ profile: { runtime: 'native' }, configDir: nativeCodex, sessionsDirectory: path.join(nativeCodex, 'sessions') }];
+                        if (wslHome && wslInformation.linuxHome) codexScopes.push({ profile: { runtime: 'wsl' }, configDir: path.posix.join(wslInformation.linuxHome, '.codex'), sessionsDirectory: path.win32.join(wslHome, '.codex', 'sessions') });
+                        result.codex = await this.liveCodexUsage.readAvailable(codexScopes);
+                    }
+                    response.json(result);
                 }
             } catch (error) {
                 response.status(error.statusCode || 500).json({ error: error.message || 'Usage could not be read.' });
@@ -349,6 +361,9 @@ exports.default = new ContainerModule((bind) => {
         rename: (id, label) => accounts.rename(id, label),
         remove: id => accounts.remove(id),
         prepare: id => accounts.prepare(id),
+        inspectStorageAccess: request => accounts.inspectStorageAccess(request),
+        allowStorageAccess: request => accounts.allowStorageAccess(request),
+        openStorageSettings: request => accounts.openStorageSettings(request),
         observeSession: request => accountSessions.observeSession(request),
         observeSessions: requests => accountSessions.observeSessions(requests),
         prepareResume: (id, request) => accountSessions.prepareResume(id, request),

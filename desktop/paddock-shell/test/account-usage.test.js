@@ -16,9 +16,10 @@ function fixture(
     const accounts = new AccountProfiles({ configDirectory: path.join(directory, 'app-config'), homeDirectory: directory, claudeDirectory: path.join(directory, '.claude'), codexDirectory: path.join(directory, '.codex') });
     const sourceScript = path.join(__dirname, '..', 'claude-statusline.cjs');
     const commandForNative = (...files) => [process.execPath, ...files].map(file => usage.quoteStatusLineArgument(file, process.platform === 'win32')).join(' ');
-    const reader = new AccountUsage({ accounts, sourceScript, commandForNative, readWslInfo: async () => { throw new Error('Native usage must not query WSL.'); } });
+    const liveCodexUsage = { read: async () => ({ windows: [], updatedAt: null }) };
+    const reader = new AccountUsage({ accounts, sourceScript, commandForNative, liveCodexUsage, readWslInfo: async () => { throw new Error('Native usage must not query WSL.'); } });
     context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
-    return { directory, accounts, reader, sourceScript, commandForNative };
+    return { directory, accounts, reader, sourceScript, commandForNative, liveCodexUsage };
 }
 
 function writeRecord(
@@ -296,4 +297,28 @@ test('AU17 a Codex usage scan stops after two recent day folders', async context
     });
     await reader.read(profile.id);
     assert.equal(scanned.includes(path.join(scope.sessionsDirectory, '2026', '10', '01')), false);
+});
+
+
+test('AU18 Codex official usage works without a sessions folder and receives only its own account scope', async context => {
+    const setup = fixture(context);
+    const profile = await setup.accounts.create({ provider: 'codex' });
+    const scope = await setup.reader.resolve(profile.id);
+    const calls = [];
+    const expected = { windows: [{ label: 'week', used: 83, resetsAt: 1999999999 }], updatedAt: 100 };
+    setup.liveCodexUsage.read = async input => { calls.push(input); return expected; };
+    assert.equal(fs.existsSync(scope.sessionsDirectory), false);
+    assert.deepEqual((await setup.reader.read(profile.id)).codex, expected);
+    assert.equal(calls[0].configDir, scope.configDir);
+    assert.equal(calls[0].profile.id, profile.id);
+});
+
+test('AU19 Codex live failures use available legacy limits but never turn an empty lookup into zero usage', async context => {
+    const setup = fixture(context);
+    const profile = await setup.accounts.create({ provider: 'codex' });
+    const scope = await setup.reader.resolve(profile.id);
+    setup.liveCodexUsage.read = async () => { throw Object.assign(new Error('Codex usage unavailable'), { statusCode: 503 }); };
+    await assert.rejects(setup.reader.read(profile.id), error => error.statusCode === 503);
+    writeRecord(path.join(scope.sessionsDirectory, '2026', '10', '05', 'rollout-fixture.jsonl'), codexRecord(21));
+    assert.equal((await setup.reader.read(profile.id)).codex.windows[0].used, 21);
 });

@@ -34,7 +34,7 @@ class UsageData {
         this.profiles = [];
         this.profilesKnown = false;
         this.profilesFailed = false;
-        this.selected = { claude: { provider: 'claude' }, codex: { provider: 'codex' } };
+        this.selected = {};
         this.active = null;
         this.snapshots = new Map();
         this.pending = new Map();
@@ -127,7 +127,7 @@ class UsageData {
             try {
                 await action;
                 this.failedHooks.delete(key);
-                const response = await this.fetchJson('/paddock/usage', 'GET', profile.id ? `?accountId=${encodeURIComponent(profile.id)}` : '');
+                const response = await this.fetchJson('/paddock/usage', 'GET', profile.id ? `?accountId=${encodeURIComponent(profile.id)}` : '?provider=claude');
                 next = response.claude;
             } catch (error) {
                 this.failedHooks.add(key);
@@ -161,12 +161,12 @@ class UsageData {
                         // Turning the feature off must restore hooks even when a usage record cannot be read.
                         data = await this.syncClaude(profile, { state: 'unset', windows: [], updatedAt: null });
                     } else {
-                        const response = await this.fetchJson('/paddock/usage', 'GET', profile.id ? `?accountId=${encodeURIComponent(profile.id)}` : '');
+                        const response = await this.fetchJson('/paddock/usage', 'GET', profile.id ? `?accountId=${encodeURIComponent(profile.id)}` : `?provider=${profile.provider}`);
                         data = response[profile.provider];
                         if (profile.provider === 'claude' && this.n_revision === n_revision) data = await this.syncClaude(profile, data);
                     }
                     if (!data || !Array.isArray(data.windows)) throw new Error('Usage data is unavailable.');
-                    snapshot = { status: 'ready', data };
+                    snapshot = data.error ? { status: 'unavailable', message: data.error } : { status: 'ready', data };
                 } catch {
                     snapshot = { status: 'unavailable' };
                 }
@@ -185,7 +185,10 @@ class UsageData {
         { all = false, settings = false } = {},
     ) {
         if (all || settings || !this.profilesKnown) await this.updateProfiles();
-        const scopes = new Map(Object.values(this.selected).map(profile => [scopeKey(profile), this.current(profile)]));
+        const scopes = new Map(Object.keys(UsageAccounts.PROVIDERS).map(provider => {
+            const profile = this.current(this.selected[provider] || { provider });
+            return [scopeKey(profile), profile];
+        }));
         if (all) {
             for (const provider of Object.keys(UsageAccounts.PROVIDERS)) scopes.set(`${provider}:default`, { provider });
             for (const profile of this.profiles) scopes.set(scopeKey(profile), profile);
@@ -220,7 +223,7 @@ function action(
     return result;
 }
 
-/** Shows the active terminal's account and opens the complete list without switching a conversation. */
+/** Keeps the last selected account for each CLI visible and opens the complete list without switching a conversation. */
 class UsagePanel {
     constructor(
         { host, fetchJson, listProfiles, isEnabled, meter, onOpen, onManage, isClaudeChosen, onLegacyDisabled, onAutomaticSetup },
@@ -265,7 +268,7 @@ class UsagePanel {
             this.close();
             this.onManage();
         }));
-        this.popup.append(heading, node('p', 'account-usage-hint', 'Usage reported by each CLI.'), this.search, this.notice, this.rows, footer);
+        this.popup.append(heading, node('p', 'account-usage-hint', 'Percent of each limit used.'), this.search, this.notice, this.rows, footer);
         host.parentElement.append(this.popup);
         document.addEventListener('visibilitychange', () => {
             if (!document.hidden) void this.refresh();
@@ -330,6 +333,7 @@ class UsagePanel {
         this.renderRows();
         this.popup.showPopover();
         (this.search.hidden ? this.popup.querySelector('button') : this.search).focus();
+        this.sectionNodes?.get(this.triggerProvider)?.scrollIntoView({ block: 'start' });
         void this.refresh({ all: true });
     }
 
@@ -343,6 +347,7 @@ class UsagePanel {
     appendValues(
         target,
         profile,
+        details = false,
     ) {
         const snapshot = this.data.snapshot(profile);
         const now = Math.floor(Date.now() / 1000);
@@ -356,17 +361,22 @@ class UsagePanel {
                 target.append(this.meter(`${scopeKey(profile)}-${window.label}`, window.label, window.used, title));
             }
         } else {
-            const text = snapshot.status === 'unavailable' ? 'Unavailable' : snapshot.status === 'loading' ? 'Loading…' : 'No data';
+            const waitingForClaude = profile.provider === 'claude' && snapshot.status === 'ready' && snapshot.data.state === 'on';
+            const text = snapshot.status === 'unavailable' ? 'Unavailable' : snapshot.status === 'loading' ? 'Loading…'
+                : waitingForClaude ? 'Waiting for response' : 'Not reported';
             const state = node('span', 'account-usage-state', text);
             state.title = snapshot.removed ? 'This account was removed from the list. Its existing terminal is kept.'
-                : snapshot.status === 'unavailable' ? 'Usage could not be read. Open Account usage and select Retry.'
-                    : 'Usage appears after the CLI reports its limits. No value is inferred from another account.';
+                : snapshot.status === 'unavailable' ? snapshot.message || 'Usage could not be read. Open Account usage and select Retry.'
+                    : waitingForClaude ? 'Send a message in this account’s Claude terminal. Usage appears after Claude reports its limits.'
+                        : 'This CLI has not reported usage limits. No value is inferred from another account.';
             target.append(state);
+            if (details && snapshot.status !== 'loading') target.append(node('span', 'account-usage-hint', state.title));
         }
     }
 
     render() {
-        const selected = this.data.active ? [this.data.current(this.data.active)] : [];
+        const selected = Object.keys(UsageAccounts.PROVIDERS).filter(provider => this.data.selected[provider])
+            .map(provider => this.data.current(this.data.selected[provider]));
         const enabledProviders = Object.keys(UsageAccounts.PROVIDERS).filter(provider => this.data.isEnabled(provider));
         this.retryButton.hidden = !this.data.profilesFailed && ![...this.data.profiles, ...selected].some(profile => {
             const snapshot = this.data.snapshot(profile);
@@ -390,18 +400,12 @@ class UsagePanel {
                 this.appendValues(group, profile);
                 this.host.append(group);
             }
-            if (enabledProviders.length) {
+            if (enabledProviders.length && !selected.some(profile => this.data.isEnabled(profile.provider))) {
                 const compact = action('Usage', 'account-usage-compact', event => this.show(event.currentTarget));
                 compact.classList.toggle('is-only', !selected.some(profile => this.data.isEnabled(profile.provider)));
                 compact.dataset.usageProvider = 'compact';
                 compact.setAttribute('aria-haspopup', 'dialog');
                 compact.setAttribute('aria-expanded', String(this.popup.matches(':popover-open')));
-                const active = selected.find(profile => this.data.isEnabled(profile.provider));
-                if (active) {
-                    compact.append(node('span', 'account-usage-compact-name', accountName(active)));
-                    compact.title = `${UsageAccounts.PROVIDERS[active.provider]} · ${accountName(active)}. Show usage for all accounts.`;
-                    compact.setAttribute('aria-label', `${UsageAccounts.PROVIDERS[active.provider]} · ${accountName(active)} usage. Show all accounts.`);
-                }
                 this.host.append(compact);
             }
             if (focused) this.host.querySelector(`[data-usage-provider="${focused}"]`)?.focus({ preventScroll: true });
@@ -414,9 +418,9 @@ class UsagePanel {
         const query = this.search.value.toLocaleLowerCase().trim();
         const profiles = [...this.data.profiles];
         // An unregistered CLI has no verified link to a saved account, even when both use the same login.
-        if (this.data.active && !this.data.active.id) profiles.unshift(this.data.active);
+        profiles.unshift(...Object.values(this.data.selected).filter(profile => !profile.id));
         const key = JSON.stringify([query, profiles.map(profile => [profile, this.data.snapshot(profile), this.data.isEnabled(profile.provider)]),
-            this.data.active, this.opening, this.openError, this.data.profilesFailed, Math.floor(Date.now() / 60000)]);
+            this.data.selected, this.opening, this.openError, this.data.profilesFailed, Math.floor(Date.now() / 60000)]);
         if (key !== this.rowsKey) {
             this.rowsKey = key;
             const scrollTop = this.rows.scrollTop;
@@ -466,7 +470,7 @@ class UsagePanel {
             profile,
             row: node('div', 'account-usage-row'),
             name: node('strong', 'account-usage-row-name'),
-            badge: node('span', 'account-usage-selected-badge', 'Selected'),
+            badge: node('span', 'account-usage-selected-badge', 'In status bar'),
             environment: node('span', 'account-usage-environment'),
             values: node('div', 'account-usage-values'),
         };
@@ -490,7 +494,8 @@ class UsagePanel {
         const accountKey = scopeKey(profile);
         const snapshot = this.data.snapshot(profile);
         const enabled = this.data.isEnabled(profile.provider);
-        const activeKey = this.data.active ? scopeKey(this.data.active) : null;
+        const selected = this.data.selected[profile.provider];
+        const activeKey = selected ? scopeKey(selected) : null;
         const key = JSON.stringify([profile, snapshot, enabled, activeKey, this.opening, Math.floor(Date.now() / 60000)]);
         if (key !== entry.key) {
             entry.key = key;
@@ -500,7 +505,7 @@ class UsagePanel {
             entry.badge.hidden = accountKey !== activeKey;
             entry.environment.textContent = profile.id ? (profile.runtime === 'wsl' ? `WSL · ${profile.wslDistribution}` : 'This device') : 'Not linked to a saved account';
             entry.values.replaceChildren();
-            if (enabled) this.appendValues(entry.values, profile);
+            if (enabled) this.appendValues(entry.values, profile, true);
             else entry.values.append(node('span', 'account-usage-state', 'Hidden in Quick settings'));
             entry.open.textContent = this.opening === accountKey ? 'Opening…' : 'Open in new terminal';
             entry.open.disabled = Boolean(this.opening);
@@ -515,6 +520,8 @@ class UsagePanel {
             this.opening = scopeKey(profile);
             this.openError = '';
             this.renderRows();
+            // A permission dialog must remain fully visible if opening the account needs access recovery.
+            this.popup.hidePopover();
             try {
                 await this.onOpen(profile);
                 this.data.select(profile);
@@ -522,9 +529,11 @@ class UsagePanel {
                 this.popup.hidePopover();
             } catch {
                 this.openError = `Could not open ${UsageAccounts.PROVIDERS[profile.provider]} · ${accountName(profile)}. Try Open in new terminal again.`;
+                this.popup.showPopover();
             } finally {
                 this.opening = false;
                 this.renderRows();
+                if (this.openError) this.rowNodes.get(scopeKey(profile))?.open.focus();
             }
         }
     }

@@ -70,6 +70,11 @@ async function waitForReplacementStep(
  * 탭 버튼·메뉴·단축키는 같은 닫기 계약을 쓰며, 셸 프로세스가 스스로 끝날 때의 dispose는 확인 없이 유지한다.
  */
 class PaddockTerminal extends TerminalWidgetImpl {
+    /** Clearing a selection keeps the copied text available for the next paste. */
+    get copyOnSelection() {
+        return super.copyOnSelection && this.term.hasSelection();
+    }
+
     /** Keeps the last account label when the launch entry was renamed and then removed. */
     storeState() {
         const state = super.storeState();
