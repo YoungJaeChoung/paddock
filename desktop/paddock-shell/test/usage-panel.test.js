@@ -17,7 +17,7 @@ function response(
     };
 }
 
-test('C-account-usage-isolation: each provider keeps its own last selection and never borrows Default data', async () => {
+test('C-account-usage-isolation: each source keeps its own usage while only the active account is selected', async () => {
     const claude = { id: 'c', provider: 'claude', label: 'Main' };
     const codex = { id: 'x', provider: 'codex', label: 'Main' };
     const data = new UsageData({
@@ -33,9 +33,38 @@ test('C-account-usage-isolation: each provider keeps its own last selection and 
     assert.equal(data.snapshot(codex).data.windows[0].used, 73);
     assert.equal(data.selected.claude.id, 'c');
     assert.equal(data.selected.codex.id, 'x');
+    assert.equal(data.active.id, 'x');
     assert.equal(data.snapshot({ provider: 'codex' }).data.windows[0].used, 99);
-    assert.equal(accountName({ provider: 'codex' }), 'Default');
-    assert.equal(accountName({ ...codex, label: 'Default' }), 'Default (account)');
+    assert.equal(accountName({ provider: 'codex' }), 'Current CLI');
+    assert.equal(accountName({ ...codex, label: 'Default' }), 'Default');
+});
+
+test('C-account-usage-active: shell selection clears the active account and an unregistered CLI never inherits its identity', async () => {
+    const profile = { id: 'c', provider: 'claude', label: 'Main' };
+    let n_changes = 0;
+    const data = new UsageData({
+        listProfiles: async () => [profile],
+        isEnabled: () => true,
+        fetchJson: async (_path, _method, query) => response(query ? 17 : 88),
+        onChange: () => { n_changes += 1; },
+    });
+    assert.equal(data.active, null);
+    data.select(profile);
+    await data.refresh();
+    assert.equal(data.snapshot(data.active).data.windows[0].used, 17);
+    data.select(null);
+    assert.equal(data.active, null);
+    assert.equal(data.selected.claude.id, 'c');
+    data.select({ provider: 'claude' });
+    await data.refresh();
+    assert.equal(data.active.id, undefined);
+    assert.equal(accountName(data.active), 'Current CLI');
+    assert.equal(data.snapshot(data.active).data.windows[0].used, 88);
+    const n_before = n_changes;
+    data.select(profile);
+    assert.equal(data.active.id, 'c');
+    assert.equal(data.snapshot(data.active).data.windows[0].used, 17);
+    assert.equal(n_changes, n_before + 1);
 });
 
 test('C-account-usage-empty: initial failure and empty records have explicit different states', async () => {

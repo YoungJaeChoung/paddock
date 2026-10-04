@@ -909,7 +909,7 @@ class PaddockWorkspace {
         void this.refreshWorkPresence();
         await this.refresh();
         await this.refreshMemory();
-        await this.refreshUsage();
+        await this.refreshUsage({ periodic: true });
     }
 
     // -- 에이전트 완료 알림 --
@@ -3060,8 +3060,10 @@ class PaddockWorkspace {
     }
 
     /** Reads account-scoped values; empty data and failed requests remain visible in the status bar. */
-    async refreshUsage() {
-        await this.usagePanel.refresh();
+    async refreshUsage(
+        options = {},
+    ) {
+        await this.usagePanel.refresh(options);
     }
 
     usageGroup(

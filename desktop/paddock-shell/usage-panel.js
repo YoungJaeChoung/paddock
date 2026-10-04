@@ -4,6 +4,7 @@ class UsageAccounts {
     static PROVIDERS = Object.freeze({ claude: 'Claude', codex: 'Codex' });
     static MARKS = Object.freeze({ claude: '✱', codex: '◎' });
     static N_SEARCH_THRESHOLD = 6;
+    static POLL_INTERVAL_MS = 120000;
 }
 
 function scopeKey(
@@ -15,7 +16,7 @@ function scopeKey(
 function accountName(
     profile,
 ) {
-    return profile.id ? (/^default$/i.test(profile.label) ? `${profile.label} (account)` : profile.label) : 'Default';
+    return profile.id ? profile.label : 'Current CLI';
 }
 
 /** Keeps each account's response separate, including failures and responses received after a selection changes. */
@@ -34,6 +35,7 @@ class UsageData {
         this.profilesKnown = false;
         this.profilesFailed = false;
         this.selected = { claude: { provider: 'claude' }, codex: { provider: 'codex' } };
+        this.active = null;
         this.snapshots = new Map();
         this.pending = new Map();
         this.attemptedHooks = new Map();
@@ -46,14 +48,15 @@ class UsageData {
     select(
         profile,
     ) {
-        if (Object.hasOwn(UsageAccounts.PROVIDERS, profile?.provider)) {
-            const previous = this.selected[profile.provider];
-            if (scopeKey(previous) !== scopeKey(profile)) {
-                this.selected[profile.provider] = { ...profile };
-                // A → B → A must not accept the response from the first A request.
-                this.n_revision += 1;
-                this.onChange();
-            }
+        const next = Object.hasOwn(UsageAccounts.PROVIDERS, profile?.provider) ? { ...profile } : null;
+        const previousKey = this.active ? scopeKey(this.active) : null;
+        const nextKey = next ? scopeKey(next) : null;
+        if (next) this.selected[next.provider] = next;
+        this.active = next;
+        if (previousKey !== nextKey) {
+            // A → B → A must not accept the response from the first A request.
+            this.n_revision += 1;
+            this.onChange();
         }
     }
 
@@ -217,7 +220,7 @@ function action(
     return result;
 }
 
-/** Shows the selected account for each CLI and opens the complete list without switching a conversation. */
+/** Shows the active terminal's account and opens the complete list without switching a conversation. */
 class UsagePanel {
     constructor(
         { host, fetchJson, listProfiles, isEnabled, meter, onOpen, onManage, isClaudeChosen, onLegacyDisabled, onAutomaticSetup },
@@ -226,6 +229,8 @@ class UsagePanel {
         this.meter = meter;
         this.onOpen = onOpen;
         this.onManage = onManage;
+        this.refreshes = new Map();
+        this.lastRefreshAt = 0;
         this.data = new UsageData({ fetchJson, listProfiles, isEnabled, isClaudeChosen, onLegacyDisabled, onAutomaticSetup, onChange: () => this.render() });
         this.popup = node('section', 'account-usage-popup');
         this.popup.popover = 'auto';
@@ -241,7 +246,12 @@ class UsagePanel {
             }
         });
         const heading = node('div', 'account-usage-heading');
-        heading.append(node('strong', '', 'Account usage'), action('Close', 'account-usage-close', () => this.close()));
+        const headingActions = node('div', 'account-usage-heading-actions');
+        this.retryButton = action('Retry', 'account-usage-retry', () => void this.retry());
+        this.retryButton.setAttribute('aria-label', 'Retry usage');
+        this.retryButton.hidden = true;
+        headingActions.append(this.retryButton, action('Close', 'account-usage-close', () => this.close()));
+        heading.append(node('strong', '', 'Account usage'), headingActions);
         this.search = node('input', 'account-usage-search');
         this.search.type = 'search';
         this.search.placeholder = 'Search accounts';
@@ -251,15 +261,15 @@ class UsagePanel {
         this.notice = node('p', 'account-usage-notice');
         this.notice.setAttribute('role', 'status');
         const footer = node('div', 'account-usage-actions');
-        footer.append(action('Refresh', '', () => {
-            this.data.preferencesChanged();
-            void this.refresh({ all: true });
-        }), action('Manage accounts…', '', () => {
+        footer.append(action('Manage accounts…', '', () => {
             this.close();
             this.onManage();
         }));
-        this.popup.append(heading, node('p', 'account-usage-hint', 'Usage comes from CLI activity. Open starts a new terminal; existing conversations stay in their terminals.'), this.search, this.notice, this.rows, footer);
+        this.popup.append(heading, node('p', 'account-usage-hint', 'Usage reported by each CLI.'), this.search, this.notice, this.rows, footer);
         host.parentElement.append(this.popup);
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) void this.refresh();
+        });
         this.render();
     }
 
@@ -273,6 +283,7 @@ class UsagePanel {
             this.observed = key;
             if (profile) this.data.select(profile);
             else if (Object.hasOwn(UsageAccounts.PROVIDERS, program)) this.data.select({ provider: program });
+            else this.data.select(null);
             void this.refresh();
         }
     }
@@ -280,7 +291,34 @@ class UsagePanel {
     async refresh(
         options = {},
     ) {
-        await this.data.refresh({ ...options, all: options.all || this.popup.matches(':popover-open') });
+        let request = Promise.resolve();
+        const due = !options.periodic || (!document.hidden && !this.refreshes.size && Date.now() - this.lastRefreshAt >= UsageAccounts.POLL_INTERVAL_MS);
+        if (due) {
+            const all = Boolean(options.all || this.popup.matches(':popover-open'));
+            const settings = Boolean(options.settings);
+            const key = `${this.data.n_revision}:${all}:${settings}`;
+            request = this.refreshes.get(key);
+            if (!request) {
+                this.lastRefreshAt = Date.now();
+                request = this.data.refresh({ all, settings }).finally(() => this.refreshes.delete(key));
+                this.refreshes.set(key, request);
+            }
+        }
+        await request;
+    }
+
+    async retry() {
+        if (!this.retryButton.disabled) {
+            this.retryButton.disabled = true;
+            this.retryButton.textContent = 'Retrying…';
+            this.data.preferencesChanged();
+            try {
+                await this.refresh({ all: true });
+            } finally {
+                this.retryButton.disabled = false;
+                this.retryButton.textContent = 'Retry';
+            }
+        }
     }
 
     show(
@@ -312,7 +350,8 @@ class UsagePanel {
             ? usage.currentWindows(snapshot.data.windows, now) : [];
         if (windows.length) {
             for (const window of windows) {
-                const updated = snapshot.data.updatedAt ? ` · updated ${usage.duration(Math.max(0, now - snapshot.data.updatedAt))} ago` : '';
+                const elapsed = usage.duration(Math.max(0, now - (snapshot.data.updatedAt || now))).replace(/^0h /, '');
+                const updated = snapshot.data.updatedAt ? ` · Usage recorded ${elapsed} ago` : '';
                 const title = `${UsageAccounts.PROVIDERS[profile.provider]} · ${accountName(profile)} · ${usage.windowName(window.label)}: ${usage.describe(window, now)}${updated}`;
                 target.append(this.meter(`${scopeKey(profile)}-${window.label}`, window.label, window.used, title));
             }
@@ -320,15 +359,20 @@ class UsagePanel {
             const text = snapshot.status === 'unavailable' ? 'Unavailable' : snapshot.status === 'loading' ? 'Loading…' : 'No data';
             const state = node('span', 'account-usage-state', text);
             state.title = snapshot.removed ? 'This account was removed from the list. Its existing terminal is kept.'
-                : snapshot.status === 'unavailable' ? 'Usage could not be read. Open Account usage and select Refresh to retry.'
+                : snapshot.status === 'unavailable' ? 'Usage could not be read. Open Account usage and select Retry.'
                     : 'Usage appears after the CLI reports its limits. No value is inferred from another account.';
             target.append(state);
         }
     }
 
     render() {
-        const selected = Object.values(this.data.selected).map(profile => this.data.current(profile));
-        const key = JSON.stringify([selected.map(profile => [profile, this.data.snapshot(profile), this.data.isEnabled(profile.provider)]), Math.floor(Date.now() / 60000)]);
+        const selected = this.data.active ? [this.data.current(this.data.active)] : [];
+        const enabledProviders = Object.keys(UsageAccounts.PROVIDERS).filter(provider => this.data.isEnabled(provider));
+        this.retryButton.hidden = !this.data.profilesFailed && ![...this.data.profiles, ...selected].some(profile => {
+            const snapshot = this.data.snapshot(profile);
+            return snapshot.status === 'unavailable' && !snapshot.removed && this.data.isEnabled(profile.provider);
+        });
+        const key = JSON.stringify([selected.map(profile => [profile, this.data.snapshot(profile)]), enabledProviders, Math.floor(Date.now() / 60000)]);
         if (key !== this.barKey) {
             this.barKey = key;
             const focused = this.host.contains(document.activeElement) ? document.activeElement.dataset.usageProvider : null;
@@ -346,11 +390,18 @@ class UsagePanel {
                 this.appendValues(group, profile);
                 this.host.append(group);
             }
-            if (selected.some(profile => this.data.isEnabled(profile.provider))) {
+            if (enabledProviders.length) {
                 const compact = action('Usage', 'account-usage-compact', event => this.show(event.currentTarget));
+                compact.classList.toggle('is-only', !selected.some(profile => this.data.isEnabled(profile.provider)));
                 compact.dataset.usageProvider = 'compact';
                 compact.setAttribute('aria-haspopup', 'dialog');
                 compact.setAttribute('aria-expanded', String(this.popup.matches(':popover-open')));
+                const active = selected.find(profile => this.data.isEnabled(profile.provider));
+                if (active) {
+                    compact.append(node('span', 'account-usage-compact-name', accountName(active)));
+                    compact.title = `${UsageAccounts.PROVIDERS[active.provider]} · ${accountName(active)}. Show usage for all accounts.`;
+                    compact.setAttribute('aria-label', `${UsageAccounts.PROVIDERS[active.provider]} · ${accountName(active)} usage. Show all accounts.`);
+                }
                 this.host.append(compact);
             }
             if (focused) this.host.querySelector(`[data-usage-provider="${focused}"]`)?.focus({ preventScroll: true });
@@ -361,11 +412,11 @@ class UsagePanel {
     /** Keeps launch buttons attached while only their account values change during periodic refreshes. */
     renderRows() {
         const query = this.search.value.toLocaleLowerCase().trim();
-        const profiles = Object.keys(UsageAccounts.PROVIDERS).flatMap(provider => [
-            { provider }, ...this.data.profiles.filter(profile => profile.provider === provider),
-        ]);
+        const profiles = [...this.data.profiles];
+        // An unregistered CLI has no verified link to a saved account, even when both use the same login.
+        if (this.data.active && !this.data.active.id) profiles.unshift(this.data.active);
         const key = JSON.stringify([query, profiles.map(profile => [profile, this.data.snapshot(profile), this.data.isEnabled(profile.provider)]),
-            this.data.selected, this.opening, this.openError, this.data.profilesFailed, Math.floor(Date.now() / 60000)]);
+            this.data.active, this.opening, this.openError, this.data.profilesFailed, Math.floor(Date.now() / 60000)]);
         if (key !== this.rowsKey) {
             this.rowsKey = key;
             const scrollTop = this.rows.scrollTop;
@@ -373,7 +424,7 @@ class UsagePanel {
             this.sectionNodes ||= new Map();
             // Keep an existing query editable if accounts are removed while this list is open.
             this.search.hidden = this.data.profiles.length < UsageAccounts.N_SEARCH_THRESHOLD && !this.search.value;
-            this.notice.textContent = this.openError || (this.data.profilesFailed ? 'Accounts could not be loaded. Select Refresh to retry.' : '');
+            this.notice.textContent = this.openError || (this.data.profilesFailed ? 'Accounts could not be loaded. Select Retry.' : '');
             const visibleKeys = new Set();
             for (const [provider, label] of Object.entries(UsageAccounts.PROVIDERS)) {
                 let section = this.sectionNodes.get(provider);
@@ -418,15 +469,16 @@ class UsagePanel {
             badge: node('span', 'account-usage-selected-badge', 'Selected'),
             environment: node('span', 'account-usage-environment'),
             values: node('div', 'account-usage-values'),
-            updated: node('span', 'account-usage-updated'),
         };
         const summary = node('div', 'account-usage-summary');
+        const header = node('div', 'account-usage-row-header');
         const title = node('div', 'account-usage-row-title');
         title.append(entry.name, entry.badge);
-        summary.append(title, entry.environment, entry.values, entry.updated);
+        summary.append(title, entry.environment);
         entry.open = action('Open in new terminal', 'account-usage-open', () => void this.open(entry.profile));
         entry.open.dataset.usageFocus = scopeKey(profile);
-        entry.row.append(summary, entry.open);
+        header.append(summary, entry.open);
+        entry.row.append(header, entry.values);
         this.rowNodes.set(scopeKey(profile), entry);
         return entry;
     }
@@ -438,20 +490,18 @@ class UsagePanel {
         const accountKey = scopeKey(profile);
         const snapshot = this.data.snapshot(profile);
         const enabled = this.data.isEnabled(profile.provider);
-        const key = JSON.stringify([profile, snapshot, enabled, scopeKey(this.data.selected[profile.provider]), this.opening, Math.floor(Date.now() / 60000)]);
+        const activeKey = this.data.active ? scopeKey(this.data.active) : null;
+        const key = JSON.stringify([profile, snapshot, enabled, activeKey, this.opening, Math.floor(Date.now() / 60000)]);
         if (key !== entry.key) {
             entry.key = key;
             entry.profile = profile;
             entry.name.textContent = accountName(profile);
             entry.name.title = accountName(profile);
-            entry.badge.hidden = accountKey !== scopeKey(this.data.selected[profile.provider]);
-            entry.environment.textContent = profile.id ? (profile.runtime === 'wsl' ? `WSL · ${profile.wslDistribution}` : 'This device') : 'Default environment';
+            entry.badge.hidden = accountKey !== activeKey;
+            entry.environment.textContent = profile.id ? (profile.runtime === 'wsl' ? `WSL · ${profile.wslDistribution}` : 'This device') : 'Not linked to a saved account';
             entry.values.replaceChildren();
             if (enabled) this.appendValues(entry.values, profile);
             else entry.values.append(node('span', 'account-usage-state', 'Hidden in Quick settings'));
-            const updatedAt = snapshot.data?.updatedAt;
-            const elapsed = updatedAt ? Math.max(0, Math.floor(Date.now() / 1000) - updatedAt) : 0;
-            entry.updated.textContent = updatedAt && enabled ? (elapsed < 60 ? 'Updated just now' : `Updated ${usage.duration(elapsed)} ago`) : '';
             entry.open.textContent = this.opening === accountKey ? 'Opening…' : 'Open in new terminal';
             entry.open.disabled = Boolean(this.opening);
             entry.open.setAttribute('aria-label', `Open ${UsageAccounts.PROVIDERS[profile.provider]} · ${accountName(profile)} in a new terminal`);

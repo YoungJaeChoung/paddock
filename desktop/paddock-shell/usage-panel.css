@@ -9,11 +9,14 @@
 .account-usage-name { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--p-fg-muted); }
 .account-usage-state { color: var(--p-fg-muted); font-size: 12px; white-space: nowrap; }
 .paddock-shell .account-usage-selected .meter { margin-left: 2px; }
-.account-usage-compact { display: none; align-items: center; padding: 0 8px; border: 0; background: transparent; color: inherit; font: inherit; }
+.account-usage-compact { display: none; align-items: center; gap: 7px; min-width: 0; padding: 0 8px; border: 0; background: transparent; color: inherit; font: inherit; }
+.account-usage-compact-name { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--p-fg-muted); }
+.account-usage-compact.is-only { display: flex; }
 .account-usage-popup { position: fixed; inset: auto 12px 34px auto; box-sizing: border-box; width: 560px; max-width: calc(100vw - 24px); max-height: min(640px, calc(100vh - 72px)); margin: 0; padding: 14px; border: 1px solid var(--p-popup-border); border-radius: 8px; background: var(--p-popup-bg); color: var(--p-fg); box-shadow: 0 12px 32px #0006; font: 13px var(--p-interface-font, -apple-system), BlinkMacSystemFont, "Segoe UI", sans-serif; }
 .account-usage-popup:popover-open { display: flex; flex-direction: column; gap: 10px; }
 .account-usage-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .account-usage-heading > strong { font-size: 15px; }
+.account-usage-heading-actions { display: flex; align-items: center; gap: 8px; }
 .account-usage-popup button { min-height: 30px; padding: 4px 9px; border: 1px solid var(--p-popup-border); border-radius: 4px; background: var(--p-control-bg); color: var(--p-fg); font: inherit; }
 .account-usage-popup button:hover { background: var(--p-hover-bg); }
 .account-usage-popup button:disabled { opacity: .5; cursor: wait; }
@@ -26,14 +29,17 @@
 .account-usage-rows { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .account-usage-section h3 { position: sticky; top: 0; z-index: 1; margin: 0; padding: 6px 0; background: var(--p-popup-bg); font-size: 12px; font-weight: 600; color: var(--p-fg-muted); }
 .account-usage-section + .account-usage-section { margin-top: 14px; }
-.account-usage-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--p-border-subtle); }
+.account-usage-row { display: flex; flex-direction: column; gap: 6px; padding: 12px 0; border-bottom: 1px solid var(--p-border-subtle); }
+.account-usage-row-header { display: flex; align-items: center; gap: 12px; width: 100%; }
 .account-usage-summary { flex: 1; min-width: 0; }
 .account-usage-row-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .account-usage-row-title { display: flex; align-items: center; gap: 8px; }
 .account-usage-selected-badge { flex-shrink: 0; padding: 1px 5px; border-radius: 3px; background: var(--p-selected-bg); color: var(--p-fg-strong); font-size: 10px; }
 .account-usage-environment { display: block; margin-top: 3px; color: var(--p-fg-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.account-usage-updated { display: block; min-height: 12px; margin-top: 4px; color: var(--p-fg-muted); font-size: 10px; }
-.account-usage-values { display: flex; min-height: 15px; flex-wrap: wrap; gap: 6px 14px; margin-top: 6px; }
+.account-usage-values { display: flex; flex-direction: column; justify-content: center; min-height: 42px; width: 100%; gap: 8px; margin-top: 2px; }
+.paddock-shell .account-usage-values .meter { display: grid; grid-template-columns: 44px minmax(0, 1fr) 42px; gap: 8px; width: 100%; }
+.paddock-shell .account-usage-values .meter-bar { width: 100%; height: 6px; }
+.paddock-shell .account-usage-values .meter-percent { text-align: right; }
 .account-usage-open { flex-shrink: 0; }
 .account-usage-actions { display: flex; flex-shrink: 0; gap: 8px; justify-content: flex-end; padding-top: 4px; }
 @media (max-width: 1150px) {
@@ -45,6 +51,7 @@
     .account-usage-compact { display: flex; }
 }
 @media (max-width: 440px) {
-    .account-usage-row { align-items: flex-start; flex-direction: column; gap: 8px; }
-    .account-usage-summary { width: 100%; }
+    .account-usage-compact-name { max-width: 72px; }
+    .account-usage-row-header { align-items: flex-start; flex-direction: column; gap: 8px; }
+    .account-usage-summary { width: 100%; flex: auto; }
 }
