@@ -78,6 +78,8 @@ async function main() {
         selector,
         duringPress = null,
     ) {
+        // 처음에는 로딩 덮개가 사라지는 전환 중에도 뒤의 버튼이 DOM에 있다. 실제로 누를 수 있게 된 뒤 한 번 클릭한다.
+        await until(`(() => { const node = document.querySelector(${JSON.stringify(selector)}); const rect = node?.getBoundingClientRect(); return Boolean(rect?.width > 0 && rect?.height > 0 && node.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2))); })()`);
         const point = await evaluate(`(() => { const rect = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }; })()`);
         await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
         if (duringPress) await evaluate(duringPress);
@@ -115,9 +117,26 @@ async function main() {
         assert.equal(await evaluate('Math.round(document.querySelector(".paddock-tabbar").getBoundingClientRect().height)'), 28);
         assert.equal(await evaluate('document.querySelector(".tab-strip-label") === null'), true);
         assert.equal(await evaluate('getComputedStyle(document.querySelector(".paddock-tabbar")).backgroundColor === getComputedStyle(document.querySelector(".statusbar")).backgroundColor'), true);
+        // 터미널에 초점이 있어도 Ctrl+B(macOS는 Cmd+B)는 셸 입력 대신 전체 사이드바를 접고, 상단 버튼으로 다시 펼친다.
+        await until(`${shell}.widgets.some(widget => widget.id.startsWith('terminal-'))`);
+        await evaluate(`${shell}.widgets.find(widget => widget.id.startsWith('terminal-')).activate()`);
+        const sidebarModifiers = await evaluate('document.querySelector(".paddock-shell").classList.contains("is-macos")') ? 4 : 2;
+        for (const type of ['rawKeyDown', 'keyUp']) {
+            await send('Input.dispatchKeyEvent', { type, modifiers: sidebarModifiers, key: 'b', code: 'KeyB', windowsVirtualKeyCode: 66 });
+        }
+        await until('document.querySelector(".sidebar-toggle").getAttribute("aria-expanded") === "false"');
+        await mouseClick('.sidebar-toggle');
+        await until('document.querySelector(".sidebar-toggle").getAttribute("aria-expanded") === "true"');
         if (await evaluate('document.querySelector(".paddock-shell").classList.contains("is-linux")')) {
-            assert.equal(await evaluate('document.querySelectorAll(".window-controls button").length'), 3);
-            assert.equal(await evaluate('Math.round(document.querySelector(".window-minimize").getBoundingClientRect().width)'), 28);
+            // 통합 제목 줄이 있으면 그 줄의 창 버튼을 검사한다. 아래 탭 줄의 대체 버튼은 숨긴 상태여야 한다.
+            if (await evaluate('document.querySelector(".paddock-shell").classList.contains("has-integrated-titlebar")')) {
+                assert.equal(await evaluate('[...document.querySelectorAll("#window-controls button")].filter(button => button.getClientRects().length > 0).length'), 3);
+                assert.equal(await evaluate('Math.round(document.querySelector("#minimize-button").getBoundingClientRect().width)'), 48);
+                assert.equal(await evaluate('document.querySelector(".window-controls").getClientRects().length'), 0);
+            } else {
+                assert.equal(await evaluate('document.querySelectorAll(".window-controls button").length'), 3);
+                assert.equal(await evaluate('Math.round(document.querySelector(".window-minimize").getBoundingClientRect().width)'), 28);
+            }
         }
         await until('/^\\d+%$/.test(document.querySelector("[data-meter=memory] .meter-percent").textContent)');
         // AI 사용량: Claude·Codex는 켜져 있으면 게이지(값이 아직 없으면 no data)로, 꺼져 있으면 흐린 이름표로 선다.
@@ -180,7 +199,8 @@ async function main() {
         await until(`document.querySelector(".folder-bar")?.dataset.folder === ${JSON.stringify(repoKey)} && !document.querySelector(".folder-bar").classList.contains("lm-mod-hidden")`);
         await until(`document.querySelector('.folder-tabs .tab.is-active [role=tab]')?.textContent === 'claude'`);
         await until('document.querySelector(".folder-bar-branch-name")?.textContent.length > 0');
-        assert.equal(await evaluate('document.querySelector(".folder-tabs .tab-close, .terminal-row .row-action") === null'), true);
+        assert.equal(await evaluate('document.querySelectorAll(".folder-tabs .tab-close").length'), 1);
+        assert.equal(await evaluate('document.querySelector(".terminal-row .row-action") === null'), true);
         for (const selector of ['.folder-tabs .tab.is-active', `.terminal-row[data-widget-id="${firstTerminal}"]`]) {
             await evaluate(`document.querySelector(${JSON.stringify(selector)}).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 320, clientY: 100 }))`);
             await until('document.querySelector(".paddock-menu:popover-open")?.textContent.includes("Rename terminal")');
@@ -188,6 +208,22 @@ async function main() {
             await evaluate('document.querySelector(".paddock-menu:popover-open").hidePopover()');
         }
         await capture('2-agent-promoted');
+
+        // 작업 탭의 닫기 버튼은 취소하면 유지하고, 확인하면 그 탭만 종료한다.
+        await mouseClick('.folder-tabs .tab-close');
+        await until('document.querySelector(".dialogBlock .theia-button.secondary")');
+        await mouseClick('.dialogBlock .theia-button.secondary');
+        await until('!document.querySelector(".dialogBlock")');
+        assert.equal(await evaluate('document.querySelectorAll(".folder-tabs [role=tab]").length'), 1);
+        await mouseClick('.folder-tab-add');
+        await until('document.querySelectorAll(".folder-tabs [role=tab]").length === 2');
+        const temporaryId = await evaluate(`${current}.id`);
+        await mouseClick('.folder-tabs .tab.is-active .tab-close');
+        await until('document.querySelector(".dialogBlock .theia-button.main")');
+        await mouseClick('.dialogBlock .theia-button.main');
+        await until(`!${shell}.getWidgetById(${JSON.stringify(temporaryId)})`);
+        await mouseClick(`.folder-tabs [data-widget-id=${JSON.stringify(firstTerminal)}]`);
+        assert.equal(await evaluate(`${current}.id`), firstTerminal);
 
         // 작업 폴더 탭 줄의 ＋는 그 폴더에서 새 작업 터미널을 연다.
         await evaluate('document.querySelector(".folder-tab-add").click()');
@@ -204,8 +240,8 @@ async function main() {
         await key('Digit5', '5', 53);
         await until(`document.querySelectorAll(".path-bar").length === ${n_bars + 2}`);
         // 레포 폴더에 claude·＋로 연 터미널·나눈 터미널 2개.
-        assert.equal(await evaluate(`document.querySelectorAll('.terminal-row').length`), 4);
-        assert.equal(await evaluate(`document.querySelectorAll('.folder-tabs [role=tab]').length`), 4);
+        await until(`document.querySelectorAll('.terminal-row').length === 4`);
+        await until(`document.querySelectorAll('.folder-tabs [role=tab]').length === 4`);
         await untilPrompts();
         await capture('4-5-split');
 
@@ -262,7 +298,8 @@ async function main() {
         // Step 6: 보기 줄 — Source control(저장소·변경·본문 비교), Extensions(추천·검색)가 사이드바 안에 그려진다.
         await mouseClick('[data-view=scm]');
         await until('document.querySelector("[data-host=scm] .theia-view-container:not(.lm-mod-hidden)")?.getBoundingClientRect().height > 100');
-        await until('document.querySelector("[data-host=scm]").innerText.includes("paddock")');
+        // 저장소가 하나면 보기에서 이름을 생략하므로 실제 선택된 Git 범위를 시험 폴더와 대조한다.
+        await until(`${service('ScmService')}.selectedRepository?.provider.rootUri === ${JSON.stringify(repoKey)}`);
         await evaluate(`[...document.querySelectorAll('[data-host=scm] .scmItem, [data-host=scm] .theia-scm-resource')].find(n => n.textContent.includes('README.md') || n.textContent.includes('.md'))?.click()`);
         await capture('8-source-control');
         await evaluate('document.querySelector("[data-view=extensions]").click()');
@@ -306,11 +343,14 @@ async function main() {
         // 터미널 바로 위 ＋도 항상 보인다. 작업 폴더가 없으면 현재 위쪽 터미널의 내부 탭에 연다.
         assert.equal(await evaluate('document.querySelector(".folder-tab-add").getClientRects().length > 0'), true);
         const extraCwd = await evaluate(`${workspace}.readCwd(${workspace}.currentWidget())`);
+        const extraId = await evaluate(`${workspace}.currentWidget().id`);
         await evaluate('document.querySelector(".folder-tab-add").click()');
-        await until('document.querySelectorAll(".folder-tabs [role=tab]").length === 1');
+        await until('document.querySelectorAll(".folder-tabs [role=tab]").length === 2');
         assert.equal(await evaluate('document.querySelectorAll("#tab-strip [role=tab]").length'), 1);
         assert.equal(await evaluate(`${workspace}.workFolderOf(${workspace}.currentWidget())`), null);
-        assert.equal(await evaluate('document.querySelector(".folder-tabs .tab.is-active [role=tab]")?.textContent'), 'terminal 1');
+        assert.equal(await evaluate('document.querySelector(".folder-tabs .tab.is-active [role=tab]")?.textContent'), 'terminal 2');
+        await mouseClick(`.folder-tabs [data-widget-id=${JSON.stringify(extraId)}]`);
+        await until(`${workspace}.currentWidget()?.id === ${JSON.stringify(extraId)}`);
         assert.equal(await evaluate(`${workspace}.readCwd(${workspace}.currentWidget())`), extraCwd);
         assert.equal(await evaluate(`document.querySelectorAll('.terminal-row').length`), n_rows);
 
@@ -323,7 +363,7 @@ async function main() {
         const agentId = await evaluate(`${workspace}.currentWidget().id`);
         await until('document.querySelectorAll(".folder-tabs [role=tab]").length === 0');
         await evaluate(`${shell}.activateWidget(${JSON.stringify(topRoot)}).then(() => true)`);
-        await until('document.querySelectorAll(".folder-tabs [role=tab]").length === 1');
+        await until('document.querySelectorAll(".folder-tabs [role=tab]").length === 2');
         await evaluate(`${shell}.activateWidget(${JSON.stringify(agentId)}).then(() => true)`);
         await until('document.querySelectorAll(".folder-tabs [role=tab]").length === 0');
         await evaluate(`${shell}.getWidgetById('${agentId}').sendText(${JSON.stringify(`export PATH=${fakeBin}:$PATH; claude\n`)})`);

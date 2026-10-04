@@ -24,23 +24,28 @@ const { CustomEditorWidget } = require('@theia/plugin-ext/lib/main/browser/custo
 const { WebviewWidget } = require('@theia/plugin-ext/lib/main/browser/webview/webview');
 const { ScmService } = require('@theia/scm/lib/browser/scm-service');
 const { VSXExtensionsContribution } = require('@theia/vsx-registry/lib/browser/vsx-extensions-contribution');
+const { VSXExtensionsSearchModel } = require('@theia/vsx-registry/lib/browser/vsx-extensions-search-model');
 const { RemoteStatusService } = require('@theia/remote/lib/electron-common/remote-status-service');
 const { PreferenceService } = require('@theia/core/lib/common/preferences/preference-service');
 const { PreferenceScope } = require('@theia/core/lib/common/preferences/preference-scope');
+const { PreferencesWidget } = require('@theia/preferences/lib/browser/views/preference-widget');
 const { ThemeService } = require('@theia/core/lib/browser/theming');
 const { getCurrentPort } = require('@theia/core/lib/electron-browser/messaging/electron-local-ws-connection-source');
 const model = require('./work-model');
 const layoutModel = require('./layout-model');
+const tabOverflow = require('./tab-overflow');
+const { PaddockTerminal } = require('./terminal');
 const usage = require('./usage-model');
 const agent = require('./agent-model');
 const wsl = require('./wsl-terminals');
 const cwdReport = require('./cwd-report');
 
-// 작업 목록, 상단 터미널 묶음의 내부 탭, 창을 닫을 때 보던 위젯을 각각 저장한다.
+// 작업 목록, 상단 터미널 묶음의 내부 탭, 창을 닫을 때 보던 위젯과 묶음별 칸 배치를 각각 저장한다.
 class STORAGE {
     static WORK_FOLDERS = 'paddock.work-folders.v1';
     static INNER_TABS = 'paddock.inner-tabs.v1';
     static SHOWN_WIDGET = 'paddock.shown-widget.v1';
+    static ROOT_LAYOUTS = 'paddock.root-layouts.v1';
 }
 
 // 터미널 현재 폴더·실행 중 프로그램·메모리처럼 이벤트가 없는 값을 다시 읽는 간격(ms).
@@ -66,8 +71,9 @@ class STATUS_ITEMS {
     static MEMORY = 'paddock.statusBar.memory';
 }
 
-// 본문을 나누는 명령. 단축키는 VS Code의 새 터미널·터미널 분할과 같다.
+// 본문 나누기·탭 이동·사이드바 명령. 새 터미널·터미널 분할·사이드바 단축키는 VS Code와 같다.
 const PADDOCK_COMMANDS = {
+    toggleSidebar: { id: 'paddock.sidebar.toggle', label: 'Paddock: Toggle Sidebar' },
     splitDown: { id: 'paddock.work.splitDown', label: 'Paddock: New Terminal Below' },
     splitRight: { id: 'paddock.work.splitRight', label: 'Paddock: New Terminal to the Side' },
     previousTab: { id: 'paddock.tabs.previous', label: 'Paddock: Previous Terminal Tab' },
@@ -186,6 +192,11 @@ class PaddockWorkspace {
         this.rootLayouts = new Map();
         this.displayedRoot = null;
         this.isSwitchingRoot = false;
+        // 시작 때 모든 묶음이 한 화면에 복원돼도 처음 저장한 묶음별 비율을 덮어쓰지 않는다.
+        this.isRestoringRootLayouts = false;
+        // 전체 설정은 본문을 단독으로 쓰고, 닫으면 직전에 선택했던 작업과 칸 배치로 돌아간다.
+        this.preferencesReturnRoot = null;
+        this.preferencesReturnWidget = null;
         // 시작 시 저장된 작업 폴더·내부 탭 소속을 읽었는지. 읽기 전에는 묶음 전환을 하지 않는다.
         this.isGroupsRestored = false;
         // -- WSL 터미널 --
@@ -204,6 +215,7 @@ class PaddockWorkspace {
     registerCommands(
         commands,
     ) {
+        commands.registerCommand(PADDOCK_COMMANDS.toggleSidebar, { execute: () => this.shell.toggleSidebar() });
         commands.registerCommand(PADDOCK_COMMANDS.splitDown, { execute: () => this.run(() => this.newTerminalHere({ split: 'split-bottom' })) });
         commands.registerCommand(PADDOCK_COMMANDS.splitRight, { execute: () => this.run(() => this.newTerminalHere({ split: 'split-right' })) });
         commands.registerCommand(PADDOCK_COMMANDS.previousTab, { execute: () => this.run(() => this.moveTab('previous')) });
@@ -233,6 +245,9 @@ class PaddockWorkspace {
         this.keybindings.registerKeybinding({ command: PADDOCK_COMMANDS.splitRight.id, keybinding: 'ctrlcmd+shift+5' });
         this.keybindings.registerKeybinding({ command: PADDOCK_COMMANDS.splitRight.id, keybinding: 'ctrlcmd+\\' });
         this.keybindings.registerKeybinding({ command: PADDOCK_COMMANDS.splitRight.id, keybinding: 'ctrl+shift+c' });
+        this.keybindings.registerKeybinding({ command: PADDOCK_COMMANDS.toggleSidebar.id, keybinding: 'ctrlcmd+b' });
+        // 터미널의 Ctrl+B 입력 규칙보다 먼저 처리해 커서 이동 대신 사이드바를 접고 펼친다.
+        this.keybindings.registerKeybinding({ command: PADDOCK_COMMANDS.toggleSidebar.id, keybinding: 'ctrlcmd+b', when: 'terminalFocus' });
         this.keybindings.registerKeybinding({ command: PADDOCK_COMMANDS.previousTab.id, keybinding: 'ctrl+left', when: 'terminalFocus' });
         this.keybindings.registerKeybinding({ command: PADDOCK_COMMANDS.nextTab.id, keybinding: 'ctrl+right', when: 'terminalFocus' });
         this.keybindings.registerKeybinding({ command: PADDOCK_COMMANDS.firstTab.id, keybinding: 'ctrl+up', when: 'terminalFocus' });
@@ -243,14 +258,16 @@ class PaddockWorkspace {
 
     /**
      * 위젯이 속한 묶음 이름. 작업 폴더의 터미널·파일은 그 폴더, 위쪽 터미널과 그 내부 터미널·파일은 위쪽 터미널이다.
-     * 설정 화면처럼 어느 묶음에도 속하지 않으면 null이다.
+     * 전체 설정은 독립 묶음으로 본문 전체를 쓰며, 그 밖에 어느 묶음에도 속하지 않으면 null이다.
      */
     rootOf(
         widget,
     ) {
         let root = null;
         const folder = widget ? this.workFolderOf(widget) : null;
-        if (folder) {
+        if (widget?.id === PreferencesWidget.ID) {
+            root = PreferencesWidget.ID;
+        } else if (folder) {
             root = `folder:${folder}`;
         } else if (widget instanceof WebviewWidget && this.webviewFolders.has(widget.id)) {
             root = `folder:${this.webviewFolders.get(widget.id)}`;
@@ -282,20 +299,37 @@ class PaddockWorkspace {
         widget,
     ) {
         const panel = this.shell.mainPanel;
+        if (root === PreferencesWidget.ID && this.displayedRoot !== root) {
+            this.preferencesReturnRoot = this.displayedRoot;
+        }
         this.isSwitchingRoot = true;
         try {
             const full = panel.saveLayout().main;
-            // 어느 묶음에도 속하지 않는 화면(설정 등)은 지금 보이던 묶음과 함께 움직인다.
+            // 독립 묶음이 없는 보조 화면은 지금 보이던 묶음과 함께 움직인다.
             const fallback = this.displayedRoot ?? root;
             const groupOf = item => this.rootOf(item) ?? fallback;
             for (const name of new Set(layoutModel.widgetsOf(full).map(groupOf))) {
-                this.rootLayouts.set(name, layoutModel.prune(full, item => groupOf(item) === name));
+                let area = layoutModel.prune(this.rootLayouts.get(name), item => !item.isDisposed && (this.rootOf(item) ?? name) === name);
+                if ((!this.isRestoringRootLayouts && name === this.displayedRoot) || !area) {
+                    area = layoutModel.prune(full, item => groupOf(item) === name);
+                    // 설정 탭을 끼워 넣으며 바뀐 선택 대신 설정을 열기 직전 파일·터미널을 기억한다.
+                    if (root === PreferencesWidget.ID && name === this.preferencesReturnRoot && this.preferencesReturnWidget) {
+                        area = layoutModel.select(area, this.preferencesReturnWidget);
+                    }
+                } else {
+                    // 다른 묶음에 터미널을 추가하면 새 위젯만 본문에 먼저 들어온다. 그것으로 보관 중인 전체 배치를 덮지 않는다.
+                    for (const item of layoutModel.widgetsOf(full).filter(item => groupOf(item) === name)) {
+                        if (!layoutModel.includes(area, item)) area = layoutModel.withWidget(area, item);
+                    }
+                }
+                this.rootLayouts.set(name, area);
             }
-            let next = layoutModel.withoutDisposed(this.rootLayouts.get(root) ?? null);
+            let next = layoutModel.prune(this.rootLayouts.get(root), item => !item.isDisposed && (this.rootOf(item) ?? root) === root);
             if (widget && !layoutModel.includes(next, widget)) next = layoutModel.withWidget(next, widget);
             if (widget) next = layoutModel.select(next, widget);
             if (next) panel.restoreLayout({ main: next });
             this.displayedRoot = root;
+            this.isRestoringRootLayouts = false;
         } finally {
             this.isSwitchingRoot = false;
         }
@@ -314,8 +348,15 @@ class PaddockWorkspace {
     async activate(
         id,
     ) {
-        this.showRootOf(this.shell.getWidgetById(id));
-        await this.shell.activateWidget(id);
+        const widget = this.shell.getWidgetById(id);
+        this.showRootOf(widget);
+        const activation = this.shell.activateWidget(id);
+        // 시작할 때 창에 입력 초점이 없어도 복원한 파일을 현재 화면으로 기억한다.
+        // 같은 칸에서 이미 선택된 탭은 선택 변경 알림도 없으므로, 실제 선택을 확인해 직접 표시한다.
+        if (widget && this.shell.getAreaFor(widget) === 'main' && this.shell.getTabBarFor(widget)?.currentTitle === widget.title) {
+            this.shell.mainPanel.markAsCurrent(widget.title);
+        }
+        await activation;
     }
 
     /**
@@ -330,18 +371,53 @@ class PaddockWorkspace {
         try {
             const panel = this.shell.mainPanel;
             const shown = panel.saveLayout().main;
+            const layouts = new Map([...this.rootLayouts].map(([root, area]) => [root,
+                layoutModel.prune(area, widget => !widget.isDisposed && (this.rootOf(widget) ?? root) === root),
+            ]));
+            const groupOf = widget => this.rootOf(widget) ?? this.displayedRoot;
+            for (const root of new Set(layoutModel.widgetsOf(shown).map(groupOf))) {
+                let area = layouts.get(root);
+                if ((!this.isRestoringRootLayouts && root === this.displayedRoot) || !area) {
+                    area = layoutModel.prune(shown, widget => !widget.isDisposed && groupOf(widget) === root);
+                } else {
+                    // 종료 직전에 다른 묶음의 새 탭이 들어와도 기존 탭·칸 배치를 함께 저장한다.
+                    for (const widget of layoutModel.widgetsOf(shown).filter(item => !item.isDisposed && groupOf(item) === root)) {
+                        if (!layoutModel.includes(area, widget)) area = layoutModel.withWidget(area, widget);
+                    }
+                }
+                layouts.set(root, area);
+            }
+            // 살아 있는 화면이 보관 배치에서 누락됐어도 재시작 시 사라지지 않게 소속 묶음에 포함한다.
+            for (const widget of this.shell.widgets) {
+                const root = this.rootOf(widget);
+                if (root && !widget.isDisposed && !layoutModel.includes(layouts.get(root), widget)) {
+                    layouts.set(root, layoutModel.withWidget(layouts.get(root), widget));
+                }
+            }
+            this.rootLayouts = layouts;
+            // 모든 묶음을 좁은 창에 모으면 최소 칸 크기 때문에 비율이 달라진다. 모으기 전 배치를 따로 동기 저장한다.
+            this.storage.setData(STORAGE.ROOT_LAYOUTS, [...layouts].filter(([root]) => root).map(([root, area]) => [root, layoutModel.serialize(layoutModel.withoutDisposed(area))]));
             // 다른 묶음은 탭으로 합치지 않고 칸 나눔째 옆에 붙인다. 탭으로 합치면 다음 실행에 그 묶음의 분할이 사라진다.
-            const others = [...this.rootLayouts]
+            const others = [...layouts]
                 .filter(([root]) => root !== this.displayedRoot)
-                .map(([, area]) => layoutModel.prune(area, item => !item.isDisposed && !layoutModel.includes(shown, item)));
-            const merged = layoutModel.besides([shown, ...others]);
-            if (merged) panel.restoreLayout({ main: merged });
+                .map(([, area]) => area);
+            const merged = layoutModel.besides([layouts.get(this.displayedRoot), ...others]);
+            if (merged) {
+                panel.restoreLayout({ main: merged });
+                // 닫기가 취소돼 다시 묶음을 나눌 때도 모으기 전의 칸 비율을 유지한다.
+                this.isRestoringRootLayouts = true;
+            }
         } finally {
             this.isSwitchingRoot = false;
         }
     }
 
     // -- 시작 --
+
+    initialize() {
+        // 기본 터미널 모듈까지 모두 등록된 뒤, 저장한 화면을 복원하기 전에 닫기 확인이 있는 위젯을 연결한다.
+        this.container.rebind(TerminalWidget).to(PaddockTerminal).inTransientScope();
+    }
 
     onStart() {
         // 초점 변경이 버튼을 누른 사이에 탭·사이드바를 다시 그리면 클릭 대상이 사라진다.
@@ -421,7 +497,7 @@ class PaddockWorkspace {
                 const folder = this.shownFolder();
                 if (folder) this.webviewFolders.set(widget.id, folder);
                 else {
-                    const root = this.shownTopTerminal();
+                    const root = this.fileRoots.get(this.currentWidget()?.id) || this.shownTopTerminal();
                     if (root) {
                         this.fileRoots.set(widget.id, root);
                         if (this.layoutReady && this.pendingMarkdownSource) void this.saveInnerTabs();
@@ -430,31 +506,14 @@ class PaddockWorkspace {
             }
             this.refreshSoon();
         });
-        this.shell.onDidRemoveWidget((widget) => {
-            // 다른 묶음의 배치로 바꾸는 중에 화면에서 빠진 위젯은 닫힌 것이 아니라 소속을 그대로 둔다.
-            if (this.isSwitchingRoot) return;
-            if (model.folderOf(this.state, widget.id)) {
-                this.state = model.forgetTerminal(this.state, widget.id);
-                this.save();
+        this.shell.onDidRemoveWidget(widget => this.forgetClosedWidget(widget));
+        this.shell.mainPanel.onDidChangeCurrent(title => {
+            const widget = title?.owner;
+            if (!this.isSwitchingRoot && widget && widget.id !== PreferencesWidget.ID && this.rootOf(widget)) {
+                this.preferencesReturnWidget = widget;
             }
-            const removedInner = this.innerTerminalRoots.delete(widget.id);
-            const removedFile = this.fileRoots.delete(widget.id);
-            this.webviewFolders.delete(widget.id);
-            this.markdownPreviewSources.delete(widget.id);
-            let innerChanged = removedInner || removedFile;
-            if (widget.id === this.selectedTopTerminal) this.selectedTopTerminal = null;
-            if (this.isTerminal(widget)) {
-                for (const [id, root] of this.innerTerminalRoots) {
-                    if (root === widget.id) innerChanged = this.innerTerminalRoots.delete(id) || innerChanged;
-                }
-                for (const [id, root] of this.fileRoots) {
-                    if (root === widget.id) innerChanged = this.fileRoots.delete(id) || innerChanged;
-                }
-            }
-            if (innerChanged) this.saveInnerTabs();
             this.refreshSoon();
         });
-        this.shell.mainPanel.onDidChangeCurrent(() => this.refreshSoon());
         this.shell.onDidChangeActiveWidget(({ newValue }) => {
             if (newValue && this.shell.getAreaFor(newValue) === 'main') {
                 this.lastMainWidget = newValue;
@@ -510,20 +569,18 @@ class PaddockWorkspace {
             await this.plugins.willStart;
             await this.commands.executeCommand('git.checkout', ...(root ? [new URI(root).path.fsPath()] : []));
         }));
-        for (const scroller of this.shell.folderBar.node.querySelectorAll('.tabs-scroll')) {
-            scroller.addEventListener('click', () => {
-                const strip = this.shell.folderBar.node.querySelector('.folder-tabs');
-                strip.scrollBy({ left: Number(scroller.dataset.direction) * strip.clientWidth * 0.8 });
-                setTimeout(() => {
+        for (const strip of [this.shell.folderBar.node.querySelector('.folder-tabs'), this.shell.tabs.node]) {
+            for (const scroller of strip.parentElement.querySelectorAll(':scope > .tabs-scroll')) {
+                scroller.addEventListener('click', () => {
+                    strip.scrollBy({ left: Number(scroller.dataset.direction) * strip.clientWidth * 0.8 });
                     this.alignTabsToEdge(strip);
                     this.updateTabOverflow(strip);
-                }, 350);
-            });
-        }
-        for (const strip of [this.shell.folderBar.node.querySelector('.folder-tabs'), this.shell.tabs.node]) {
+                });
+            }
             strip.addEventListener('scroll', () => this.updateTabOverflow(strip), { passive: true });
-            // 창·사이드바 폭이 바뀌면 보이는 탭 범위가 달라지므로 활성 탭과 잘린 탭을 다시 맞춘다.
-            new ResizeObserver(() => this.keepActiveTabVisible(strip)).observe(strip);
+            strip.addEventListener('keydown', event => tabOverflow.moveTabFocus(strip, event));
+            // 창·사이드바 폭이 바뀌면 잘린 탭과 넘김 버튼을 맞춘다. 사용자가 다른 탭을 찾는 스크롤 위치는 유지한다.
+            new ResizeObserver(() => this.updateTabOverflow(strip)).observe(strip);
         }
         this.shell.folderBar.node.querySelector('.folder-split-down').addEventListener('click', () => this.run(() => this.newTerminalHere({ split: 'split-bottom' })));
         this.shell.folderBar.node.querySelector('.folder-split-right').addEventListener('click', () => this.run(() => this.newTerminalHere({ split: 'split-right' })));
@@ -533,7 +590,8 @@ class PaddockWorkspace {
             if (event.newState === 'open') {
                 this.renderShellMenu();
                 const bounds = picker.getBoundingClientRect();
-                menu.style.left = `${Math.min(bounds.left, window.innerWidth - 240)}px`;
+                menu.style.left = `${Math.max(8, Math.min(bounds.left, window.innerWidth - 240))}px`;
+                menu.style.top = `${bounds.bottom + 6}px`;
             }
         });
         const quickSettings = sidebar.querySelector('#quick-settings');
@@ -542,15 +600,15 @@ class PaddockWorkspace {
                 this.renderQuickSettings();
                 // 버튼 아래에 연다. 아래 공간이 모자라면 위로 열고, 창 가장자리를 넘지 않게 좌우를 당긴다.
                 const bounds = document.querySelector('.quick-settings-button').getBoundingClientRect();
-                const height = Math.min(quickSettings.scrollHeight || 420, window.innerHeight * 0.7);
+                const height = Math.min(quickSettings.scrollHeight || 510, window.innerHeight - 120);
                 const opensUp = bounds.bottom + 6 + height > window.innerHeight && bounds.top - 6 - height >= 0;
-                quickSettings.style.left = `${Math.max(8, Math.min(bounds.left, window.innerWidth - 288))}px`;
+                quickSettings.style.left = `${Math.max(8, Math.min(bounds.left, window.innerWidth - 352))}px`;
                 quickSettings.style.top = `${opensUp ? bounds.top - 6 - height : bounds.bottom + 6}px`;
             }
         });
-        // 테마 목록은 높이가 정해져 있어 지금 테마가 아래쪽이면 가려진다 — 열린 뒤 그 줄이 보이게 목록만 넘긴다.
+        // 열 때 현재 테마에 초점을 두어 키보드로도 바로 고를 수 있게 한다.
         quickSettings.addEventListener('toggle', (event) => {
-            if (event.newState === 'open') quickSettings.querySelector('.quick-theme.is-current')?.scrollIntoView({ block: 'nearest' });
+            if (event.newState === 'open') quickSettings.querySelector('[data-setting="theme"]')?.focus({ preventScroll: true });
         });
         this.container.get(ThemeService).onDidColorThemeChange(() => {
             if (quickSettings.matches(':popover-open')) this.renderQuickSettings();
@@ -630,11 +688,13 @@ class PaddockWorkspace {
         try {
             const groups = JSON.parse(savedInner || '{}');
             this.innerTerminalRoots = new Map(Object.entries(groups.terminals || {}).filter(([id, root]) => liveIds.has(id) && liveIds.has(root)));
-            this.fileRoots = new Map(Object.entries(groups.files || {}).filter(([, root]) => liveIds.has(root)));
+            this.fileRoots = new Map(Object.entries(groups.files || {}).filter(([id, root]) => liveIds.has(root) || this.shell.getWidgetById(id)));
         } catch {
             this.innerTerminalRoots.clear();
             this.fileRoots.clear();
         }
+        const shownWidgetId = await this.storage.getData(STORAGE.SHOWN_WIDGET, '');
+        const restoredLayoutWidget = await this.restoreRootLayouts(shownWidgetId);
         this.isGroupsRestored = true;
         for (const terminal of this.terminals.all) {
             this.watchTerminal(terminal);
@@ -645,7 +705,7 @@ class PaddockWorkspace {
         // 저장된 작업 폴더나 파일 화면이 있어도 상단 줄에는 추가 터미널 하나를 둔다. 첫 화면에서 바로 명령을 입력할 수 있다.
         // 창을 닫을 때 보던 위젯의 묶음으로 시작한다. 그 위젯이 없으면 상단 첫 터미널이다.
         // Theia는 닫을 때의 활성 위젯을 늘 남기지 않아(창이 닫히며 초점이 빠짐), 닫기 직전에 직접 저장한 위젯을 쓴다.
-        const restored = this.shell.getWidgetById(await this.storage.getData(STORAGE.SHOWN_WIDGET, '')) ?? this.currentWidget();
+        const restored = restoredLayoutWidget ?? this.shell.getWidgetById(shownWidgetId) ?? this.currentWidget();
         const extra = this.topTerminals()[0];
         if (!extra) await this.newExtraTerminal();
         else await this.activate((restored && this.rootOf(restored) ? restored : extra).id);
@@ -683,6 +743,59 @@ class PaddockWorkspace {
 
     async saveInnerTabs() {
         await this.storage.setData(STORAGE.INNER_TABS, JSON.stringify({ terminals: Object.fromEntries(this.innerTerminalRoots), files: Object.fromEntries(this.fileRoots) }));
+    }
+
+    /** 저장된 묶음별 비율을 되살린 위젯에 연결한다. 복원되지 않는 화면만 빼고 나머지 칸 비율은 유지한다. */
+    async restoreRootLayouts(
+        shownWidgetId,
+    ) {
+        const saved = await this.storage.getData(STORAGE.ROOT_LAYOUTS, []).catch(() => []);
+        const widgets = this.shell.widgets.filter(widget => !widget.isDisposed);
+        const used = new Set();
+        let filesChanged = false;
+        let shownWidget;
+        const resolveWidget = reference => {
+            let widget = widgets.find(item => item.id === reference.id);
+            if (!widget && reference.uri) {
+                // 이미지 등 확장 편집기는 재시작 때 id가 바뀐다. 같은 파일·같은 편집기인 화면 하나만 연결한다.
+                const matches = widgets.filter(item => item.getResourceUri?.()?.toString() === reference.uri
+                    && (item.viewType || '') === (reference.viewType || ''));
+                if (matches.length === 1) widget = matches[0];
+            }
+            if (widget && used.has(widget)) widget = undefined;
+            if (widget) {
+                used.add(widget);
+                if (reference.id === shownWidgetId) shownWidget = widget;
+                if (widget.id !== reference.id && this.fileRoots.has(reference.id)) {
+                    this.fileRoots.set(widget.id, this.fileRoots.get(reference.id));
+                    this.fileRoots.delete(reference.id);
+                    filesChanged = true;
+                }
+            }
+            return widget;
+        };
+        if (Array.isArray(saved)) {
+            for (const entry of saved) {
+                if (Array.isArray(entry) && typeof entry[0] === 'string') {
+                    const area = layoutModel.restore(entry[1], resolveWidget);
+                    if (area) {
+                        const root = entry[0];
+                        this.rootLayouts.set(root, area);
+                        for (const widget of layoutModel.widgetsOf(area)) {
+                            if (root.startsWith('top:') && !this.isTerminal(widget) && this.fileRoots.get(widget.id) !== root.slice(4)) {
+                                this.fileRoots.set(widget.id, root.slice(4));
+                                filesChanged = true;
+                            } else if (root.startsWith('folder:') && widget instanceof WebviewWidget) {
+                                this.webviewFolders.set(widget.id, root.slice(7));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        this.isRestoringRootLayouts = this.rootLayouts.size > 0;
+        if (filesChanged) await this.saveInnerTabs();
+        return shownWidget;
     }
 
     /** 다른 창에는 작업 폴더와 터미널의 이름·소속·프로그램만 알린다. 화면과 입력은 보내지 않는다. */
@@ -756,8 +869,21 @@ class PaddockWorkspace {
         if (!this.watched.has(terminal)) {
             this.watched.add(terminal);
             this.activity.set(terminal.id, agent.idle());
-            terminal.onData((data) => this.activity.set(terminal.id, agent.noteInput(this.activity.get(terminal.id) ?? agent.idle(), data, Date.now())));
-            terminal.onOutput(() => this.activity.set(terminal.id, agent.noteOutput(this.activity.get(terminal.id) ?? agent.idle(), Date.now())));
+            terminal.onData((data) => {
+                this.activity.set(terminal.id, agent.noteInput(this.activity.get(terminal.id) ?? agent.idle(), data, Date.now()));
+                if (data.includes('\r')) {
+                    // 새 요청의 상태가 이전 응답의 완료 알림에 가리지 않게 한다.
+                    this.doneIds.delete(terminal.id);
+                    this.refreshSoon();
+                }
+            });
+            terminal.onOutput(() => {
+                const before = this.activity.get(terminal.id) ?? agent.idle();
+                const after = agent.noteOutput(before, Date.now());
+                this.activity.set(terminal.id, after);
+                // 첫 출력은 즉시 표시하고, 계속되는 출력은 기존 주기 갱신에 맡긴다.
+                if (before.busySince === null && after.busySince !== null) this.refreshSoon();
+            });
             if (OS.backend.type() === OS.Type.Windows && cwdReport.isBashShell(terminal.options?.shellPath)) this.absorbResizeKeyLoss(terminal);
             // 셸이 프롬프트마다 알리는 현재 폴더(OSC 7)를 기억한다. Windows 셸은 createTerminal이 이 알림을 켠다.
             terminal.term?.parser?.registerOscHandler(7, (data) => {
@@ -770,6 +896,8 @@ class PaddockWorkspace {
                 this.activity.delete(terminal.id);
                 this.programs.delete(terminal.id);
                 this.doneIds.delete(terminal.id);
+                // 다른 묶음에 가려져 본문에서 빠진 터미널은 패널의 제거 이벤트 없이 종료될 수 있다.
+                this.forgetClosedWidget(terminal);
             });
         }
     }
@@ -893,13 +1021,17 @@ class PaddockWorkspace {
     // -- 터미널 --
 
     /**
-     * 지금 보고 있는 본문 위젯. 사이드바를 누르면 포커스가 본문을 떠나므로
-     * 본문에서 마지막으로 활성이던 위젯을 기억해 둔다.
+     * 지금 선택한 본문 위젯. 파일 화면이 입력 초점을 받지 않아도 선택된 탭을 따른다.
+     * 사이드바를 누르면 포커스가 본문을 떠나므로, 선택된 탭이 없을 때는 본문에서 마지막으로 활성이던 위젯을 쓴다.
      */
     currentWidget() {
+        let current = this.shell.mainPanel.currentTitle?.owner;
         const last = this.lastMainWidget;
         const alive = last && !last.isDisposed && this.shell.getAreaFor(last) === 'main';
-        return alive ? last : this.shell.mainPanel.currentTitle?.owner;
+        if (!current || current.isDisposed || this.shell.getAreaFor(current) !== 'main') {
+            current = alive ? last : undefined;
+        }
+        return current;
     }
 
     isTerminal(
@@ -977,7 +1109,109 @@ class PaddockWorkspace {
         } else if (widget) {
             root = this.fileRoots.get(widget.id) || null;
         }
-        return root && !model.folderOf(this.state, root) && this.terminals.all.some(terminal => terminal.id === root) ? root : null;
+        // 시작 터미널이 닫혀도 파일은 원래 묶음의 배치로 돌아갈 수 있다.
+        return root && !model.folderOf(this.state, root) && (!this.isTerminal(widget) || this.terminals.all.some(terminal => terminal.id === root)) ? root : null;
+    }
+
+    /** 시작 터미널을 닫고 파일만 남은 묶음인지. 파일 탭과 새 터미널 진입을 계속 보여 주는 데 쓴다. */
+    isFileOnlyGroup(
+        widget,
+    ) {
+        const root = widget && this.fileRoots.get(widget.id);
+        return Boolean(root && !this.workFolderOf(widget) && !this.terminals.all.some(terminal => terminal.id === root));
+    }
+
+    /** 닫힌 화면의 소속을 정리한다. 화면에서 가려 둔 터미널의 종료도 같은 정리를 거친다. */
+    forgetClosedWidget(
+        widget,
+    ) {
+        // 다른 묶음의 배치로 바꾸는 중에 화면에서 빠진 위젯은 닫힌 것이 아니라 소속을 그대로 둔다.
+        if (!this.isSwitchingRoot) {
+            const nextRoot = this.isTerminal(widget) ? this.keepGroupAfterTerminalClose(widget.id) : null;
+            if (model.folderOf(this.state, widget.id)) {
+                this.state = model.forgetTerminal(this.state, widget.id);
+                void this.save();
+            }
+            const removedInner = this.innerTerminalRoots.delete(widget.id);
+            const removedFile = this.fileRoots.delete(widget.id);
+            this.webviewFolders.delete(widget.id);
+            this.markdownPreviewSources.delete(widget.id);
+            let innerChanged = removedInner || removedFile;
+            if (widget.id === this.selectedTopTerminal) this.selectedTopTerminal = nextRoot;
+            if (this.isTerminal(widget)) {
+                for (const [id, root] of this.innerTerminalRoots) {
+                    if (root === widget.id) innerChanged = this.innerTerminalRoots.delete(id) || innerChanged;
+                }
+                // 파일만 남은 묶음은 닫힌 터미널의 id로 배치와 파일 연결을 유지한다. 새 셸을 자동으로 만들지 않는다.
+            }
+            if (innerChanged) void this.saveInnerTabs();
+            if (widget.id === PreferencesWidget.ID) {
+                this.rootLayouts.delete(PreferencesWidget.ID);
+                // 설정은 닫아도 위젯 객체가 남는다. 패널의 제거 처리가 끝난 다음 작업 배치를 복원한다.
+                queueMicrotask(() => this.run(() => this.restoreWorkAfterPreferences()));
+            }
+            this.refreshSoon();
+        }
+    }
+
+    /** 전체 설정을 닫으면 이전 작업으로 돌아간다. 그 작업이 모두 끝났으면 남아 있는 다른 작업을 보여 준다. */
+    async restoreWorkAfterPreferences() {
+        if (this.displayedRoot === PreferencesWidget.ID) {
+            const previous = this.preferencesReturnWidget;
+            const previousRoot = previous && !previous.isDisposed ? this.rootOf(previous) : this.preferencesReturnRoot;
+            const candidates = [previousRoot, ...this.rootLayouts.keys()].filter(root => root && root !== PreferencesWidget.ID);
+            const root = candidates.find(name => layoutModel.widgetsOf(layoutModel.withoutDisposed(this.rootLayouts.get(name))).length);
+            const area = root ? layoutModel.withoutDisposed(this.rootLayouts.get(root)) : null;
+            const widget = previous && layoutModel.includes(area, previous) ? previous : layoutModel.widgetsOf(area)[0];
+            if (widget) {
+                this.showRoot(root, widget);
+                await this.activate(widget.id);
+            } else {
+                this.displayedRoot = null;
+            }
+            this.refreshSoon();
+        }
+    }
+
+    /**
+     * 시작 터미널이 닫히면 첫 내부 터미널이 나머지 터미널·파일·칸 배치를 이어받는다.
+     * 내부 터미널이 없으면 파일 연결은 그대로 두어 파일만 남은 묶음으로 다시 열 수 있다.
+     */
+    keepGroupAfterTerminalClose(
+        id,
+    ) {
+        const children = [...this.innerTerminalRoots].filter(([child, root]) => {
+            const widget = this.shell.getWidgetById(child);
+            return root === id && widget && !widget.isDisposed;
+        });
+        const nextRoot = children[0]?.[0] || null;
+        if (nextRoot) {
+            for (const [child] of children) {
+                if (child === nextRoot) this.innerTerminalRoots.delete(child);
+                else this.innerTerminalRoots.set(child, nextRoot);
+            }
+            this.moveFileGroup(id, nextRoot);
+            void this.saveInnerTabs();
+        }
+        return nextRoot;
+    }
+
+    /** 파일 연결과 보관한 칸 배치를 새 시작 터미널로 옮긴다. 닫힌 시작 터미널은 배치에서 뺀다. */
+    moveFileGroup(
+        previousRoot,
+        nextRoot,
+    ) {
+        for (const [id, root] of this.fileRoots) {
+            if (root === previousRoot) this.fileRoots.set(id, nextRoot);
+        }
+        const previousKey = `top:${previousRoot}`;
+        const nextKey = `top:${nextRoot}`;
+        const area = this.displayedRoot === previousKey ? this.shell.mainPanel.saveLayout().main : this.rootLayouts.get(previousKey);
+        const kept = layoutModel.prune(area, widget => widget.id !== previousRoot && !widget.isDisposed);
+        if (kept) this.rootLayouts.set(nextKey, kept);
+        this.rootLayouts.delete(previousKey);
+        if (this.displayedRoot === previousKey) this.displayedRoot = nextKey;
+        if (this.preferencesReturnRoot === previousKey) this.preferencesReturnRoot = nextKey;
     }
 
     /** 현재 화면에 해당하는 위쪽 터미널 묶음. 작업 폴더를 보고 있으면 해당 묶음은 표시하지 않는다. */
@@ -1069,6 +1303,7 @@ class PaddockWorkspace {
         openOptions,
     ) {
         await this.terminals.open(terminal, openOptions);
+        await this.balanceSplit(terminal, openOptions.widgetOptions?.mode);
         // 시작 전 터미널의 id는 -1이다.
         if (!(terminal.terminalId >= 0)) {
             terminal.doResizeTerminal?.();
@@ -1078,6 +1313,26 @@ class PaddockWorkspace {
                 terminal.dispose();
                 throw new Error('Cannot start the shell. Check the executable path.', { cause: error });
             }
+        }
+    }
+
+    /** 새 터미널이나 미리보기 칸을 추가한 분할에 같은 공간을 준다. 기존 칸을 다시 볼 때는 부르지 않는다. */
+    async balanceSplit(
+        widget,
+        mode,
+    ) {
+        if (mode === 'split-right' || mode === 'split-bottom') {
+            // 세 번째 이후 칸도 명령·파일을 읽을 공간을 갖게 새로 나눈 형제 칸만 고르게 배분한다.
+            // 배치를 옮기는 동안 발생하는 제거 알림은 실제 터미널·파일 종료가 아니다.
+            const layout = this.shell.mainPanel.saveLayout();
+            const main = layoutModel.balanceNewSplit(layout.main, widget, mode === 'split-right' ? 'horizontal' : 'vertical');
+            this.isSwitchingRoot = true;
+            try {
+                this.shell.mainPanel.restoreLayout({ main });
+            } finally {
+                this.isSwitchingRoot = false;
+            }
+            await this.shell.activateWidget(widget.id);
         }
     }
 
@@ -1105,15 +1360,28 @@ class PaddockWorkspace {
         };
     }
 
+    /**
+     * 내부 터미널이 있는 묶음의 본문 탭 순서. 처음 연 터미널도 새 터미널 옆에서 다시 선택할 수 있게 포함한다.
+     * 내부 터미널이 없으면 빈 목록이다. 그때는 맨 위 탭만으로 처음 연 터미널을 선택한다.
+     */
+    innerTabIds(
+        root,
+    ) {
+        const children = [...this.innerTerminalRoots].filter(([, owner]) => owner === root).map(([id]) => id);
+        const ids = children.length ? [root, ...children].filter(id => this.terminals.all.some(terminal => terminal.id === id)) : [];
+        return ids;
+    }
+
     /** 현재 터미널과 같은 묶음의 터미널 id. 작업 폴더·내부 탭·상단 탭 중 한 줄의 순서다. */
     siblingTerminals(
         terminal,
     ) {
         const folder = model.folderOf(this.state, terminal.id);
-        const root = this.innerTerminalRoots.get(terminal.id);
+        const root = this.innerTerminalRoots.get(terminal.id) || terminal.id;
+        const inner = this.innerTabIds(root);
         let ids;
         if (folder) ids = model.terminalRows(this.state, folder).map(row => row.id);
-        else if (root) ids = [...this.innerTerminalRoots].filter(([, owner]) => owner === root).map(([id]) => id);
+        else if (inner.length) ids = inner;
         else ids = this.topTerminals().map(item => item.id);
         return ids;
     }
@@ -1155,12 +1423,15 @@ class PaddockWorkspace {
     ) {
         const current = this.currentWidget();
         const root = this.shownTopTerminal();
-        if (!root) throw new Error('Open a top terminal first.');
+        const fileRoot = this.isFileOnlyGroup(current) ? this.fileRoots.get(current.id) : null;
         const cwd = this.isTerminal(current) ? await this.readCwd(current) : current?.getResourceUri?.()?.parent?.toString();
         const terminal = await this.createTerminal(cwd || `file://${this.homePath}`);
-        this.innerTerminalRoots.set(terminal.id, root);
+        if (root) this.innerTerminalRoots.set(terminal.id, root);
+        else if (fileRoot) this.moveFileGroup(fileRoot, terminal.id);
         await this.saveInnerTabs();
-        await this.openTerminal(terminal, { widgetOptions: this.widgetOptions(split), mode: 'activate' });
+        // 파일만 남아 있으면 그 왼쪽에 새 시작 터미널을 두어 파일과 실행 화면을 함께 유지한다.
+        const widgetOptions = fileRoot ? { area: 'main', mode: split || 'split-left', ref: current } : this.widgetOptions(split);
+        await this.openTerminal(terminal, { widgetOptions, mode: 'activate' });
         await this.refresh();
     }
 
@@ -1215,32 +1486,11 @@ class PaddockWorkspace {
         this.plugins.willStart.then(() => this.commands.executeCommand('git.openRepository', path)).catch(() => undefined);
     }
 
-    async confirmClose(
-        terminals,
-    ) {
-        let close = true;
-        if (terminals.length) {
-            const dialog = new ConfirmDialog({
-                title: terminals.length > 1 ? `Close ${terminals.length} terminals` : 'Close terminal',
-                msg: 'Running shells and commands in these terminals will stop.',
-                ok: 'Close',
-                cancel: 'Cancel',
-            });
-            // 실행 중인 명령을 멈추는 확인이라 폴더 메뉴의 "Remove from list"와 같은 빨간 색 언어를 쓴다.
-            dialog.node.classList.add('is-destructive');
-            close = await dialog.open();
-        }
-        return Boolean(close);
-    }
-
     async closeWidget(
         widget,
     ) {
-        const close = this.isTerminal(widget) ? await this.confirmClose([widget]) : true;
-        if (close) {
-            // 문서의 변경 여부와 저장 확인은 편집기의 저장 계약을 따른다.
-            await this.shell.closeWidget(widget.id);
-        }
+        // 문서의 변경 여부와 저장 확인, 터미널의 종료 확인은 각 위젯의 닫기 계약을 따른다.
+        await this.shell.closeWidget(widget.id);
         await this.refresh();
     }
 
@@ -1250,11 +1500,11 @@ class PaddockWorkspace {
         const current = this.currentWidget();
         const result = model.removeFolder(this.state, key, current?.id);
         const terminals = result.closed.map(id => this.shell.getWidgetById(id)).filter(Boolean);
-        if (await this.confirmClose(terminals)) {
+        if (await this.shell.confirmCloseTerminals(terminals)) {
             this.state = result.state;
             await this.save();
             for (const terminal of terminals) {
-                await this.shell.closeWidget(terminal.id);
+                await terminal.closeWithoutSaving();
             }
             if (result.next && result.next !== current?.id) {
                 await this.activate(result.next);
@@ -1356,17 +1606,33 @@ class PaddockWorkspace {
      *
      * Git 보기·변경 수 배지·브랜치 버튼이 모두 선택된 저장소를 따르므로, 작업 폴더를 바꾸면 여기서 선택을 옮긴다.
      * 작업 폴더가 그대로면 다시 옮기지 않는다 — 사용자가 Git 보기에서 다른 저장소를 직접 고른 것을 되돌리지 않기 위해서다.
-     * 폴더가 저장소 밖이면 선택을 그대로 둔다(다른 폴더의 저장소를 비우지 않는다).
+     * 폴더가 저장소 밖이면 선택을 비우고 안내를 보인다. 이전 폴더의 변경을 현재 폴더의 변경으로 오인하지 않게 한다.
      */
     selectRepositoryOf(
         key,
     ) {
         const repository = this.repositoryOf(key);
         const changed = repository !== this.syncedRepository;
-        if (repository && changed) {
+        if (changed || (key && !repository && this.scm.selectedRepository)) {
             this.scm.selectedRepository = repository;
         }
         this.syncedRepository = repository;
+        const host = this.shell.sidebar.node.querySelector('[data-host="scm"]');
+        const hasNoRepository = Boolean(key && !repository);
+        host.classList.toggle('has-no-repository', hasNoRepository);
+        let notice = host.querySelector('.scm-empty');
+        if (hasNoRepository) {
+            if (!notice) {
+                notice = element('div', 'scm-empty');
+                notice.append(element('p', 'work-empty-title', 'No Git repository'));
+                notice.append(element('p', 'work-empty work-empty-note'));
+                notice.append(element('p', 'work-empty work-empty-note', 'Select a work folder that contains a Git repository.'));
+                host.append(notice);
+            }
+            notice.children[1].textContent = this.displayPath(key);
+        } else {
+            notice?.remove();
+        }
     }
 
     branchOf(
@@ -1451,7 +1717,8 @@ class PaddockWorkspace {
             current?.getResourceUri?.()?.toString(), this.sidebarIndent(),
             rows.map(row => {
                 const terminal = this.shell.getWidgetById(row.id);
-                return [this.remoteWorkRows.get(row.id), terminal ? this.programOf(terminal) : '', this.doneIds.has(row.id)];
+                return [this.remoteWorkRows.get(row.id), terminal ? this.programOf(terminal) : '', this.doneIds.has(row.id),
+                    agent.activityState(this.activity.get(row.id) ?? agent.idle(), Date.now(), agent.isAgent(this.programs.get(row.id)))];
             }),
         ]);
         if (n_revision === this.n_sidebarRevision && this.view === 'work' && key !== this.workRenderKey) {
@@ -1464,11 +1731,15 @@ class PaddockWorkspace {
                 const list = element('div', 'work-list');
                 if (!merged.state.folders.length) {
                     // 작업 폴더는 에이전트를 실행하면 생긴다. 등록 버튼 대신 그 다음 행동을 알려 준다.
+                    list.append(element('p', 'work-empty-title', 'Start a work session'));
                     list.append(element('p', 'work-empty', 'No work folders yet.'));
                     const steps = element('ol', 'work-steps');
-                    steps.append(element('li', '', 'In a terminal, cd into a project folder.'));
-                    steps.append(element('li', '', 'Run claude or codex. The folder appears here with that terminal.'));
+                    const directoryStep = element('li', '', 'Go to your project in the terminal.');
+                    directoryStep.append(element('code', 'work-command', 'cd /path/to/project'));
+                    const agentStep = element('li', '', 'Run claude or codex.');
+                    steps.append(directoryStep, agentStep);
                     list.append(steps);
+                    list.append(element('p', 'work-empty work-empty-note', 'Its terminals and files will appear here together.'));
                 }
                 for (const row of rows) {
                     list.append(this.renderRow(row, currentId));
@@ -1503,7 +1774,7 @@ class PaddockWorkspace {
     filesFolder() {
         const current = this.currentWidget();
         const root = this.shownTopTerminal();
-        const key = this.shownFolder() || (this.isTerminal(current) ? this.cwdCache.get(current.id) : root ? this.cwdCache.get(root) : null) || null;
+        const key = this.shownFolder() || (this.isTerminal(current) ? this.cwdCache.get(current.id) : root ? this.cwdCache.get(root) : this.isFileOnlyGroup(current) ? current.getResourceUri?.()?.parent?.toString() : null) || null;
         const isHome = key && new URI(key).path.toString() === this.homePathOf(key);
         return key && !isHome ? key : null;
     }
@@ -1553,8 +1824,22 @@ class PaddockWorkspace {
             node = element('div', `work-row terminal-row${row.id === currentId ? ' is-current' : ''}${this.doneIds.has(row.id) ? ' is-done' : ''}`);
             const select = button([element('span', 'prompt-mark', '›_'), element('span', 'row-name', row.name), element('span', 'row-suffix', row.suffix)], 'row-main', () => this.run(() => this.activate(row.id)));
             select.addEventListener('dblclick', () => this.run(() => this.renameTerminal(row.id)));
-            select.title = this.doneIds.has(row.id) ? `${row.name} — agent finished` : `${row.name} — double-click to rename`;
+            select.title = this.doneIds.has(row.id) ? `${row.name} — agent output paused; double-click to rename` : `${row.name} — double-click to rename`;
             const program = element('span', 'row-meta', terminal ? this.programOf(terminal) : '');
+            const state = agent.activityState(this.activity.get(row.id) ?? agent.idle(), Date.now(), agent.isAgent(this.programs.get(row.id)));
+            if (terminal && state) {
+                const labels = {
+                    working: ['Working', 'Response output is active after Enter.'],
+                    waiting: ['Waiting', 'Enter was sent; no response output has been detected yet.'],
+                    idle: ['Idle', 'No recent response output. The agent may be waiting for input or still thinking.'],
+                };
+                const [label, detail] = labels[state];
+                program.textContent = label;
+                program.classList.add('agent-status', `is-${state}`);
+                program.title = `${this.programOf(terminal)} — ${detail} Estimated from terminal input and output.`;
+                program.setAttribute('aria-label', `${this.programOf(terminal)}: ${label}`);
+                node.dataset.agentState = state;
+            }
             node.append(select, program);
             this.attachTerminalMenu(node, row.id);
             node.dataset.widgetId = row.id;
@@ -1783,7 +2068,7 @@ class PaddockWorkspace {
         uri,
     ) {
         await this.plugins.willStart;
-        const fileRoot = this.shownTopTerminal();
+        const fileRoot = this.fileRoots.get(this.currentWidget()?.id) || this.shownTopTerminal();
         const widget = await this.openWith.openWith(uri);
         if (widget) {
             const bar = this.shell.getTabBarFor(widget);
@@ -1865,14 +2150,18 @@ class PaddockWorkspace {
         if (source && ['file', 'preview', 'both'].includes(mode)) {
             const uri = source.getResourceUri();
             let preview = this.markdownPreviewWidget(uri);
+            const wasSplit = Boolean(preview && this.shell.getTabBarFor(source) !== this.shell.getTabBarFor(preview));
             if (mode === 'file') {
                 if (preview) await this.shell.closeWidget(preview.id);
+                await this.activate(source.id);
+            } else if (mode === 'both' && wasSplit) {
+                // 기존 칸을 다시 추가하면 원문 칸을 반으로 나눈다. 이미 나란히 열려 있으면 선택만 바꿔 사용자가 끈 너비를 유지한다.
                 await this.activate(source.id);
             } else {
                 await this.plugins.willStart;
                 const command = MARKDOWN_PREVIEW.COMMANDS[mode];
                 if (!this.commands.getCommand(command)) {
-                    this.messages.warn('Install Markdown Preview Enhanced to preview this file.');
+                    await this.offerExtensionSearch('Install Markdown Preview Enhanced to preview this file.', 'Markdown Preview Enhanced');
                 } else {
                     this.pendingMarkdownSource = uri.toString();
                     try {
@@ -1892,11 +2181,25 @@ class PaddockWorkspace {
                         } finally {
                             this.pendingMarkdownSource = null;
                         }
+                        // 처음 나란히 볼 때만 공간을 배분한다.
+                        if (mode === 'both') await this.balanceSplit(preview, 'split-right');
                         await this.activate(mode === 'both' ? source.id : preview.id);
                     }
                 }
             }
             this.refreshSoon();
+        }
+    }
+
+    /** 전용 편집 기능이 없으면 이유를 알리고 필요한 확장의 검색 결과로 연결한다. */
+    async offerExtensionSearch(
+        message,
+        query,
+    ) {
+        const action = await this.messages.warn(message, 'Find extension');
+        if (action === 'Find extension') {
+            await this.showView('extensions');
+            this.container.get(VSXExtensionsSearchModel).query = query;
         }
     }
 
@@ -1918,7 +2221,7 @@ class PaddockWorkspace {
         uri,
     ) {
         await this.plugins.willStart;
-        const fileRoot = this.shownTopTerminal();
+        const fileRoot = this.fileRoots.get(this.currentWidget()?.id) || this.shownTopTerminal();
         const bars = [...this.shell.mainPanel.tabBars()];
         const fileBar = bars.find(bar => bar.titles.length && bar.titles.every(title => !this.isTerminal(title.owner)) && bar.currentTitle?.owner?.getResourceUri?.());
         const current = this.currentWidget();
@@ -1929,6 +2232,10 @@ class PaddockWorkspace {
             : terminal ? { area: 'main', mode: 'split-right', ref: terminal } : { area: 'main' };
         const options = { mode: 'activate', widgetOptions, preview: false };
         const opener = await this.opener.getOpener(uri, options);
+        if (uri.path.ext.toLowerCase() === '.pen' && !opener.id.startsWith('custom-editor-')) {
+            // 원문 열기는 유지하되 디자인 화면으로 열린 것으로 오해하지 않게 전용 편집기의 설치 경로를 알린다.
+            void this.run(() => this.offerExtensionSearch('Showing source text. Install Pencil to edit this design.', 'Pencil'));
+        }
         let canOpen = true;
         if (opener.id.startsWith('custom-editor-')) {
             // 같은 파일의 일반 편집기가 열려 있으면 저장 여부를 먼저 결정한다.
@@ -1961,66 +2268,33 @@ class PaddockWorkspace {
     keepActiveTabVisible(
         strip,
     ) {
-        strip.querySelector('.tab.is-active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        strip.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
         this.alignTabsToEdge(strip);
         this.updateTabOverflow(strip);
     }
 
-    /**
-     * 스크롤이 탭 중간에서 멈춰 맨 왼쪽 탭이 반쯤 잘리면(닫기 ×만 보이면) 탭 경계로 옮긴다.
-     * 잘린 탭을 온전히 보여도 활성 탭이 보이면 그 탭 시작으로, 아니면 다음 탭 시작으로 간다.
-     * CSS 스크롤 맞춤(scroll-snap)은 활성 탭 따라가기와 충돌해 활성 탭을 밖으로 밀어내서 쓰지 않는다.
-     */
+    /** 잘린 탭을 경계로 맞추되 활성 탭을 보이는 범위에 유지한다. */
     alignTabsToEdge(
         strip,
     ) {
-        const tabs = [...strip.querySelectorAll('.tab')];
-        const cut = tabs.find(tab => tab.offsetLeft < strip.scrollLeft && tab.offsetLeft + tab.offsetWidth > strip.scrollLeft);
-        if (cut) {
-            const active = strip.querySelector('.tab.is-active');
-            const activeRight = active ? active.offsetLeft + active.offsetWidth : 0;
-            const keepsActive = !active || activeRight <= cut.offsetLeft + strip.clientWidth;
-            strip.scrollLeft = keepsActive ? cut.offsetLeft : cut.offsetLeft + cut.offsetWidth;
-        }
+        tabOverflow.alignTabsToEdge(strip);
     }
 
-    /**
-     * 넘침 표시를 현재 스크롤 위치에 맞춘다: 가장자리 흐림, 넘친 쪽 넘김 버튼(‹ ›)과 그 버튼의 점, 왼쪽에서 잘린 탭 숨김.
-     * 사용자가 직접 스크롤할 때도 부른다(이때는 경계로 옮기지 않는다 — 스크롤 중에 위치를 바꾸면 튄다).
-     */
+    /** 스크롤 위치를 바꾸지 않고 잘림·넘김 버튼·숨은 탭의 점을 갱신한다. */
     updateTabOverflow(
         strip,
     ) {
-        const isOverflowing = strip.scrollWidth > strip.clientWidth + 1;
-        const hasLater = isOverflowing && strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 1;
-        const hasEarlier = isOverflowing && strip.scrollLeft > 0;
-        strip.classList.toggle('is-overflowing', hasLater);
-        strip.classList.toggle('is-scrolled', hasEarlier);
-        // 목록 끝이라 더 스크롤할 수 없으면 왼쪽에 잘린 탭이 남는다. 이름 없이 닫기 ×만 보이면 잘못 눌러 터미널을 닫을 수 있어 숨긴다.
-        for (const tab of strip.querySelectorAll('.tab')) {
-            tab.classList.toggle('is-clipped', tab.offsetLeft < strip.scrollLeft - 1 && tab.offsetLeft + tab.offsetWidth > strip.scrollLeft);
-        }
-        // 작업 폴더 탭 줄은 넘친 쪽에 넘김 버튼(‹ ›)을 보인다. 가장자리 흐림만으로는 잘린 탭이 렌더링 오류처럼 보인다.
-        // 가려진 쪽에 다른 칸에 떠 있거나 에이전트가 끝난 탭이 있으면 그쪽 넘김 버튼에 점을 찍는다.
-        const hiddenMarks = { '-1': false, '1': false };
-        for (const tab of strip.querySelectorAll('.tab.is-shown, .tab.is-done')) {
-            if (tab.offsetLeft + tab.offsetWidth <= strip.scrollLeft) hiddenMarks['-1'] = true;
-            if (tab.offsetLeft >= strip.scrollLeft + strip.clientWidth) hiddenMarks['1'] = true;
-        }
-        for (const scroller of strip.parentElement.querySelectorAll(':scope > .tabs-scroll')) {
-            scroller.hidden = scroller.dataset.direction === '1' ? !hasLater : !hasEarlier;
-            scroller.classList.toggle('has-mark', hiddenMarks[scroller.dataset.direction]);
-        }
+        tabOverflow.updateTabOverflow(strip);
     }
 
     renderTabs() {
         const strip = this.shell.tabs.node;
         const current = this.currentWidget();
         const extras = this.topTerminals();
-        strip.replaceChildren();
+        const contents = document.createDocumentFragment();
         for (const terminal of extras) {
             const isGroupShown = this.topTerminalOf(current) === terminal.id && !this.shownFolder();
-            // 이 묶음의 내부 터미널·파일을 보는 중이면 활성 밑줄은 아래 줄에만 둔다. 위 탭은 묶음이 열려 있다는 배경만 남긴다.
+            // 이 묶음의 내부 터미널·파일을 보는 중이면 아래 줄에서 선택을 표시하고, 위 탭은 묶음이 열려 있다는 배경을 유지한다.
             const isActive = isGroupShown && current === terminal;
             const tab = element('div', `tab${isActive ? ' is-active' : ''}${isGroupShown && !isActive ? ' is-group' : ''}${this.doneIds.has(terminal.id) ? ' is-done' : ''}`);
             const cwd = this.cwdCache.get(terminal.id);
@@ -2033,27 +2307,30 @@ class PaddockWorkspace {
             const close = button([codicon('close')], 'tab-close', () => this.run(() => this.closeWidget(terminal)));
             close.setAttribute('aria-label', `Close ${label}`);
             tab.append(select, close);
-            strip.append(tab);
+            contents.append(tab);
         }
-        this.keepActiveTabVisible(strip);
+        if (tabOverflow.replaceTabs(strip, contents)) this.keepActiveTabVisible(strip);
+        else this.updateTabOverflow(strip);
     }
 
     // -- 본문 위 내부 터미널·파일 탭 줄 --
 
     /**
-     * 아래 줄에 현재 묶음의 내부 터미널과 파일을 그린다. 작업 터미널 이름은 사이드바와 같은 행(`terminalRows`)을 쓴다.
+     * 아래 줄에 현재 묶음의 내부 터미널과 파일을 그린다. 내부 터미널을 추가하면 처음 연 터미널도 함께 보여 준다.
+     * 작업 터미널 이름은 사이드바와 같은 행(`terminalRows`)을 쓴다.
      * 새 위쪽 터미널은 내부 탭이 없으므로 아래 줄에 ＋만 보인다.
      */
     renderFolderTabs() {
         const bar = this.shell.folderBar;
         const key = this.shownFolder();
+        this.selectRepositoryOf(key);
         const root = key ? null : this.shownTopTerminal();
         const strip = bar.node.querySelector('.folder-tabs');
-        strip.replaceChildren();
+        const contents = document.createDocumentFragment();
         bar.node.querySelector('.folder-bar-actions').hidden = !key;
         const add = bar.node.querySelector('.folder-tab-add');
         // 어느 폴더에서 열리는지를 이름에 쓴다. 위쪽 묶음에서는 지금 보는 터미널의 폴더에서 열린다.
-        const innerCwd = root ? this.cwdCache.get(this.currentWidget()?.id) : null;
+        const innerCwd = root ? this.cwdCache.get(this.currentWidget()?.id) : this.isFileOnlyGroup(this.currentWidget()) ? this.currentWidget().getResourceUri?.()?.parent?.toString() : null;
         add.title = key ? `New terminal in ${this.displayPath(key)}` : `New terminal in ${innerCwd ? this.displayPath(innerCwd) : 'this terminal\'s folder'}`;
         add.setAttribute('aria-label', add.title);
         if (key) {
@@ -2062,21 +2339,22 @@ class PaddockWorkspace {
             for (const row of model.terminalRows(this.state, key)) {
                 const terminal = this.shell.getWidgetById(row.id);
                 const isActive = terminal === current;
-                // 다른 칸에 떠 있는 탭(나눈 칸)은 옅은 밑줄로 표시한다. 탭 줄이 칸과 따로 있어 어느 터미널이 화면에 있는지 알리기 위해서다.
+                // 탭 줄과 본문 칸의 위치는 일치하지 않는다. 다른 칸에 보이는 터미널은 도움말로 알리고 선택 표시는 현재 탭에만 둔다.
                 const isShown = !isActive && Boolean(terminal?.isVisible);
-                const tab = element('div', `tab${isActive ? ' is-active' : ''}${isShown ? ' is-shown' : ''}${this.doneIds.has(row.id) ? ' is-done' : ''}`);
+                const tab = element('div', `tab${isActive ? ' is-active' : ''}${this.doneIds.has(row.id) ? ' is-done' : ''}`);
                 const label = `${row.name}${row.suffix}`;
                 const select = button(label, 'tab-select', () => this.run(() => this.activate(row.id)));
                 select.setAttribute('role', 'tab');
                 select.setAttribute('aria-selected', String(isActive));
                 select.dataset.widgetId = row.id;
-                select.title = terminal ? `${label} · ${this.programOf(terminal)}` : label;
+                select.title = terminal ? `${label} · ${this.programOf(terminal)}${isShown ? ' · Visible in another pane' : ''}` : label;
                 select.addEventListener('dblclick', () => this.run(() => this.renameTerminal(row.id)));
-                tab.append(select);
+                const close = button([codicon('close')], 'tab-close', () => this.run(() => this.closeWidget(terminal)));
+                close.setAttribute('aria-label', `Close ${label}`);
+                tab.append(select, close);
                 this.attachTerminalMenu(tab, row.id);
-                strip.append(tab);
+                contents.append(tab);
             }
-            this.selectRepositoryOf(key);
             const branch = this.branchOf(key);
             bar.node.querySelector('.folder-bar-branch').hidden = !branch;
             bar.node.querySelector('.folder-bar-branch-name').textContent = branch;
@@ -2086,8 +2364,8 @@ class PaddockWorkspace {
             bar.node.querySelector('.folder-bar-branch-name').textContent = '';
             if (root) {
                 let n_inner = 0;
-                for (const [id, owner] of this.innerTerminalRoots) {
-                    const terminal = owner === root ? this.shell.getWidgetById(id) : null;
+                for (const id of this.innerTabIds(root)) {
+                    const terminal = this.shell.getWidgetById(id);
                     if (terminal) {
                         n_inner += 1;
                         const tab = element('div', `tab${terminal === this.currentWidget() ? ' is-active' : ''}`);
@@ -2099,29 +2377,37 @@ class PaddockWorkspace {
                         const close = button([codicon('close')], 'tab-close', () => this.run(() => this.closeWidget(terminal)));
                         close.setAttribute('aria-label', `Close ${label}`);
                         tab.append(select, close);
-                        strip.append(tab);
+                        contents.append(tab);
                     }
                 }
             }
         }
-        for (const widget of this.shell.mainPanel.widgets()) {
+        for (const widget of this.shell.widgets) {
             const uri = widget.getResourceUri?.();
-            const belongs = !this.isTerminal(widget) && (uri
+            const belongs = !this.isTerminal(widget) && (this.isFileOnlyGroup(widget) || (uri
                 ? (key ? model.folderContaining(this.state, uri.toString()) === key : root && this.fileRoots.get(widget.id) === root)
-                : widget instanceof WebviewWidget && (key ? this.webviewFolders.get(widget.id) === key : root && this.fileRoots.get(widget.id) === root));
+                : widget instanceof WebviewWidget && (key ? this.webviewFolders.get(widget.id) === key : root && this.fileRoots.get(widget.id) === root)));
             if (belongs) {
                 const tab = element('div', `tab${widget === this.currentWidget() ? ' is-active' : ''}`);
                 const label = uri?.path.base || widget.title.label;
+                const isDirty = Saveable.isDirty(widget);
                 const select = button(label, 'tab-select', () => this.run(() => this.activate(widget.id)));
                 select.setAttribute('role', 'tab');
                 select.setAttribute('aria-selected', String(widget === this.currentWidget()));
+                select.setAttribute('aria-label', `${label}${isDirty ? ' — unsaved changes' : ''}`);
                 select.dataset.widgetId = widget.id;
-                select.title = uri?.path.toString() || widget.title.label;
+                select.title = `${uri?.path.toString() || widget.title.label}${isDirty ? ' — unsaved changes' : ''}`;
                 tab.append(select);
+                if (isDirty) {
+                    const mark = element('span', 'tab-unsaved');
+                    mark.setAttribute('aria-hidden', 'true');
+                    mark.title = 'Unsaved changes';
+                    tab.append(mark);
+                }
                 const close = button([codicon('close')], 'tab-close', () => this.run(() => this.closeWidget(widget)));
                 close.setAttribute('aria-label', `Close ${label}`);
                 tab.append(close);
-                strip.append(tab);
+                contents.append(tab);
             }
         }
         const source = this.markdownSourceWidget();
@@ -2134,10 +2420,8 @@ class PaddockWorkspace {
                 action.setAttribute('aria-pressed', String(action.dataset.markdownView === mode));
             }
         }
-        if (key || root) this.keepActiveTabVisible(strip);
-        else {
-            for (const scroll of bar.node.querySelectorAll('.tabs-scroll')) scroll.hidden = true;
-        }
+        if (tabOverflow.replaceTabs(strip, contents)) this.keepActiveTabVisible(strip);
+        else this.updateTabOverflow(strip);
     }
 
     /**
@@ -2232,27 +2516,27 @@ class PaddockWorkspace {
      */
     renderQuickSettings() {
         const panel = this.shell.sidebar.node.querySelector('#quick-settings');
+        const focusedSetting = panel.contains(document.activeElement) ? document.activeElement.dataset.setting : null;
+        const scrollTop = panel.scrollTop;
         const themes = this.container.get(ThemeService);
         const current = themes.getCurrentTheme().id;
-        panel.replaceChildren(element('p', 'quick-title', 'Appearance'));
+        panel.replaceChildren(element('p', 'quick-title', 'Quick settings'));
 
-        panel.append(element('p', 'quick-label', 'Color theme'));
-        const list = element('div', 'quick-themes');
-        list.setAttribute('role', 'radiogroup');
-        const typeName = { light: 'light', dark: 'dark' };
+        const themeRow = element('label', 'quick-row');
+        const themeSelect = element('select', 'quick-select');
+        themeSelect.dataset.setting = 'theme';
         const sorted = [...themes.getThemes()].sort((left, right) => left.type.localeCompare(right.type) || left.label.localeCompare(right.label));
         for (const theme of sorted) {
-            const isCurrent = theme.id === current;
-            const option = button([codicon(isCurrent ? 'check' : 'blank'), element('span', 'quick-theme-name', theme.label), element('span', 'quick-theme-type', typeName[theme.type] ?? 'contrast')], `quick-theme${isCurrent ? ' is-current' : ''}`, () => this.run(async () => {
-                themes.setCurrentTheme(theme.id);
-                this.renderQuickSettings();
-            }));
-            option.setAttribute('role', 'radio');
-            option.setAttribute('aria-checked', String(isCurrent));
-            list.append(option);
+            const option = element('option', '', theme.label);
+            option.value = theme.id;
+            option.selected = theme.id === current;
+            themeSelect.append(option);
         }
+        themeSelect.title = themes.getCurrentTheme().label;
+        themeSelect.addEventListener('change', () => themes.setCurrentTheme(themeSelect.value));
         // 색 테마는 창 틀·터미널·파일 화면 전체에 한 번에 적용된다 — 고르는 즉시 보이므로 설명 문구를 두지 않는다.
-        panel.append(list);
+        themeRow.append(element('span', 'quick-label', 'Color theme'), element('span', 'quick-space'), themeSelect);
+        panel.append(themeRow);
 
         const size = this.preferences.get('terminal.integrated.fontSize', 14);
         const sizeRow = element('div', 'quick-row');
@@ -2263,17 +2547,21 @@ class PaddockWorkspace {
             this.renderQuickSettings();
         });
         const smaller = button([codicon('remove')], 'quick-step', () => setSize(size - 1));
+        smaller.dataset.setting = 'smaller-text';
         smaller.setAttribute('aria-label', 'Smaller text');
         smaller.disabled = size <= APPEARANCE.FONT_SIZE_MIN;
         const larger = button([codicon('add')], 'quick-step', () => setSize(size + 1));
+        larger.dataset.setting = 'larger-text';
         larger.setAttribute('aria-label', 'Larger text');
         larger.disabled = size >= APPEARANCE.FONT_SIZE_MAX;
-        sizeRow.append(element('span', 'quick-label', 'Text size'), element('span', 'quick-space'), smaller, element('span', 'quick-value', `${size}px`), larger);
+        sizeRow.append(element('span', 'quick-label', 'Terminal & editor size'), element('span', 'quick-space'), smaller, element('span', 'quick-value', `${size}px`), larger);
         panel.append(sizeRow);
 
         const family = this.preferences.get('terminal.integrated.fontFamily', '');
         const fontRow = element('label', 'quick-row');
         const select = element('select', 'quick-select');
+        select.dataset.setting = 'code-font';
+        select.title = 'Font for terminals and code editors';
         const installed = APPEARANCE.TERMINAL_FONTS.filter(name => this.isFontInstalled(name));
         const chosen = installed.find(name => family.trim().replace(/^['"]/, '').startsWith(name)) || '';
         for (const name of installed) {
@@ -2287,12 +2575,14 @@ class PaddockWorkspace {
             await this.setPreference('terminal.integrated.fontFamily', value);
             await this.setPreference('editor.fontFamily', value);
         }));
-        fontRow.append(element('span', 'quick-label', 'Terminal font'), element('span', 'quick-space'), select);
+        fontRow.append(element('span', 'quick-label', 'Code font'), element('span', 'quick-space'), select);
         panel.append(fontRow);
 
         // 새 터미널(＋)이 여는 셸. 고른 값은 이 운영체제의 기본 셸 설정에 저장되고, 이미 열린 터미널은 그대로다.
         const shellRow = element('label', 'quick-row');
         const shellSelect = element('select', 'quick-select');
+        shellSelect.dataset.setting = 'default-shell';
+        shellSelect.title = 'Shell for new terminals';
         shellRow.append(element('span', 'quick-label', 'Default shell'), element('span', 'quick-space'), shellSelect);
         panel.append(shellRow);
         void this.shellEntries().then((entries) => {
@@ -2308,6 +2598,7 @@ class PaddockWorkspace {
         const interfaceFont = this.preferences.get('paddock.interfaceFontFamily', '');
         const interfaceRow = element('label', 'quick-row');
         const interfaceSelect = element('select', 'quick-select');
+        interfaceSelect.dataset.setting = 'interface-font';
         const systemFont = element('option', '', 'System default');
         systemFont.value = '';
         interfaceSelect.append(systemFont);
@@ -2329,9 +2620,11 @@ class PaddockWorkspace {
         const indentRow = element('div', 'quick-row');
         const setIndent = (next) => this.run(() => this.setPreference('paddock.sidebarIndent', next));
         const decreaseIndent = button([codicon('remove')], 'quick-step', () => setIndent(indent - 1));
+        decreaseIndent.dataset.setting = 'decrease-indent';
         decreaseIndent.setAttribute('aria-label', 'Decrease sidebar indent');
         decreaseIndent.disabled = indent <= APPEARANCE.SIDEBAR_INDENT_MIN;
         const increaseIndent = button([codicon('add')], 'quick-step', () => setIndent(indent + 1));
+        increaseIndent.dataset.setting = 'increase-indent';
         increaseIndent.setAttribute('aria-label', 'Increase sidebar indent');
         increaseIndent.disabled = indent >= APPEARANCE.SIDEBAR_INDENT_MAX;
         indentRow.append(element('span', 'quick-label', 'Sidebar indent'), element('span', 'quick-space'), decreaseIndent, element('span', 'quick-value', `${indent}px`), increaseIndent);
@@ -2342,6 +2635,7 @@ class PaddockWorkspace {
         for (const [preferenceName, label] of [[STATUS_ITEMS.CLAUDE, 'Claude usage'], [STATUS_ITEMS.CODEX, 'Codex usage'], [STATUS_ITEMS.MEMORY, 'Memory']]) {
             const row = element('label', 'quick-row');
             const checkbox = element('input', 'quick-check');
+            checkbox.dataset.setting = preferenceName;
             checkbox.type = 'checkbox';
             checkbox.checked = this.isStatusItemOn(preferenceName);
             checkbox.addEventListener('change', () => this.run(() => this.setPreference(preferenceName, checkbox.checked)));
@@ -2354,6 +2648,9 @@ class PaddockWorkspace {
             this.run(() => this.commands.executeCommand('preferences:open'));
         });
         panel.append(all);
+        // 값을 바꿔 요소를 다시 만들어도 조작 중인 입력의 초점과 스크롤 위치는 유지한다.
+        if (focusedSetting) panel.querySelector(`[data-setting="${CSS.escape(focusedSetting)}"]`)?.focus({ preventScroll: true });
+        panel.scrollTop = scrollTop;
     }
 
     // -- 본문 경로 줄 --
@@ -2361,7 +2658,7 @@ class PaddockWorkspace {
     /**
      * 본문 칸마다 생기는 탭 줄을 꾸민다.
      *
-     * 터미널·파일 칸은 활성 칸을 가리키는 얇은 선만 남긴다. 파일 이름과 닫기는 본문 위 탭 줄에 있다.
+     * 터미널·파일 칸은 둘 이상일 때 입력받는 칸에만 얇은 선을 남긴다. 파일 이름과 닫기는 본문 위 탭 줄에 있다.
      * 설정처럼 파일 탭이 없는 화면은 이 줄에 화면 이름과 닫기 버튼을 둔다.
      */
     renderPathBars() {
@@ -2381,7 +2678,7 @@ class PaddockWorkspace {
             isResized = isResized || tabBar.node.classList.contains('is-compact-pane') !== isCompactPane;
             tabBar.node.classList.toggle('is-compact-pane', isCompactPane);
             if (widget) {
-                bar.classList.toggle('is-active', widget === this.currentWidget());
+                bar.classList.toggle('is-active', widget === this.currentWidget() && (!isCompactPane || isSplit));
                 bar.onclick = () => this.run(() => this.activate(widget.id));
             }
             if (widget && !isCompactPane) {
@@ -2398,7 +2695,7 @@ class PaddockWorkspace {
                 bar.append(actions);
             }
         }
-        // 화면 이름 줄(30px)과 얇은 구분선(3px)이 바뀌면 본문 칸 배치를 다시 잰다.
+        // 화면 이름 줄(30px)과 얇은 구분선(1px)이 바뀌면 본문 칸 배치를 다시 잰다.
         if (isResized) this.shell.mainPanel.fit();
     }
 

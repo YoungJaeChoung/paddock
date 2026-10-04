@@ -10,7 +10,10 @@ module.exports = {
     // 위쪽 줄은 작업 폴더에 속하지 않는 추가 터미널만 보여 준다. 작업 터미널은 사이드바 Work 보기에 있다.
     header: () => element(`<header class="paddock-tabbar" aria-label="Terminals outside work folders">
         <div class="window-controls-space" aria-hidden="true"></div>
+        <button type="button" class="sidebar-toggle" aria-label="Hide sidebar" aria-controls="paddock-sidebar" aria-expanded="true" title="Hide sidebar"><span class="codicon codicon-layout-sidebar-left" aria-hidden="true"></span></button>
+        <button type="button" class="tabs-scroll" data-direction="-1" aria-label="Show earlier terminal groups" title="Show earlier terminal groups" hidden><span class="codicon codicon-chevron-left"></span></button>
         <div class="tab-strip" id="tab-strip" role="tablist" aria-label="Terminals outside work folders"></div>
+        <button type="button" class="tabs-scroll" data-direction="1" aria-label="Show later terminal groups" title="Show later terminal groups" hidden><span class="codicon codicon-chevron-right"></span></button>
         <div class="tab-actions">
             <button type="button" class="tab-add" aria-label="New terminal at ~ (not in a work folder)" title="New terminal at ~ (not in a work folder)"><span class="codicon codicon-add"></span></button>
             <button type="button" class="shell-picker" aria-label="Choose shell" title="Choose shell" popovertarget="shell-menu" aria-haspopup="menu"><span class="codicon codicon-chevron-down"></span></button>
@@ -44,15 +47,15 @@ module.exports = {
             <button type="button" class="folder-split-right" aria-label="New terminal to the side" title="New terminal to the side (Ctrl+Shift+C)"><span class="codicon codicon-split-horizontal"></span></button>
         </div>
     </div>`),
-    sidebar: () => element(`<aside class="sidebar" aria-label="Sidebar">
+    sidebar: () => element(`<aside class="sidebar" id="paddock-sidebar" aria-label="Sidebar">
         <nav class="view-bar" aria-label="Sidebar views">
             <button type="button" class="view-button is-active" data-view="work" aria-label="Work" title="Work"><span class="codicon codicon-list-tree"></span></button>
             <button type="button" class="view-button" data-view="scm" aria-label="Source control" title="Source control"><span class="codicon codicon-source-control"></span><span class="view-badge" hidden></span></button>
             <button type="button" class="view-button" data-view="extensions" aria-label="Extensions" title="Extensions"><span class="codicon codicon-extensions"></span></button>
             <span class="view-bar-space"></span>
-            <button type="button" class="view-button quick-settings-button" aria-label="Appearance" title="Appearance — color theme and font" popovertarget="quick-settings" aria-haspopup="dialog"><span class="codicon codicon-settings-gear"></span></button>
+            <button type="button" class="view-button quick-settings-button" aria-label="Quick settings" title="Quick settings — appearance, shell and status bar" popovertarget="quick-settings" aria-haspopup="dialog"><span class="codicon codicon-settings-gear"></span></button>
         </nav>
-        <div id="quick-settings" popover role="dialog" aria-label="Appearance"></div>
+        <div id="quick-settings" popover role="dialog" aria-label="Quick settings"></div>
         <div class="view-host" data-host="work" id="sidebar-content"></div>
         <div class="view-host" data-host="scm" hidden></div>
         <div class="view-host" data-host="extensions" hidden></div>

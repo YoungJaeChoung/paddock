@@ -79,6 +79,30 @@ function noteOutput(
 }
 
 /**
+ * 터미널 입력·출력으로 관찰한 에이전트 상태. 실행 중인 에이전트가 아니면 null이다.
+ *
+ * Enter 뒤 첫 출력을 기다리면 waiting, 최근 출력이 있으면 working, 그 밖에는 idle이다.
+ * 출력이 멎어도 내부 계산이나 사용자 답을 기다리는지는 알 수 없으므로 완료 여부는 확정하지 않는다.
+ * 완료 알림의 최소 작업 시간과 달리 짧은 응답도 같은 표시 규칙을 쓴다.
+ */
+function activityState(
+    activity,
+    now,
+    agentNow,
+) {
+    let state = null;
+    if (agentNow) {
+        state = 'idle';
+        if (activity.armedAt !== null && activity.busySince === null) {
+            state = 'waiting';
+        } else if (activity.lastOutput !== null && now - activity.lastOutput < ACTIVITY.QUIET_MS) {
+            state = 'working';
+        }
+    }
+    return state;
+}
+
+/**
  * 주기적으로 불러 끝났는지 본다. `agentNow`는 지금 이 터미널의 프로그램이 에이전트인지다.
  * 일하는 동안 한 번이라도 에이전트였으면 끝났을 때 알린다(`claude -p`처럼 끝나며 셸로 돌아가는 경우 포함).
  * 반환: `{ activity, finished }` — `finished`가 true면 알릴 때다.
@@ -105,5 +129,6 @@ module.exports = {
     idle,
     noteInput,
     noteOutput,
+    activityState,
     settle,
 };

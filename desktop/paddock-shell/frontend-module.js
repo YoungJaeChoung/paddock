@@ -1,11 +1,13 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const { ContainerModule } = require('@theia/core/shared/inversify');
 const { ApplicationShell } = require('@theia/core/lib/browser/shell/application-shell');
+const { AboutDialog } = require('@theia/core/lib/browser/about-dialog');
 const { FrontendApplicationContribution } = require('@theia/core/lib/browser/frontend-application-contribution');
 const { KeybindingContribution } = require('@theia/core/lib/browser/keybinding');
 const { CommandContribution } = require('@theia/core/lib/common/command');
 const { PreferenceContribution } = require('@theia/core/lib/common/preferences/preference-schema');
 const { PaddockShell } = require('./shell');
+const { PaddockAboutDialog } = require('./about-dialog');
 const { PaddockWorkspace } = require('./workspace');
 const { PaddockPdfOpener } = require('./pdf-viewer');
 const { PaddockBinaryNoticeOpener } = require('./binary-notice');
@@ -53,6 +55,7 @@ require('./style.css');
 
 exports.default = new ContainerModule((bind, unbind, isBound, rebind) => {
     rebind(ApplicationShell).to(PaddockShell).inSingletonScope();
+    rebind(AboutDialog).to(PaddockAboutDialog).inSingletonScope();
     bind(PaddockWorkspace).toDynamicValue(({ container }) => new PaddockWorkspace(container)).inSingletonScope();
     bind(FrontendApplicationContribution).toService(PaddockWorkspace);
     bind(CommandContribution).toService(PaddockWorkspace);

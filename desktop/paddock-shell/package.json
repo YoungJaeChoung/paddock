@@ -2,5 +2,9 @@
   "name": "@paddock/shell",
   "version": "0.1.0",
   "private": true,
-  "theiaExtensions": [{ "frontend": "./frontend-module.js", "electronMain": "./electron-main-module.js", "backend": "./backend-module.js" }]
+  "dependencies": { "@theia/core": "1.75.0" },
+  "theiaExtensions": [
+    { "frontend": "./frontend-module.js", "electronMain": "./electron-main-module.js", "backend": "./backend-module.js" },
+    { "frontendElectron": "./electron-frontend-module.js" }
+  ]
 }

@@ -139,6 +139,19 @@ function keepMaximizedContentFitted(
 
 /** Paddock 설정을 적용한 뒤 Theia 데스크톱 앱을 시작한다. */
 class PaddockMainApplication extends ElectronMainApplication {
+    getTitleBarStyle(
+        config,
+    ) {
+        // 이전 창의 기본 native 값이 저장돼 있어도 새 제목줄을 한 번 적용한다.
+        // 창 위치·크기는 보존하고, 이후 사용자가 바꾼 제목줄 설정은 그대로 따른다.
+        if (!isOSX && !this.electronStore.get('paddock.integratedTitlebar')) {
+            const windowState = this.electronStore.get('windowstate');
+            if (windowState) this.electronStore.set('windowstate', { ...windowState, frame: false });
+            this.electronStore.set('paddock.integratedTitlebar', true);
+        }
+        return super.getTitleBarStyle(config);
+    }
+
     async start(
         config,
     ) {

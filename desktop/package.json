@@ -28,7 +28,7 @@
             "**/__pycache__": true
           },
           "git.autofetch": true,
-          "window.titleBarStyle": "native",
+          "window.titleBarStyle": "custom",
           "window.title": "${appName}",
           "terminal.integrated.profiles.linux": {
             "bash": {

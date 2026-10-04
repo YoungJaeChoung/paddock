@@ -47,3 +47,22 @@ test('C-agent-A2.3: 일하는 동안 에이전트였으면 끝나며 셸로 돌�
     a = agent.settle(a, 8100, true).activity;
     assert.equal(agent.settle(a, 8000 + QUIET_MS, false).finished, true);
 });
+
+test('C-agent-A3.1: 입력 전·응답 전·출력 중을 구분하고 출력이 3초 멎으면 대기로 표시한다', () => {
+    const { QUIET_MS } = agent.ACTIVITY;
+    const initial = agent.idle();
+    assert.equal(agent.activityState(initial, 0, true), 'idle');
+    assert.equal(agent.activityState(agent.noteInput(initial, 'typing', 100), 100, true), 'idle');
+    const submitted = agent.noteInput(initial, 'run\r', 200);
+    assert.equal(agent.activityState(submitted, 300, true), 'waiting');
+    const output = agent.noteOutput(submitted, 400);
+    assert.equal(agent.activityState(output, 400 + QUIET_MS - 1, true), 'working');
+    assert.equal(agent.activityState(output, 400 + QUIET_MS, true), 'idle');
+    assert.equal(agent.activityState(agent.settle(output, 400 + QUIET_MS, true).activity, 400 + QUIET_MS, true), 'idle');
+});
+
+test('C-agent-A3.2: 에이전트가 종료돼 셸로 돌아오면 활동 기록이 남아도 상태를 표시하지 않는다', () => {
+    const output = agent.noteOutput(agent.noteInput(agent.idle(), '\r', 0), 100);
+    assert.equal(agent.activityState(output, 200, false), null);
+    assert.equal(agent.activityState(agent.idle(), 200, false), null);
+});
