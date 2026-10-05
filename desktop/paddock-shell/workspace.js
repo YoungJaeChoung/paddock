@@ -725,7 +725,7 @@ class PaddockWorkspace {
         this.homePath = new URI(await this.env.getHomeDirUri()).path.toString();
         // 셸 메뉴에 운영체제 기본 셸의 실제 이름을 보이려고 백엔드의 기본 셸 경로를 읽어 둔다(Windows는 COMSPEC).
         this.systemShellPath = (await this.env.getValue('SHELL'))?.value || (await this.env.getValue('COMSPEC'))?.value || '';
-        // WSL 터미널에 표지를 넘길 때 사용자가 이미 정해 둔 WSLENV를 지우지 않으려고 읽어 둔다.
+        // WSL 터미널에 표지·COLORTERM을 넘길 때 사용자가 이미 정해 둔 WSLENV를 지우지 않으려고 읽어 둔다.
         this.windowsWslEnv = (await this.env.getValue('WSLENV'))?.value || '';
         // 첫 터미널을 열기 전에 WSL 배포판이 있는지 확인한다. 없으면 기본 셸(WSL) 대신 대체 셸로 연다.
         if (OS.backend.type() === OS.Type.Windows) {
@@ -1386,7 +1386,7 @@ class PaddockWorkspace {
                 const isWindowsHome = new URI(cwd).path.toString() === this.homePath;
                 selected = selected.modify({
                     id,
-                    env: { ...selected.options.env, [wsl.MARKER]: id, WSLENV: [this.windowsWslEnv, wsl.MARKER].filter(Boolean).join(':') },
+                    env: { ...selected.options.env, [wsl.MARKER]: id, WSLENV: wsl.forwardedWslEnv(this.windowsWslEnv) },
                     shellArgs: isWindowsHome ? ['--cd', '~', ...(selected.options.shellArgs || [])] : selected.options.shellArgs,
                 });
             } else if (OS.backend.type() === OS.Type.Windows) {
@@ -1638,7 +1638,7 @@ class PaddockWorkspace {
         if (prepared.profile.runtime === 'wsl') {
             options.id = `terminal-${crypto.randomUUID()}`;
             options.env[wsl.MARKER] = options.id;
-            options.env.WSLENV = [this.windowsWslEnv, wsl.MARKER].filter(Boolean).join(':');
+            options.env.WSLENV = wsl.forwardedWslEnv(this.windowsWslEnv);
         }
         const terminal = await this.terminals.newTerminal(options);
         if (folderKey) {
@@ -1688,7 +1688,7 @@ class PaddockWorkspace {
             options.id = terminal.id;
             if (prepared.profile.runtime === 'wsl') {
                 options.env[wsl.MARKER] = terminal.id;
-                options.env.WSLENV = [this.windowsWslEnv, wsl.MARKER].filter(Boolean).join(':');
+                options.env.WSLENV = wsl.forwardedWslEnv(this.windowsWslEnv);
             }
             // Keep the verified source for retry even if the new shell fails after the old CLI exits.
             if (terminal.options.paddockAccount) {

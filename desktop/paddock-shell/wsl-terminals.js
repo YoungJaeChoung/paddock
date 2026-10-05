@@ -5,6 +5,33 @@
 /** WSL 안의 셸에 전달하는 터미널 표지. 값은 Paddock 터미널 id다. */
 const MARKER = 'PADDOCK_TERMINAL';
 
+/**
+ * WSL 터미널에 넘길 WSLENV 값. WSL은 Windows 환경 변수 중 WSLENV에 이름을 적은 것만 Linux 셸에 넘긴다.
+ *
+ * 사용자가 정해 둔 WSLENV 항목을 앞에 그대로 두고, 터미널 표지와 `COLORTERM`을 덧붙인다.
+ * `COLORTERM=truecolor`는 터미널이 1600만 색을 그린다는 표시다. 빠지면 WSL 안의 Claude Code·Codex 같은 프로그램이
+ * 색을 가까운 기본 16색으로 바꿔 그려, 은은한 짙은 회색 배경이 밝은 회색(#666666) 판으로 보인다.
+ * 이미 적힌 이름(`COLORTERM/u`처럼 변환 표시가 붙은 것 포함)은 다시 붙이지 않는다.
+ *
+ * Examples
+ * --------
+ * | windowsWslEnv   | 결과                                       |
+ * |-----------------|--------------------------------------------|
+ * | ''              | 'PADDOCK_TERMINAL:COLORTERM'               |
+ * | 'USERPROFILE/p' | 'USERPROFILE/p:PADDOCK_TERMINAL:COLORTERM' |
+ * | 'COLORTERM/u'   | 'COLORTERM/u:PADDOCK_TERMINAL'             |
+ */
+function forwardedWslEnv(
+    windowsWslEnv,
+) {
+    const entries = String(windowsWslEnv || '').split(':').filter(Boolean);
+    const names = new Set(entries.map(entry => entry.split('/')[0]));
+    for (const name of [MARKER, 'COLORTERM']) {
+        if (!names.has(name)) entries.push(name);
+    }
+    return entries.join(':');
+}
+
 /** 셸 실행 파일이 wsl.exe인지. 경로 구분자와 대소문자는 가리지 않는다. */
 function isWslShell(
     shellPath,
@@ -58,4 +85,4 @@ function parse(
     return terminals;
 }
 
-module.exports = { MARKER, isWslShell, script, parse };
+module.exports = { MARKER, forwardedWslEnv, isWslShell, script, parse };

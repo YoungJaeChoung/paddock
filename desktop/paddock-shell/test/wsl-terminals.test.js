@@ -17,3 +17,9 @@ test('C-wsl.2: 스크립트 출력에서 터미널별 현재 폴더와 명령줄
     });
     assert.deepEqual(wsl.parse(''), {});
 });
+
+test('C-wsl.forward: WSL 터미널은 사용자 WSLENV를 지키며 표지와 COLORTERM을 넘긴다', () => {
+    assert.equal(wsl.forwardedWslEnv(''), 'PADDOCK_TERMINAL:COLORTERM');
+    assert.equal(wsl.forwardedWslEnv('USERPROFILE/p'), 'USERPROFILE/p:PADDOCK_TERMINAL:COLORTERM');
+    assert.equal(wsl.forwardedWslEnv('COLORTERM/u:PADDOCK_TERMINAL'), 'COLORTERM/u:PADDOCK_TERMINAL');
+});
