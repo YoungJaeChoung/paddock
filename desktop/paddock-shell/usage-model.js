@@ -34,6 +34,11 @@ function parseLine(
 /**
  * Codex 세션 기록 전체 문자열에서 마지막 사용량 한도를 창별로 돌려준다(짧은 창이 먼저).
  * 한도 기록이 없거나 줄이 깨졌으면 그 줄은 건너뛰고, 하나도 없으면 빈 목록이다.
+ * 계정 한도는 기본 묶음(`limit_id` 'codex', 구버전 기록은 limit_id 없음)만 쓴다. 다른 묶음('premium' 등)이나
+ * 창이 하나도 없는 줄(primary·secondary가 모두 null)은 건너뛰어, 그 줄이 마지막에 있어도 앞선 계정 한도가 사라지지 않는다.
+ *
+ * Examples:
+ *   [codex: week 16%, premium: 창 없음] → [week 16%]
  */
 function codexWindows(
     text,
@@ -42,7 +47,9 @@ function codexWindows(
     let limits = null;
     for (let index = lines.length - 1; index >= 0 && !limits; index -= 1) {
         if (lines[index].includes('"rate_limits"')) {
-            limits = parseLine(lines[index])?.payload?.rate_limits ?? null;
+            const candidate = parseLine(lines[index])?.payload?.rate_limits ?? null;
+            const isDefaultBucket = !candidate?.limit_id || candidate.limit_id === 'codex';
+            if (isDefaultBucket && (candidate?.primary || candidate?.secondary)) limits = candidate;
         }
     }
     const windows = [];
@@ -86,6 +93,21 @@ function currentWindows(
 }
 
 /**
+ * 기록의 창 가운데 아직 초기화되지 않은 창이 있는지. 모든 창의 초기화 시각이 지났거나 시각을 모르면 false다.
+ * 실시간 조회에 실패해 대신 쓰는 세션 기록이 지금도 의미 있는 값인지 가리려고 존재한다 — 초기화가 모두 지난 기록은
+ * 지금 사용량에 대해 아무것도 확인해 주지 않는다.
+ *
+ * Examples:
+ *   now 200, [{ week, resetsAt 300 }] → true · [{ week, resetsAt 100 }] → false · [] → false
+ */
+function hasCurrentWindow(
+    windows,
+    nowSeconds,
+) {
+    return windows.some(window => Number.isFinite(window.resetsAt) && window.resetsAt > nowSeconds);
+}
+
+/**
  * 말풍선에 쓰는 창 이름. 짧은 표지를 풀어 쓴다.
  *
  * Examples:
@@ -105,6 +127,21 @@ function duration(
     const hours = Math.floor((seconds % 86400) / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     return days ? `${days}d ${hours}h` : `${hours}h ${minutes}m`;
+}
+
+/**
+ * 상태 바에 붙이는 짧은 경과 시간. 가장 큰 단위 하나만 쓴다.
+ *
+ * Examples:
+ *   59 → '0m' · 600 → '10m' · 67680 → '18h' · 259200 → '3d'
+ */
+function shortAge(
+    seconds,
+) {
+    let label = `${Math.floor(seconds / 60)}m`;
+    if (seconds >= 86400) label = `${Math.floor(seconds / 86400)}d`;
+    else if (seconds >= 3600) label = `${Math.floor(seconds / 3600)}h`;
+    return label;
 }
 
 /**
@@ -193,8 +230,10 @@ module.exports = {
     codexWindows,
     claudeWindows,
     currentWindows,
+    hasCurrentWindow,
     describe,
     duration,
+    shortAge,
     paddockStatusLineFiles,
     quoteStatusLineArgument,
     installStatusLine,

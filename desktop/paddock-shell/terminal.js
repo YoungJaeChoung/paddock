@@ -11,6 +11,8 @@ const { injectable, inject, decorate } = require('@theia/core/shared/inversify')
 
 class TerminalReplacement {
     static TIMEOUT_MS = 20000;
+    // Interval for repeating a stop request that the previous shell did not act on.
+    static REPEAT_CLOSE_MS = 1000;
     static ENVIRONMENT = new Set(['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'WSLENV', 'PADDOCK_TERMINAL']);
     static PROFILE_FIELDS = ['id', 'provider', 'label', 'runtime', 'wslDistribution'];
     static RESUME_FIELDS = ['provider', 'sessionId', 'sourceAccountId', 'runtime', 'wslDistribution', 'cwd', 'transcriptPath', 'shellPid', 'shellStart'];
@@ -70,6 +72,20 @@ async function waitForReplacementStep(
  * 탭 버튼·메뉴·단축키는 같은 닫기 계약을 쓰며, 셸 프로세스가 스스로 끝날 때의 dispose는 확인 없이 유지한다.
  */
 class PaddockTerminal extends TerminalWidgetImpl {
+    /** A detached or moving document can briefly have no measurable terminal cells. */
+    doResizeTerminal() {
+        if (!this.isDisposed) {
+            const dimensions = this.fitAddon.proposeDimensions();
+            if (dimensions && Number.isInteger(dimensions.cols) && Number.isInteger(dimensions.rows)
+                && dimensions.cols > 0 && dimensions.rows > 1) {
+                // Keep Theia's bottom margin and the last valid process size until
+                // the destination window supplies usable font and layout metrics.
+                this.term.resize(dimensions.cols, dimensions.rows - 1);
+                this.resizeTerminalProcess();
+            }
+        }
+    }
+
     /** Clearing a selection keeps the copied text available for the next paste. */
     get copyOnSelection() {
         return super.copyOnSelection && this.term.hasSelection();
@@ -78,6 +94,7 @@ class PaddockTerminal extends TerminalWidgetImpl {
     /** Keeps the last account label when the launch entry was renamed and then removed. */
     storeState() {
         const state = super.storeState();
+        if (this.options.paddockShared) state.paddockShared = true;
         const created = this.createdReplacement?.isClosed ? undefined : this.createdReplacement;
         const options = created?.options || this.replacementSavedState?.options || this.options;
         if (created) {
@@ -93,12 +110,16 @@ class PaddockTerminal extends TerminalWidgetImpl {
         // WidgetManager retains the original construction options, so a replaced launcher must travel with widget state.
         if (this.hasReplacedProcess || created) state.paddockLauncher = storedLauncher(options);
         if (options.paddockResume) state.paddockResume = metadataFields(options.paddockResume, TerminalReplacement.RESUME_FIELDS);
+        // 기본 이름(terminal N)의 번호는 만들 때 한 번 정한다. 재시작해도 같은 이름으로 보이게 함께 저장한다.
+        if (this.paddockNumber) state.paddockNumber = this.paddockNumber;
         return state;
     }
 
     restoreState(
         oldState,
     ) {
+        if (oldState.paddockShared) this.options.paddockShared = true;
+        if (Number.isSafeInteger(oldState.paddockNumber) && oldState.paddockNumber > 0) this.paddockNumber = oldState.paddockNumber;
         const launcher = storedLauncher(oldState.paddockLauncher);
         if (launcher) {
             this.options = { ...this.options, ...launcher };
@@ -116,6 +137,7 @@ class PaddockTerminal extends TerminalWidgetImpl {
     async replaceProcess(
         options,
     ) {
+        if (this.options.paddockShared) throw new Error('Switch accounts in the original terminal window.');
         if (this.isDisposed) throw new Error('This terminal has already closed.');
         if (!this.pendingReplacement) {
             this.pendingReplacement = Promise.resolve().then(() => this.replaceShell(options)).finally(() => {
@@ -268,7 +290,24 @@ class PaddockTerminal extends TerminalWidgetImpl {
                 // Exit may have happened before the listener was installed; attach reports an absent process explicitly.
                 if (await this.shellTerminalServer.attach(process.id) < 0) process.confirmClosed();
             });
-            await waitForReplacementStep(Promise.all([closing, process.closed]), 'Stopping the previous shell');
+            const stopped = waitForReplacementStep(Promise.all([closing, process.closed]), 'Stopping the previous shell');
+            // A shell can ignore one stop request: Bash still waiting to complete a key sequence after Escape stays running.
+            // Repeat the request until the shell exits; closing an already stopped process is a no-op on the backend.
+            let repeat;
+            const scheduleRepeat = () => {
+                repeat = setTimeout(() => {
+                    if (!process.isClosed) {
+                        this.shellTerminalServer.close(process.id).catch(() => {});
+                        scheduleRepeat();
+                    }
+                }, TerminalReplacement.REPEAT_CLOSE_MS);
+            };
+            scheduleRepeat();
+            try {
+                await stopped;
+            } finally {
+                clearTimeout(repeat);
+            }
             if (this.processToReplace === process) this.processToReplace = undefined;
         }
     }
@@ -332,6 +371,8 @@ class PaddockTerminal extends TerminalWidgetImpl {
     }
 
     dispose() {
+        // Closing a second view must leave the original window's shell running.
+        if (this.options.paddockShared) this.closeOnDispose = false;
         // Process errors during startup keep the tab available for Retry. Explicit close is still allowed below.
         if (this.explicitClose || (!this.pendingReplacement && !this.pendingStartCleanup)) super.dispose();
     }
@@ -349,6 +390,16 @@ class PaddockTerminal extends TerminalWidgetImpl {
         this.toDispose.push({ dispose: () => this.node.removeEventListener('webglcontextlost', showText, true) });
         // 화면 밖에서 그래픽 복구 실패가 통지돼도 기존 출력과 계속 들어오는 내용을 보존한다.
         this.toDispose.push(this.webglAddon.onContextLoss(() => this.webglAddon.dispose()));
+    }
+
+    async attachTerminal(
+        id,
+    ) {
+        if (!this.options.paddockShared) return super.attachTerminal(id);
+        const terminalId = await this.shellTerminalServer.attach(id);
+        if (!IBaseTerminalServer.validateId(terminalId)) throw new Error('The terminal in the other window has closed.');
+        this.exitStatus = undefined;
+        return terminalId;
     }
 
     close() {

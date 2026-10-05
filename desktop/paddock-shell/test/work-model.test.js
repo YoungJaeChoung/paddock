@@ -176,6 +176,31 @@ test('C-work-F8.4: 에이전트가 아니거나 현재 폴더를 모르는 터�
     assert.equal(state.folders.length, 0);
 });
 
+test('C-work-F8.5: starting an agent in any unassigned member promotes the same whole group in tab order', () => {
+    for (const agentId of ['a', 'b', 'c']) {
+        const terminals = ['a', 'b', 'c'].map(id => ({ id, root: 'a', cwd: 'file:///repo',
+            program: id === agentId ? 'claude' : 'bash', isAgent: id === agentId }));
+        terminals.push({ id: 'other', root: 'other', cwd: 'file:///repo', program: 'bash', isAgent: false });
+        const result = model.promoteAgentTerminals(model.empty(), terminals);
+        assert.deepEqual(model.terminalsOf(result.state, 'file:///repo'), ['a', 'b', 'c']);
+        assert.deepEqual(result.promoted, ['a', 'b', 'c']);
+        assert.equal(model.folderOf(result.state, 'other'), null);
+        assert.equal(result.state.terminals[agentId].name, 'claude');
+        assert.deepEqual(result.added, ['file:///repo']);
+    }
+});
+
+test('C-work-F8.6: group promotion changes membership without changing each terminal’s current directory', () => {
+    const terminals = [
+        { id: 'a', root: 'a', cwd: 'file:///home', program: 'bash', isAgent: false },
+        { id: 'b', root: 'a', cwd: 'file:///repo', program: 'codex', isAgent: true },
+    ];
+    const result = model.promoteAgentTerminals(model.empty(), terminals);
+    assert.deepEqual(model.terminalsOf(result.state, 'file:///repo'), ['a', 'b']);
+    assert.equal(terminals[0].cwd, 'file:///home');
+    assert.equal(terminals[1].cwd, 'file:///repo');
+});
+
 test('C-work-F9.1: 탭 줄 행은 그 폴더의 터미널만, 같은 이름은 ·2·3을 붙여 사이드바와 같게 돌려준다', () => {
     let state = withTerminals('file:///a', ['claude', 'terminal', 'claude']);
     state = model.assignTerminal(state, 'other', 'file:///b', 'claude');
@@ -195,4 +220,70 @@ test('C-work-F10.1: 탭 이동은 같은 줄 안에서 이전·다음은 끝에�
 test('C-work-F10.2: 현재 터미널이 줄에 없거나 줄이 비면 이동하지 않는다', () => {
     assert.equal(model.tabTarget(['a', 'b'], 'x', 'next'), null);
     assert.equal(model.tabTarget([], 'x', 'first'), null);
+});
+
+test('C-work-F11.1: 닫은 묶음에 남은 터미널이 있으면 그것을 고른다', () => {
+    const groups = [{ key: 'a', ids: ['a1', 'a2'] }, { key: 'b', ids: ['b1'] }];
+    assert.equal(model.nearestTerminal(groups, 'a'), 'a1');
+});
+
+test('C-work-F11.2: 닫은 묶음이 비면 바로 위 묶음, 위가 없으면 아래 묶음의 터미널을 고른다', () => {
+    assert.equal(model.nearestTerminal([{ key: 'a', ids: ['a1'] }, { key: 'b', ids: [] }, { key: 'c', ids: ['c1'] }], 'b'), 'a1');
+    assert.equal(model.nearestTerminal([{ key: 'a', ids: [] }, { key: 'b', ids: [] }, { key: 'c', ids: ['c1'] }], 'a'), 'c1');
+});
+
+test('C-work-F11.3: 남은 터미널이 없으면 null, 닫은 묶음을 모르면 첫 묶음부터 본다', () => {
+    assert.equal(model.nearestTerminal([{ key: 'a', ids: [] }], 'a'), null);
+    assert.equal(model.nearestTerminal([], 'a'), null);
+    assert.equal(model.nearestTerminal([{ key: 'a', ids: [] }, { key: 'b', ids: ['b1'] }], 'gone'), 'b1');
+});
+
+test('C-work-F12: 기본 이름 번호는 쓰고 있는 번호를 피한 가장 작은 수다', () => {
+    assert.equal(model.freeTerminalNumber(new Set()), 1);
+    assert.equal(model.freeTerminalNumber(new Set([1, 2])), 3);
+    assert.equal(model.freeTerminalNumber(new Set([2, 3])), 1);
+});
+
+test('C-work-F13: 작업 폴더의 기본 이름 번호는 그 폴더 안에서만 겹치지 않게 1부터 정한다', () => {
+    assert.equal(model.folderTerminalName(model.ensureFolder(model.empty(), 'file:///a'), 'file:///a'), 'terminal 1');
+    let state = withTerminals('file:///a', ['terminal 1', 'claude', 'terminal 3']);
+    assert.equal(model.folderTerminalName(state, 'file:///a'), 'terminal 2');
+    // 다른 폴더의 번호는 영향을 주지 않는다.
+    state = model.ensureFolder(state, 'file:///b');
+    assert.equal(model.folderTerminalName(state, 'file:///b'), 'terminal 1');
+    assert.equal(model.folderTerminalName(withTerminals('file:///a', ['terminal 2']), 'file:///a/'), 'terminal 1');
+});
+
+test('C-work-F14.1: 새 터미널은 보이는 작업 폴더가 있으면 Unassigned 묶음보다 그 폴더에 연다', () => {
+    assert.equal(model.newTerminalPlace({ folderKey: 'file:///a', groupRoot: 't1' }), 'folder');
+    assert.equal(model.newTerminalPlace({ folderKey: 'file:///a' }), 'folder');
+});
+
+test('C-work-F14.2: 폴더가 없으면 보이는 Unassigned 묶음(시작 터미널·파일만 남은 묶음)에 연다', () => {
+    assert.equal(model.newTerminalPlace({ folderKey: null, groupRoot: 't1' }), 'group');
+    assert.equal(model.newTerminalPlace({ folderKey: null, groupRoot: null, fileRoot: 'f1' }), 'group');
+});
+
+test('C-work-F14.3: 아무 폴더·묶음도 보이지 않으면 Work ＋처럼 새 Unassigned 묶음을 연다', () => {
+    assert.equal(model.newTerminalPlace({ folderKey: null, groupRoot: null, fileRoot: null }), 'new-group');
+    assert.equal(model.newTerminalPlace(), 'new-group');
+});
+
+test('C-work-F14.4: 묶음을 잃은 터미널을 보고 있어도 넣을 묶음이 없으면 Work ＋ 동작으로 보낸다', () => {
+    // 예전 입력 isTerminalShown은 더 이상 판정에 쓰지 않는다. 남아 있어도 묶음이 없으면 new-group이다.
+    assert.equal(model.newTerminalPlace({ folderKey: null, groupRoot: null, fileRoot: null, isTerminalShown: true }), 'new-group');
+});
+
+test('C-work-F15.1: 우클릭 메뉴의 마우스 이벤트는 다른 창에서 만든 것이어도 가리킨 요소를 돌려준다', () => {
+    const element = { nodeType: 1 };
+    // 다른 창의 MouseEvent 흉내: 본문 창의 MouseEvent 클래스가 아니지만 모양은 같다.
+    assert.equal(model.pointerTargetOf({ clientX: 10, clientY: 20, target: element }), element);
+});
+
+test('C-work-F15.2: 마우스 이벤트가 아닌 인자(위젯·없음·요소 아닌 대상)는 null', () => {
+    assert.equal(model.pointerTargetOf(undefined), null);
+    assert.equal(model.pointerTargetOf({ id: 'terminal-1', node: {} }), null);
+    assert.equal(model.pointerTargetOf({ clientX: 10, target: null }), null);
+    assert.equal(model.pointerTargetOf({ clientX: 10, target: { nodeType: 3 } }), null);
+    assert.equal(model.pointerTargetOf('terminal:new'), null);
 });

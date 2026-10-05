@@ -32,6 +32,7 @@ class PaddockMenuContribution extends ElectronMenuContribution {
     ) {
         super.createCustomTitleBar(app);
         app.shell.addClass('has-integrated-titlebar');
+        app.shell.header.hide();
     }
 
     /** 좁은 창에서도 같은 메뉴 명령을 펼치며, 문서 제목은 본문의 탭에 남긴다. */

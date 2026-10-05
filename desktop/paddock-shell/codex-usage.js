@@ -2,7 +2,7 @@
 const childProcess = require('node:child_process');
 const { AccountLaunch } = require('./account-launch');
 const { encodePowerShell } = require('./cwd-report');
-const { windowLabel } = require('./usage-model');
+const { windowLabel, hasCurrentWindow } = require('./usage-model');
 const { usageError, codexUsage } = require('./usage-files');
 
 class CodexUsage {
@@ -16,26 +16,51 @@ class CodexUsage {
         this.cached = new Map();
     }
 
-    /** Keeps default native and WSL lookups independent, so one unavailable CLI cannot hide another provider. */
+    /**
+     * Keeps default native and WSL lookups independent, so one unavailable CLI cannot hide another provider.
+     * 기본 환경마다 실시간 조회를 하고, 실패하면 그 환경의 세션 기록을 대신 쓴다(`recorded: true`).
+     * 값은 믿을 수 있는 차례로 고른다 — 실시간 값 → 초기화 전 창이 남은 세션 기록 → 초기화가 모두 지난 세션 기록.
+     * 앞 차례에 값이 있으면 뒤 차례는 세지 않는다. 그래서 한 환경의 토큰이 무효라 며칠 전 기록만 남아도, 다른 환경의 실시간 값을 가리지 않는다.
+     * 같은 차례의 값이 둘 이상이고 창 사용량이 서로 다르면 어느 계정의 값인지 단정할 수 없어 오류다.
+     * 뒤 차례 값은 로그인을 대조하지 않고 버린다. 두 환경이 다른 계정이고 한쪽 토큰만 무효이면 다른 쪽 값만 보인다 —
+     * 이때 기본 CLI의 계정 연결(linkDefault)은 로그인이 달라 null이므로, 그 값은 등록 계정 이름이 아니라 Current CLI로 보인다.
+     *
+     * Examples
+     * --------
+     * | 이 컴퓨터                 | WSL              | 결과                 |
+     * | ------------------------- | ---------------- | -------------------- |
+     * | 실시간 실패 + 9일 전 기록 | 실시간 0%        | WSL 실시간 0%        |
+     * | 실시간 20%                | 실시간 80%       | 오류(more than one)  |
+     * | 실시간 실패 + 기록 없음   | 실시간 실패 + 어제 기록(초기화 전) | 어제 기록(recorded) |
+     */
     async readAvailable(
         scopes,
     ) {
+        const nowSeconds = Math.floor(Date.now() / 1000);
         const readings = await Promise.all(scopes.map(async scope => {
-            let result = { windows: [], updatedAt: null };
+            let reading = { windows: [], updatedAt: null };
             let failed = false;
-            try { result = await this.read(scope); } catch { failed = true; }
-            if (!result.windows.length) {
+            try { reading = await this.read(scope); } catch { failed = true; }
+            if (!reading.windows.length) {
                 try {
                     const recorded = codexUsage([scope.sessionsDirectory]);
-                    if (recorded.windows.length) result = recorded;
+                    if (recorded.windows.length) reading = { ...recorded, recorded: true };
                 } catch { failed = true; }
             }
-            if (!result.windows.length && failed) result.error = 'Codex usage could not be read. Open Codex, sign in if needed, and try again.';
-            return result;
+            if (!reading.windows.length && failed) reading = { ...reading, error: 'Codex usage could not be read. Open Codex, sign in if needed, and try again.' };
+            return reading;
         }));
-        const available = readings.filter(reading => reading.windows.length);
-        let result = available[0] || readings.find(reading => reading.error) || { windows: [], updatedAt: null };
-        if (available.length > 1) result = { windows: [], updatedAt: null, error: 'More than one CLI environment has usage. Choose a saved account to see its usage.' };
+        const withWindows = readings.filter(reading => reading.windows.length);
+        const tiers = [
+            withWindows.filter(reading => !reading.recorded),
+            withWindows.filter(reading => reading.recorded && hasCurrentWindow(reading.windows, nowSeconds)),
+            withWindows.filter(reading => reading.recorded && !hasCurrentWindow(reading.windows, nowSeconds)),
+        ];
+        const chosen = tiers.find(tier => tier.length) || [];
+        // 같은 계정의 같은 한도라면 창별 사용량이 같다. 다르면 서로 다른 계정이다.
+        const shape = reading => JSON.stringify(reading.windows.map(window => [window.label, window.used]));
+        let result = chosen[0] || readings.find(reading => reading.error) || { windows: [], updatedAt: null };
+        if (chosen.some(reading => shape(reading) !== shape(chosen[0]))) result = { windows: [], updatedAt: null, error: 'More than one CLI environment has usage. Choose a saved account to see its usage.' };
         return result;
     }
 

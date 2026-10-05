@@ -1,22 +1,30 @@
 const usage = require('./usage-model');
+const { scopeName } = require('./agent-account');
 
 class UsageAccounts {
     static PROVIDERS = Object.freeze({ claude: 'Claude', codex: 'Codex' });
     static MARKS = Object.freeze({ claude: '✱', codex: '◎' });
     static N_SEARCH_THRESHOLD = 6;
     static POLL_INTERVAL_MS = 120000;
+    static CUSTOM_MESSAGE = 'This CLI runs with a configuration folder that is not a saved account. Usage from Current CLI is not shown for it.';
+    static CURRENT_NAME = 'Current CLI';
+    static CURRENT_HINT = 'The default CLI (plain claude or codex in a terminal) is signed in to this account.';
+    /** 이 시간보다 오래된 기록은 지금 값처럼 보이지 않게 경과 시간을 함께 보인다. */
+    static STALE_SECONDS = 3600;
+    static RECORDED_HINT = 'Live usage could not be read, so this is the last value recorded in a Codex session. Sign in again in this account if it continues.';
 }
 
+/** 사용량 범위의 키. 등록 계정은 id, 미등록 폴더로 실행한 CLI는 'custom', 기본 CLI는 'default'다. */
 function scopeKey(
     profile,
 ) {
-    return `${profile.provider}:${profile.id || 'default'}`;
+    return `${profile.provider}:${profile.id || (profile.custom ? 'custom' : 'default')}`;
 }
 
 function accountName(
     profile,
 ) {
-    return profile.id ? profile.label : 'Current CLI';
+    return scopeName(profile);
 }
 
 /** Keeps each account's response separate, including failures and responses received after a selection changes. */
@@ -35,6 +43,8 @@ class UsageData {
         this.profilesKnown = false;
         this.profilesFailed = false;
         this.selected = {};
+        /** 도구별로 미등록 폴더를 고르기 직전의 선택. 미등록 폴더에서 벗어나면 이 값으로 돌아간다. */
+        this.beforeCustom = {};
         this.active = null;
         this.snapshots = new Map();
         this.pending = new Map();
@@ -51,8 +61,27 @@ class UsageData {
         const next = Object.hasOwn(UsageAccounts.PROVIDERS, profile?.provider) ? { ...profile } : null;
         const previousKey = this.active ? scopeKey(this.active) : null;
         const nextKey = next ? scopeKey(next) : null;
-        if (next) this.selected[next.provider] = next;
+        // 미등록 폴더는 그 터미널에서 잠깐 쓰는 범위다. 다른 범위로 옮기면 그 전에 고른 범위로 되돌려, 하단 바에 남지 않게 한다.
+        for (const [provider, selected] of Object.entries(this.selected)) {
+            if (selected.custom && !(next?.custom && next.provider === provider)) this.selected[provider] = this.beforeCustom[provider] || { provider };
+        }
+        if (next) {
+            if (next.custom && !this.selected[next.provider]?.custom) this.beforeCustom[next.provider] = this.selected[next.provider];
+            this.selected[next.provider] = next;
+        }
+        // 터미널 판정의 연결(linked)은 그 터미널에서 기본 CLI가 실행 중인 동안만 믿는다. 판정이 다시 오지 않으면 낡기 때문이다.
+        // 셸로 돌아오거나 다른 화면·도구로 옮기면 지운다. 그 뒤에는 계속 읽는 기본 CLI 사용량 응답의 account만 연결 근거가 된다 —
+        // 그래야 에이전트를 끄고 다른 계정으로 다시 로그인했을 때 연결이 풀린다.
+        let unlinked = false;
+        for (const [provider, selected] of Object.entries(this.selected)) {
+            if (selected?.linked && next?.provider !== provider) {
+                const { linked, ...rest } = selected;
+                this.selected[provider] = rest;
+                unlinked = true;
+            }
+        }
         this.active = next;
+        if (unlinked && previousKey === nextKey) this.onChange();
         if (previousKey !== nextKey) {
             // A → B → A must not accept the response from the first A request.
             this.n_revision += 1;
@@ -60,17 +89,54 @@ class UsageData {
         }
     }
 
+    /**
+     * 범위가 지금 가리키는 계정. 등록 계정은 목록의 최신 항목이고, 기본 CLI는 로그인이 등록 계정 하나와 같다고 확인되면 그 계정이다.
+     * 상태 바·목록이 같은 계정을 두 번(기본 CLI와 등록 계정) 보이지 않게 하려고 존재한다. 미등록 폴더는 그대로다.
+     */
     current(
         profile,
     ) {
-        return profile.id ? this.profiles.find(item => item.id === profile.id) || profile : profile;
+        let result = profile;
+        if (profile.id) result = this.profiles.find(item => item.id === profile.id) || profile;
+        else if (!profile.custom) result = this.linkedProfile(profile.provider, profile) || profile;
+        return result;
     }
 
+    /**
+     * 기본 CLI가 그 계정으로 로그인했다고 확인된 등록 계정. 없거나 목록에 없는 계정이면 null이다.
+     * 근거는 터미널 판정(`linked`, 같은 실행 환경에서 확인)이 먼저이고, 없으면 기본 CLI 사용량 응답의 `account`다.
+     * 터미널 판정은 그 터미널에서 기본 CLI가 실행 중인 동안만 남는다(select가 지운다).
+     * 두 근거 모두 백엔드가 같은 로그인의 등록 계정이 정확히 하나일 때만 보낸다.
+     */
+    linkedProfile(
+        provider,
+        scope = this.selected[provider],
+    ) {
+        const fromTerminal = scope && !scope.id && !scope.custom ? scope.linked?.id : null;
+        const shared = this.snapshots.get(`${provider}:default`);
+        const id = fromTerminal || (shared?.status === 'ready' ? shared.data.account?.id : null);
+        return id ? this.profiles.find(item => item.id === id && item.provider === provider) || null : null;
+    }
+
+    /**
+     * 범위의 사용량 상태. 등록 계정은 기본 CLI 사용량이 같은 계정으로 확인되면 두 값 중 하나만 쓴다 —
+     * 자기 값이 아직 없거나, 기본 CLI 쪽이 한도를 가진 더 최근 값이면 기본 CLI 쪽이다. 같은 계정에 두 숫자를 보이지 않기 위해서다.
+     * 같은 계정인지는 기본 CLI 응답의 account만으로 정한다 — 이름을 바꾸는 근거(linkedProfile)의 터미널 판정은 쓰지 않는다.
+     * 기본 CLI 응답의 값은 이 컴퓨터와 WSL 가운데 가장 최근 기록이라, 백엔드가 account를 빼면(두 환경의 로그인이 다름)
+     * 터미널이 그 계정으로 판정돼도 값은 다른 로그인의 것일 수 있기 때문이다.
+     * 그때는 이름은 그 계정, 값은 그 계정 폴더의 자체 기록이다. 오래된 기록이면 표시 쪽이 경과 시간을 함께 보인다.
+     */
     snapshot(
         profile,
     ) {
         const removed = profile.id && this.profilesKnown && !this.profiles.some(item => item.id === profile.id);
-        return removed ? { status: 'unavailable', removed: true } : this.snapshots.get(scopeKey(profile)) || { status: 'loading' };
+        let result = removed ? { status: 'unavailable', removed: true } : this.snapshots.get(scopeKey(profile)) || { status: 'loading' };
+        const shared = profile.id && !removed ? this.snapshots.get(`${profile.provider}:default`) : null;
+        if (shared?.status === 'ready' && shared.data.account?.id === profile.id) {
+            const newer = shared.data.windows.length && (shared.data.updatedAt ?? 0) > (result.data?.updatedAt ?? 0);
+            if (result.status !== 'ready' || newer) result = shared;
+        }
+        return result;
     }
 
     async updateProfiles() {
@@ -103,6 +169,7 @@ class UsageData {
      * Claude 표시 설정과 계정별 상태 줄 등록을 맞추고, 바뀌면 사용량을 다시 읽는다.
      * 켜면 상태 줄을 넣고 끄면 원래 명령을 복원한다. 이전 버전에서 기본 환경만 꺼 둔 설정도 보존한다.
      * 같은 목표는 계정마다 한 번 시도하여 Node.js가 없어 실패해도 주기마다 다시 설정하지 않는다.
+     * 설정이 실패하면 받은 `data`에 한도 값이 있을 때만 그대로 돌려주고, 없으면 오류를 던진다(행은 Unavailable).
      */
     async syncClaude(
         profile,
@@ -131,9 +198,10 @@ class UsageData {
                 next = response.claude;
             } catch (error) {
                 this.failedHooks.add(key);
-                throw error;
+                // 설정 쓰기가 실패해도 이미 읽은 기록이 있으면 그 값은 보인다. 다른 Paddock의 상태 줄이 같은 기록을 쓰고 있을 수 있다.
+                if (!data.windows?.length) throw error;
             }
-        } else if (needsChange && this.failedHooks.has(key)) {
+        } else if (needsChange && this.failedHooks.has(key) && !data.windows?.length) {
             throw new Error('Usage setup is unavailable.');
         }
         return next;
@@ -149,6 +217,13 @@ class UsageData {
         if (existing?.n_revision === n_revision) {
             request = existing.promise;
         } else if (this.snapshot(profile).removed) {
+            request = Promise.resolve();
+        } else if (profile.custom) {
+            // 미등록 폴더의 사용량은 읽을 곳이 없다. 기본 CLI의 값이나 상태 줄 설정을 대신 쓰지 않는다.
+            if (this.snapshots.get(key)?.status !== 'unavailable') {
+                this.snapshots.set(key, { status: 'unavailable', message: UsageAccounts.CUSTOM_MESSAGE });
+                this.onChange();
+            }
             request = Promise.resolve();
         } else {
             const ticket = { n_revision };
@@ -189,6 +264,11 @@ class UsageData {
             const profile = this.current(this.selected[provider] || { provider });
             return [scopeKey(profile), profile];
         }));
+        // 기본 CLI가 등록 계정으로 보이는 동안에도 기본 CLI 응답을 계속 읽는다. 로그인이 바뀌면 그 응답의 account로 연결이 풀린다.
+        for (const provider of Object.keys(UsageAccounts.PROVIDERS)) {
+            const chosen = this.selected[provider] || { provider };
+            if (!chosen.id && !chosen.custom) scopes.set(scopeKey(chosen), chosen);
+        }
         if (all) {
             for (const provider of Object.keys(UsageAccounts.PROVIDERS)) scopes.set(`${provider}:default`, { provider });
             for (const profile of this.profiles) scopes.set(scopeKey(profile), profile);
@@ -197,7 +277,18 @@ class UsageData {
             scopes.set('claude:default', { provider: 'claude' });
             for (const profile of this.profiles.filter(item => item.provider === 'claude')) scopes.set(scopeKey(profile), profile);
         }
+        // 기본 Codex 응답이 이미 같은 계정으로 확인됐고 이번에도 그 응답을 읽으면, 그 계정 폴더는 따로 읽지 않는다.
+        // 한도는 계정마다 하나라 같은 값을 codex app-server 두 번으로 읽게 되고, 두 읽기가 조금 달라 주기마다 숫자가 오갈 수 있기 때문이다.
+        // 계정 행·상태 바는 snapshot이 기본 CLI 쪽 값을 쓴다. Claude는 계정마다 상태 줄 설정을 맞춰야 해서 그대로 읽는다.
+        // 이번 기본 응답에서 연결이 풀렸으면(로그인이 바뀜) 건너뛴 계정을 같은 주기에 이어서 읽는다. 다음 주기까지 'Loading…'으로 남지 않게 한다.
+        const sharedCodex = this.snapshots.get('codex:default');
+        const linkedCodexId = scopes.has('codex:default') && sharedCodex?.status === 'ready' ? sharedCodex.data.account?.id : null;
+        const skippedKey = linkedCodexId ? scopeKey({ provider: 'codex', id: linkedCodexId }) : null;
+        const skipped = skippedKey ? scopes.get(skippedKey) : null;
+        if (skippedKey) scopes.delete(skippedKey);
         await Promise.allSettled([...scopes.values()].filter(profile => profile.provider === 'claude' || this.isEnabled(profile.provider)).map(profile => this.read(profile)));
+        const sharedAfter = this.snapshots.get('codex:default');
+        if (skipped && (sharedAfter?.status !== 'ready' || sharedAfter.data.account?.id !== linkedCodexId)) await this.read(skipped).catch(() => {});
     }
 }
 
@@ -281,7 +372,9 @@ class UsagePanel {
         profile,
         program,
     ) {
-        const key = `${widgetId || ''}:${profile?.id || program || ''}`;
+        // 실행 중인 도구와 그 범위가 함께 키에 들어간다. 같은 터미널에서 도구나 계정이 바뀌면 다시 고른다.
+        // 기본 CLI의 로그인 연결(linked)이 생기거나 풀려도 다시 고른다.
+        const key = `${widgetId || ''}:${program || ''}:${profile ? scopeKey(profile) : ''}:${profile?.linked?.id || ''}`;
         if (key !== this.observed) {
             this.observed = key;
             if (profile) this.data.select(profile);
@@ -344,6 +437,15 @@ class UsagePanel {
         trigger?.focus();
     }
 
+    /** Names an unregistered CLI after the saved account whose sign-in it verifiably shares; otherwise keeps Current CLI. */
+    displayName(
+        profile,
+    ) {
+        const snapshot = this.data.snapshot(profile);
+        const matched = !profile.id && snapshot.status === 'ready' ? snapshot.data.account?.label : null;
+        return matched || accountName(profile);
+    }
+
     appendValues(
         target,
         profile,
@@ -351,14 +453,29 @@ class UsagePanel {
     ) {
         const snapshot = this.data.snapshot(profile);
         const now = Math.floor(Date.now() / 1000);
-        const windows = snapshot.status === 'ready' && (profile.provider !== 'claude' || snapshot.data.state === 'on')
+        // Claude는 사용자가 끈('off') 기록만 숨긴다. 'unset'이어도 값이 있으면 보인다 — 다른 Paddock 설정 폴더의 상태 줄이
+        // 같은 기록을 쓰고 있어 이 설정 폴더의 자동 켜기가 물러선 경우다. 오래된 기록이면 아래에서 경과 시간을 함께 보인다.
+        const windows = snapshot.status === 'ready' && (profile.provider !== 'claude' || snapshot.data.state !== 'off')
             ? usage.currentWindows(snapshot.data.windows, now) : [];
+        // 실시간 값이 아닌 세션 기록이거나 오래된 기록이면 경과 시간을 값 옆에 보이고 흐리게 한다. 말풍선에만 두면 지금 값으로 오해한다.
+        const age = windows.length && snapshot.data.updatedAt ? Math.max(0, now - snapshot.data.updatedAt) : 0;
+        const stale = Boolean(windows.length) && (Boolean(snapshot.data.recorded) || age >= UsageAccounts.STALE_SECONDS);
+        target.classList.toggle('is-stale', stale);
         if (windows.length) {
+            const elapsed = usage.duration(age).replace(/^0h /, '');
+            const updated = snapshot.data.updatedAt ? ` · Usage recorded ${elapsed} ago` : '';
+            const reason = snapshot.data.recorded ? ` · ${UsageAccounts.RECORDED_HINT}` : '';
             for (const window of windows) {
-                const elapsed = usage.duration(Math.max(0, now - (snapshot.data.updatedAt || now))).replace(/^0h /, '');
-                const updated = snapshot.data.updatedAt ? ` · Usage recorded ${elapsed} ago` : '';
-                const title = `${UsageAccounts.PROVIDERS[profile.provider]} · ${accountName(profile)} · ${usage.windowName(window.label)}: ${usage.describe(window, now)}${updated}`;
+                const title = `${UsageAccounts.PROVIDERS[profile.provider]} · ${this.displayName(profile)} · ${usage.windowName(window.label)}: ${usage.describe(window, now)}${updated}${reason}`;
                 target.append(this.meter(`${scopeKey(profile)}-${window.label}`, window.label, window.used, title));
+            }
+            if (stale) {
+                // 상태 바는 짧은 경과 시간만, 목록 행은 같은 내용을 문장으로 보인다.
+                const explanation = `Usage recorded ${snapshot.data.updatedAt ? `${elapsed} ago` : 'at an unknown time'}${reason || '. It may have changed since then.'}`;
+                const label = details ? node('span', 'account-usage-hint account-usage-age-hint', explanation)
+                    : node('span', 'account-usage-age', snapshot.data.updatedAt ? `${usage.shortAge(age)} ago` : 'recorded');
+                label.title = explanation;
+                target.append(label);
             }
         } else {
             const waitingForClaude = profile.provider === 'claude' && snapshot.status === 'ready' && snapshot.data.state === 'on';
@@ -380,7 +497,8 @@ class UsagePanel {
         const enabledProviders = Object.keys(UsageAccounts.PROVIDERS).filter(provider => this.data.isEnabled(provider));
         this.retryButton.hidden = !this.data.profilesFailed && ![...this.data.profiles, ...selected].some(profile => {
             const snapshot = this.data.snapshot(profile);
-            return snapshot.status === 'unavailable' && !snapshot.removed && this.data.isEnabled(profile.provider);
+            // 미등록 폴더는 다시 읽어도 값이 생기지 않으므로 다시 시도 대상이 아니다.
+            return snapshot.status === 'unavailable' && !snapshot.removed && !profile.custom && this.data.isEnabled(profile.provider);
         });
         const key = JSON.stringify([selected.map(profile => [profile, this.data.snapshot(profile)]), enabledProviders, Math.floor(Date.now() / 60000)]);
         if (key !== this.barKey) {
@@ -394,9 +512,10 @@ class UsagePanel {
                 group.dataset.usageProvider = profile.provider;
                 group.setAttribute('aria-haspopup', 'dialog');
                 group.setAttribute('aria-expanded', String(this.popup.matches(':popover-open')));
-                group.setAttribute('aria-label', `${UsageAccounts.PROVIDERS[profile.provider]} · ${accountName(profile)} usage. Show all accounts.`);
-                group.title = `${UsageAccounts.PROVIDERS[profile.provider]} · ${accountName(profile)}. Show usage for all accounts.`;
-                group.append(node('span', 'source-mark', UsageAccounts.MARKS[profile.provider]), node('span', 'source-name', UsageAccounts.PROVIDERS[profile.provider]), node('span', 'account-usage-name', accountName(profile)));
+                const name = this.displayName(profile);
+                group.setAttribute('aria-label', `${UsageAccounts.PROVIDERS[profile.provider]} · ${name} usage. Show all accounts.`);
+                group.title = `${UsageAccounts.PROVIDERS[profile.provider]} · ${name}. Show usage for all accounts.`;
+                group.append(node('span', 'source-mark', UsageAccounts.MARKS[profile.provider]), node('span', 'source-name', UsageAccounts.PROVIDERS[profile.provider]), node('span', 'account-usage-name', name));
                 this.appendValues(group, profile);
                 this.host.append(group);
             }
@@ -417,10 +536,13 @@ class UsagePanel {
     renderRows() {
         const query = this.search.value.toLocaleLowerCase().trim();
         const profiles = [...this.data.profiles];
-        // An unregistered CLI has no verified link to a saved account, even when both use the same login.
-        profiles.unshift(...Object.values(this.data.selected).filter(profile => !profile.id));
+        // An unregistered CLI has no verified link to a saved account unless its sign-in matches exactly one saved account
+        // (same login identifier, same runtime and WSL distribution). Only that verified link merges it into the account's row,
+        // which then carries a Current CLI badge; an unmatched or ambiguous sign-in keeps its own Current CLI row.
+        profiles.unshift(...Object.values(this.data.selected).filter(profile => !profile.id && !this.data.current(profile).id));
         const key = JSON.stringify([query, profiles.map(profile => [profile, this.data.snapshot(profile), this.data.isEnabled(profile.provider)]),
-            this.data.selected, this.opening, this.openError, this.data.profilesFailed, Math.floor(Date.now() / 60000)]);
+            this.data.selected, Object.keys(UsageAccounts.PROVIDERS).map(provider => this.data.linkedProfile(provider)?.id),
+            this.opening, this.openError, this.data.profilesFailed, Math.floor(Date.now() / 60000)]);
         if (key !== this.rowsKey) {
             this.rowsKey = key;
             const scrollTop = this.rows.scrollTop;
@@ -471,13 +593,15 @@ class UsagePanel {
             row: node('div', 'account-usage-row'),
             name: node('strong', 'account-usage-row-name'),
             badge: node('span', 'account-usage-selected-badge', 'In status bar'),
+            current: node('span', 'account-usage-selected-badge account-usage-current-badge', UsageAccounts.CURRENT_NAME),
             environment: node('span', 'account-usage-environment'),
             values: node('div', 'account-usage-values'),
         };
         const summary = node('div', 'account-usage-summary');
         const header = node('div', 'account-usage-row-header');
         const title = node('div', 'account-usage-row-title');
-        title.append(entry.name, entry.badge);
+        entry.current.title = UsageAccounts.CURRENT_HINT;
+        title.append(entry.name, entry.current, entry.badge);
         summary.append(title, entry.environment);
         entry.open = action('Open in new terminal', 'account-usage-open', () => void this.open(entry.profile));
         entry.open.dataset.usageFocus = scopeKey(profile);
@@ -495,20 +619,27 @@ class UsagePanel {
         const snapshot = this.data.snapshot(profile);
         const enabled = this.data.isEnabled(profile.provider);
         const selected = this.data.selected[profile.provider];
-        const activeKey = selected ? scopeKey(selected) : null;
-        const key = JSON.stringify([profile, snapshot, enabled, activeKey, this.opening, Math.floor(Date.now() / 60000)]);
+        // 기본 CLI가 이 계정으로 확인되면 상태 바의 기본 CLI는 이 계정 행이다.
+        const activeKey = selected ? scopeKey(this.data.current(selected)) : null;
+        const isCurrent = Boolean(profile.id) && this.data.linkedProfile(profile.provider)?.id === profile.id;
+        const key = JSON.stringify([profile, snapshot, enabled, activeKey, isCurrent, this.opening, Math.floor(Date.now() / 60000)]);
         if (key !== entry.key) {
             entry.key = key;
             entry.profile = profile;
             entry.name.textContent = accountName(profile);
             entry.name.title = accountName(profile);
             entry.badge.hidden = accountKey !== activeKey;
-            entry.environment.textContent = profile.id ? (profile.runtime === 'wsl' ? `WSL · ${profile.wslDistribution}` : 'This device') : 'Not linked to a saved account';
+            entry.current.hidden = !isCurrent;
+            const signedIn = profile.id ? null : snapshot.data?.account?.label;
+            entry.environment.textContent = profile.id ? (profile.runtime === 'wsl' ? `WSL · ${profile.wslDistribution}` : 'This device')
+                : profile.custom ? 'Folder set in the terminal' : signedIn ? `Signed in as ${signedIn}` : 'Not linked to a saved account';
             entry.values.replaceChildren();
             if (enabled) this.appendValues(entry.values, profile, true);
             else entry.values.append(node('span', 'account-usage-state', 'Hidden in Quick settings'));
             entry.open.textContent = this.opening === accountKey ? 'Opening…' : 'Open in new terminal';
             entry.open.disabled = Boolean(this.opening);
+            // 미등록 폴더는 Paddock이 다시 열 수 있는 환경이 아니다. 열면 기본 CLI가 열리므로 버튼을 숨긴다.
+            entry.open.hidden = Boolean(profile.custom);
             entry.open.setAttribute('aria-label', `Open ${UsageAccounts.PROVIDERS[profile.provider]} · ${accountName(profile)} in a new terminal`);
         }
     }

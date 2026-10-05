@@ -22,10 +22,13 @@ files:
   # 색 테마 전용 확장(기본 Paddock Dark·Light, Mermaid Dark·Light). 저장소에 있다.
   - themes
   - package.json
-  - "!**/node_modules/electron/**"
-  # Windows npm은 로컬 패키지(@paddock/shell)를 폴더 연결로 설치하는데, 의존성 수집기가 이를 따라가 저장소 루트를
-  # paddock 패키지로 한 번 더 넣는다. paddock-shell은 배포 번들(lib)에 이미 포함돼 있어 빼도 된다.
-  - "!**/node_modules/paddock/**"
+  # node_modules는 설치본에 넣지 않는다. 배포 번들(lib)이 백엔드·화면 코드를 모두 묶고, 네이티브 모듈(터미널·파일 감시·검색)도
+  # lib/backend/native와 lib/prebuilds로 복사해 두어 실행 중에 node_modules를 읽지 않는다. 바깥에 남긴 electron은 실행 파일이 제공한다.
+  # 넣으면 파일이 2만 개 늘어 Windows 설치·압축 해제가 몇 분씩 걸린다(새 파일마다 백신 검사).
+  # 같은 이유로 Windows npm이 로컬 패키지(@paddock/shell)를 폴더 연결로 설치하면서 저장소 루트를 paddock 패키지로 한 번 더 넣던 문제도 함께 사라진다.
+  - "!**/node_modules/**"
+  # 소스 지도(.map)는 오류 위치를 원본 코드로 되짚는 개발용 파일이라 실행에 쓰지 않는다.
+  - "!lib/**/*.map"
 
 mac:
   target: dmg

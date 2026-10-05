@@ -6,6 +6,7 @@ const { AccountProfile } = require('./account-profiles');
 const { wslFileMapping } = require('./account-usage');
 const { programName } = require('./agent-model');
 const { splitCommandLine } = require('./windows-processes');
+const { AgentAccount, attributeAccount, parseEnviron } = require('./agent-account');
 
 class SessionIdentity {
     static UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -14,6 +15,7 @@ class SessionIdentity {
     static N_PROCESS_DEPTH = 8;
     static STOP_TIMEOUT_MS = 10000;
     static MISSING_FILE = 'The saved conversation file is missing. Restore it before switching accounts; this terminal has not been changed.';
+    static OTHER_FOLDER = 'This Claude runs with a different configuration folder than the selected account. Open it from its saved account to switch accounts.';
     static WSL_PROCESSES = `for file in $(grep -alz '^PADDOCK_TERMINAL=' /proc/[0-9]*/environ 2>/dev/null); do
     pid=\${file#/proc/}; pid=\${pid%/environ}
     terminal=$({ tr '\\0' '\\n' < "$file"; } 2>/dev/null | sed -n 's/^PADDOCK_TERMINAL=//p')
@@ -23,7 +25,8 @@ class SessionIdentity {
     shift 19
     started=$1
     argv=$({ tr '\\0' '\\037' < "/proc/$pid/cmdline"; } 2>/dev/null)
-    printf '%s\\t%s\\t%s\\t%s\\t%s\\n' "$terminal" "$pid" "$parent" "$started" "$argv"
+    env=$({ tr '\\0' '\\n' < "$file"; } 2>/dev/null | grep -E '^(${AgentAccount.READ.join('|')})=' | tr '\\n' '\\037')
+    printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' "$terminal" "$pid" "$parent" "$started" "$argv" "$env"
 done`;
     static WSL_STOP = `set -eu
 pid=$1
@@ -163,9 +166,56 @@ function linuxProcess(
     try {
         const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
         const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
-        if (fields[0] !== 'Z') result = { pid, parentPid: Number(fields[1]), start: fields[19], argv: fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean) };
+        if (fields[0] !== 'Z') result = { pid, parentPid: Number(fields[1]), start: fields[19], argv: fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean), env: linuxEnvironment(pid) };
     } catch (error) {
         if (!['ENOENT', 'ESRCH', 'EACCES'].includes(error.code)) throw error;
+    }
+    return result;
+}
+
+/** 계정 판정에 쓰는 환경 변수 세 개만 읽는다. 다른 사용자의 프로세스처럼 읽을 수 없으면 null(모름)이다. */
+function linuxEnvironment(
+    pid,
+) {
+    let env = null;
+    try {
+        env = parseEnviron(fs.readFileSync(`/proc/${pid}/environ`, 'utf8'));
+    } catch (error) {
+        if (!['ENOENT', 'ESRCH', 'EACCES'].includes(error.code)) throw error;
+    }
+    return env;
+}
+
+/**
+ * 에이전트 프로세스의 환경이 요청한 범위(계정 폴더 또는 기본 폴더)와 같은 설정 폴더를 쓰는지.
+ * 다르면 그 범위의 sessions 기록은 이 프로세스의 것이 아니므로 대화를 찾지 않는다. 환경을 모르면(Windows 네이티브 등) 막지 않는다.
+ */
+function runsInScope(
+    scope,
+    request,
+    agentProcess,
+    defaultDirectory,
+) {
+    let matches = true;
+    if (agentProcess?.env) {
+        const found = attributeAccount({
+            provider: request.provider, runtime: request.runtime, wslDistribution: request.wslDistribution, env: agentProcess.env,
+            profiles: scope.profile ? [scope.profile] : [], profileDirectory: () => scope.configDir,
+            defaultDirectories: defaultDirectory ? [defaultDirectory] : [], realPath: request.runtime === 'wsl' ? undefined : nativeRealPath,
+        });
+        matches = scope.profile ? found?.kind === AgentAccount.KINDS.PROFILE : found?.kind === AgentAccount.KINDS.DEFAULT;
+    }
+    return matches;
+}
+
+function nativeRealPath(
+    file,
+) {
+    let result = file;
+    try {
+        result = fs.realpathSync.native(file);
+    } catch {
+        result = file;
     }
     return result;
 }
@@ -254,8 +304,9 @@ class AccountSessions {
                 if (request.runtime === 'wsl') {
                     const output = await executeFile('wsl.exe', ['--distribution', request.wslDistribution, '--exec', 'sh', '-c', SessionIdentity.WSL_PROCESSES]);
                     processes = output.split('\n').filter(Boolean).map(line => {
-                        const [terminalId, pid, parentPid, start, argv = ''] = line.replace(/\r$/, '').split('\t');
-                        return { terminalId, pid: Number(pid), parentPid: Number(parentPid), start, argv: argv.split('\x1f').filter(Boolean) };
+                        const [terminalId, pid, parentPid, start, argv = '', env] = line.replace(/\r$/, '').split('\t');
+                        return { terminalId, pid: Number(pid), parentPid: Number(parentPid), start, argv: argv.split('\x1f').filter(Boolean),
+                            env: env === undefined ? null : parseEnviron(env, '\x1f') };
                     });
                 } else if (process.platform === 'win32') {
                     processes = (await this.readWindowsProcesses()).map(item => ({ ...item, start: item.startIdentity, argv: splitCommandLine(item.commandLine) }));
@@ -327,7 +378,14 @@ class AccountSessions {
                 previous = null;
             }
             if (this.stopping.has(key)) result = previous?.snapshot || null;
-            else if (frame.shell && frame.selected) {
+            else if (frame.shell && frame.selected && !request.resume
+                && !runsInScope(scope, request, frame.selected, request.runtime === 'wsl' ? '' : this.accounts.claudeDirectory)) {
+                // 계정 폴더를 직접 지정해 실행한 Claude는 그 폴더의 기록만 자기 것이다. 다른 범위의 기록으로 대화를 추측하지 않는다.
+                // 계정 전환으로 이어 가는 중(resume)에는 새 계정 셸이 뜨는 사이 요청 계정과 프로세스가 잠시 어긋날 수 있어 이 확인을 건너뛴다.
+                this.unavailable.set(key, SessionIdentity.OTHER_FOLDER);
+                this.observed.delete(key);
+                result = undefined;
+            } else if (frame.shell && frame.selected) {
                 this.activeObserved.add(key);
                 this.stopped.delete(key);
                 const record = readClaudeSession(scope, frame.selected);

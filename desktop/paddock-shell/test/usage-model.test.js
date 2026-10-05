@@ -90,3 +90,21 @@ test('C-usage-U5.1: 상태 줄 스크립트는 한도만 저장하고, 원래 �
     const chained = spawnSync(process.execPath, [script, usagePath, previousPath], { input, encoding: 'utf8' });
     assert.equal(chained.stdout.trim(), 'mine');
 });
+
+test('C-usage-U1.3: Codex 기록은 기본 묶음의 마지막 한도를 쓰고, 다른 묶음이나 창이 없는 줄이 뒤에 있어도 건너뛴다', () => {
+    const premium = JSON.stringify({ payload: { type: 'token_count', rate_limits: { limit_id: 'premium', primary: null, secondary: null, plan_type: 'plus' } } });
+    const otherBucket = JSON.stringify({ payload: { type: 'token_count', rate_limits: { limit_id: 'other', primary: { used_percent: 99, window_minutes: 300, resets_at: 1 } } } });
+    const empty = JSON.stringify({ payload: { type: 'token_count', rate_limits: { limit_id: 'codex', primary: null, secondary: null } } });
+    const text = [CODEX_LINE, otherBucket, empty, premium, ''].join('\n');
+    assert.deepEqual(usage.codexWindows(text).map(window => [window.label, window.used]), [['5h', 12], ['week', 41]]);
+    const legacy = CODEX_LINE.replace('"limit_id":"codex",', '');
+    assert.equal(usage.codexWindows(legacy).length, 2, 'records written before limit_id existed are the default bucket');
+});
+
+test('C-usage-U3.4: 초기화 전 창이 하나라도 있어야 지금 의미 있는 기록이고, 경과 시간은 가장 큰 단위 하나로 줄인다', () => {
+    assert.equal(usage.hasCurrentWindow([{ label: 'week', used: 29, resetsAt: 300 }], 200), true);
+    assert.equal(usage.hasCurrentWindow([{ label: 'week', used: 29, resetsAt: 100 }], 200), false);
+    assert.equal(usage.hasCurrentWindow([{ label: 'week', used: 29 }], 200), false, 'an unknown reset time does not prove the record is current');
+    assert.equal(usage.hasCurrentWindow([], 200), false);
+    assert.deepEqual([59, 600, 67680, 259200].map(usage.shortAge), ['0m', '10m', '18h', '3d']);
+});

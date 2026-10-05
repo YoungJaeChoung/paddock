@@ -42,7 +42,8 @@ function fixture() {
         close: async id => {
             backend.closed.push(id);
             if (terminal.terminalId === id) terminal.finalizeAndDispose();
-            if (backend.automaticClose) {
+            if (backend.n_ignoredCloses > 0) backend.n_ignoredCloses -= 1;
+            else if (backend.automaticClose) {
                 processes.delete(id);
                 for (const listener of [...exitListeners]) listener({ terminalId: id });
                 closeChannel(id);
@@ -209,6 +210,21 @@ test('C-terminal-replacement-timeout: a delayed old connection leaves the tab av
     backend.automaticClose = true;
     await terminal.replaceProcess(options);
     assert.equal(terminal.terminalId, 8);
+});
+
+test('C-account-idle-stop-repeat: a shell that ignores the first stop request is stopped by a repeated request', async () => {
+    const { terminal, backend, options, timers } = fixture();
+    backend.n_ignoredCloses = 1;
+    const replacing = terminal.replaceProcess(options);
+    await settle();
+    assert.deepEqual(backend.closed, [7]);
+    // The first timer is the overall timeout; the next one repeats the stop request.
+    const [, repeat] = [...timers.values()];
+    repeat();
+    await replacing;
+    assert.deepEqual(backend.closed, [7, 7]);
+    assert.equal(terminal.terminalId, 8);
+    assert.equal(terminal.options.paddockAccount.id, 'b');
 });
 
 test('C-terminal-replacement-process-info: a shell created before metadata fails is stopped before retry starts another shell', async () => {
@@ -434,4 +450,57 @@ test('C-terminal-replacement-restore-late-created: creation reported after timeo
     await settle();
     assert.equal(await backend.attach(8), -1);
     assert.equal(terminal.storeState().paddockAccountLabel, 'A');
+});
+
+test('공유 터미널은 종료된 셸 대신 새 셸을 생성하지 않는다', async () => {
+    const { terminal, backend } = fixture();
+    terminal.options.paddockShared = true;
+    assert.equal(await terminal.attachTerminal(7), 7);
+    await assert.rejects(terminal.attachTerminal(999), /other window has closed/);
+    assert.deepEqual(backend.created, []);
+});
+
+test('공유 탭은 닫을 때 프로세스 종료를 비활성화하고 공유 상태를 보존한다', async () => {
+    const { terminal, options } = fixture();
+    terminal.options.paddockShared = true;
+    assert.equal(terminal.storeState().paddockShared, true);
+    await assert.rejects(terminal.replaceProcess(options), /original terminal window/);
+    terminal.closeOnDispose = true;
+    terminal.dispose();
+    assert.equal(terminal.closeOnDispose, false);
+    assert.equal(terminal.isDisposed, true);
+});
+
+test('이동 중 측정할 수 없는 터미널 크기는 이전 크기를 유지하고 유효해지면 프로세스에도 전달한다', () => {
+    const { terminal } = fixture();
+    const resized = [];
+    let processResizes = 0;
+    let dimensions;
+    terminal.fitAddon = { proposeDimensions: () => dimensions };
+    terminal.term.resize = (cols, rows) => resized.push([cols, rows]);
+    terminal.resizeTerminalProcess = () => { processResizes += 1; };
+    for (dimensions of [undefined, { cols: NaN, rows: NaN }, { cols: Infinity, rows: 20 }, { cols: 0, rows: 20 }, { cols: 80, rows: 1 }]) {
+        terminal.doResizeTerminal();
+    }
+    assert.deepEqual(resized, []);
+    assert.equal(processResizes, 0);
+    dimensions = { cols: 120, rows: 40 };
+    terminal.doResizeTerminal();
+    assert.deepEqual(resized, [[120, 39]]);
+    assert.equal(processResizes, 1);
+    terminal.isDisposed = true;
+    terminal.doResizeTerminal();
+    assert.equal(processResizes, 1);
+});
+
+test('C-terminal-number-restore: the default-name number survives a restart and ignores invalid saved values', () => {
+    const { terminal, Terminal } = fixture();
+    terminal.paddockNumber = 3;
+    const state = terminal.storeState();
+    const restored = new Terminal();
+    restored.restoreState(JSON.parse(JSON.stringify(state)));
+    assert.equal(restored.paddockNumber, 3);
+    const invalid = new Terminal();
+    invalid.restoreState({ ...JSON.parse(JSON.stringify(state)), paddockNumber: -1 });
+    assert.equal(invalid.paddockNumber, undefined);
 });

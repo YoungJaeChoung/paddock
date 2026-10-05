@@ -151,3 +151,60 @@ test('CU10 an unreported reset time stays unknown while a confirmed elapsed rese
     assert.equal(elapsed.used, 0);
     assert.match(usage.describe(elapsed, 200), /next request|new window/i);
 });
+
+/** 세션 기록 폴더 하나를 만든다. 한도 줄의 초기화 시각과 파일 수정 시각을 정할 수 있다. */
+function sessions(
+    context,
+    { used, resetsAt, modifiedAt },
+) {
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const path = require('node:path');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'paddock-codex-sessions-'));
+    context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const day = path.join(root, '2026', '09', '30');
+    fs.mkdirSync(day, { recursive: true });
+    const file = path.join(day, 'rollout-fixture.jsonl');
+    fs.writeFileSync(file, `${JSON.stringify({ payload: { type: 'token_count', rate_limits: { limit_id: 'codex', primary: { used_percent: used, window_minutes: 10080, resets_at: resetsAt } } } })}\n`);
+    fs.utimesSync(file, modifiedAt, modifiedAt);
+    return root;
+}
+
+test('CU11 a live reading in one environment wins over a session record left in another environment whose sign-in failed', async context => {
+    const now = Math.floor(Date.now() / 1000);
+    const reader = new CodexUsage();
+    context.mock.method(reader, 'read', async input => {
+        if (input.profile.runtime === 'native') throw new Error('token invalidated');
+        return { windows: [{ label: '30d', used: 0, resetsAt: now + 86400 }], updatedAt: now };
+    });
+    const elapsed = sessions(context, { used: 29, resetsAt: now - 3600, modifiedAt: now - 85 * 3600 });
+    const current = sessions(context, { used: 29, resetsAt: now + 3600, modifiedAt: now - 3600 });
+    for (const sessionsDirectory of [elapsed, current]) {
+        const value = await reader.readAvailable([{ profile: { runtime: 'native' }, configDir: '/native', sessionsDirectory }, { profile: { runtime: 'wsl' }, configDir: '/wsl', sessionsDirectory: '/not-created-wsl-sessions' }]);
+        assert.equal(Object.hasOwn(value, 'error'), false, 'a fallback record is not counted against a live reading');
+        assert.deepEqual(value.windows.map(window => [window.label, window.used]), [['30d', 0]]);
+        assert.equal(value.recorded, undefined);
+    }
+});
+
+test('CU12 equal live readings agree; a session record is used only without a live reading and is marked as recorded', async context => {
+    const now = Math.floor(Date.now() / 1000);
+    const reader = new CodexUsage();
+    let live = true;
+    context.mock.method(reader, 'read', async () => {
+        if (!live) throw new Error('offline');
+        return { windows: [{ label: 'week', used: 16, resetsAt: now + 600 }], updatedAt: now };
+    });
+    const both = [{ profile: { runtime: 'native' }, configDir: '/native', sessionsDirectory: '/not-created-native' }, { profile: { runtime: 'wsl' }, configDir: '/wsl', sessionsDirectory: '/not-created-wsl' }];
+    const same = await reader.readAvailable(both);
+    assert.equal(same.windows[0].used, 16, 'two environments signed in to one account report one value');
+    live = false;
+    const elapsed = sessions(context, { used: 29, resetsAt: now - 3600, modifiedAt: now - 85 * 3600 });
+    const current = sessions(context, { used: 85, resetsAt: now + 3600, modifiedAt: now - 18 * 3600 });
+    const recorded = await reader.readAvailable([{ ...both[0], sessionsDirectory: elapsed }, { ...both[1], sessionsDirectory: current }]);
+    assert.equal(recorded.recorded, true);
+    assert.equal(recorded.windows[0].used, 85, 'a record whose windows have all reset does not compete with one that is still current');
+    assert.equal(recorded.updatedAt, now - 18 * 3600);
+    const onlyElapsed = await reader.readAvailable([{ ...both[0], sessionsDirectory: elapsed }]);
+    assert.equal(onlyElapsed.recorded, true, 'an elapsed record is still shown when nothing else exists, marked as recorded');
+});

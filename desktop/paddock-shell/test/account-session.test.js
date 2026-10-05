@@ -303,3 +303,12 @@ test('C-ACCOUNT-RESUME-B20 a replacement shell startup gap preserves the request
     const snapshots = await backend.observeSessions([request]);
     assert.equal(Object.hasOwn(snapshots, request.terminalId), false);
 });
+
+test('C-ACCOUNT-RESUME-B21 a Claude running with another configuration folder is not matched against the default records', { skip: process.platform !== 'linux' }, async context => {
+    const setup = await runningFixture(context);
+    // 일반 터미널에서 CLAUDE_CONFIG_DIR로 계정 폴더를 지정한 Claude를 기본 범위(accountId 없음)로 물으면 대화를 추측하지 않는다.
+    const request = { ...setup.request, accountId: null };
+    assert.equal(await setup.sessions.observeSession(request), undefined);
+    await assert.rejects(setup.sessions.prepareResume(setup.target.id, request), /different configuration folder/);
+    assert.equal((await setup.sessions.observeSession(setup.request)).sessionId, SESSION_ID);
+});

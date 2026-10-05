@@ -5,8 +5,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { AccountProfiles, AccountProfile } = require('../account-profiles');
-const { AccountUsage, wslFileMapping } = require('../account-usage');
-const { applyStatusLine } = require('../claude-usage-settings');
+const { AccountUsage, wslFileMapping, claudeLogin, codexLoginId, codexLogin, uniqueLoginMatch, defaultLoginFile } = require('../account-usage');
+const { applyStatusLine, settingsTarget } = require('../claude-usage-settings');
 const usage = require('../usage-model');
 
 function fixture(
@@ -321,4 +321,145 @@ test('AU19 Codex live failures use available legacy limits but never turn an emp
     await assert.rejects(setup.reader.read(profile.id), error => error.statusCode === 503);
     writeRecord(path.join(scope.sessionsDirectory, '2026', '10', '05', 'rollout-fixture.jsonl'), codexRecord(21));
     assert.equal((await setup.reader.read(profile.id)).codex.windows[0].used, 21);
+});
+
+test('AU20 the default Claude sign-in is linked only to the saved account with the same account number', async context => {
+    const { directory, accounts, reader } = fixture(context);
+    const main = await accounts.create({ provider: 'claude', label: 'Main' });
+    const other = await accounts.create({ provider: 'claude', label: 'Other' });
+    await accounts.create({ provider: 'codex', label: 'Codex' });
+    const mainScope = await reader.resolve(main.id);
+    writeRecord(path.join((await reader.resolve(other.id)).configDir, '.claude.json'), { oauthAccount: { accountUuid: 'other-login' } });
+    writeRecord(path.join(mainScope.configDir, '.claude.json'), { oauthAccount: { accountUuid: 'main-login', emailAddress: 'main@example.com' } });
+    writeRecord(path.join(mainScope.usageDirectory, 'claude.json'), { rate_limits: { five_hour: { used_percentage: 30 } }, updated_at: 500 });
+    const match = await reader.matchClaudeLogin('main-login');
+    assert.equal(match.profile.label, 'Main');
+    assert.equal(match.record.updated_at, 500);
+    assert.equal(await reader.matchClaudeLogin('unknown-login'), null);
+    fs.writeFileSync(path.join(directory, 'half-written.json'), '{"oauthAccount":');
+    assert.equal(claudeLogin(path.join(directory, 'half-written.json')), null);
+    assert.equal(claudeLogin(path.join(directory, 'missing.json')), null);
+});
+
+/** 서명 없는 가짜 id_token. 본문(두 번째 조각)만 의미가 있다. */
+function fakeIdToken(
+    claims,
+) {
+    return ['e30', Buffer.from(JSON.stringify(claims)).toString('base64url'), 'signature'].join('.');
+}
+
+test('AU21 Codex 로그인 식별자는 계정 id(와 사용자 id)만 꺼내고 토큰은 돌려주지 않는다', () => {
+    assert.equal(codexLoginId({ tokens: { account_id: 'acc-1', access_token: 'secret-access', refresh_token: 'secret-refresh' } }), 'acc-1');
+    assert.equal(codexLoginId({ tokens: { account_id: 'acc-1', id_token: fakeIdToken({ sub: 'u-1' }) } }), 'acc-1/u-1');
+    assert.equal(codexLoginId({ tokens: { id_token: fakeIdToken({ 'https://api.openai.com/auth': { chatgpt_account_id: 'acc-2', chatgpt_user_id: 'u-2' } }) } }), 'acc-2/u-2');
+    assert.equal(codexLoginId({ tokens: { id_token: fakeIdToken({ 'https://api.openai.com/auth': { chatgpt_account_id: 'acc-3' } }) } }), 'acc-3');
+    assert.equal(codexLoginId({ tokens: { account_id: 'acc-4', id_token: 'not-a-jwt' } }), 'acc-4');
+    assert.equal(codexLoginId({ OPENAI_API_KEY: 'sk-secret' }), null);
+    assert.equal(codexLoginId({ tokens: { account_id: 42 } }), null);
+    assert.equal(codexLoginId(null), null);
+});
+
+test('AU22 로그인이 같은 등록 계정이 정확히 하나일 때만 연결하고, 없거나 둘 이상이면 연결하지 않는다', () => {
+    const A = { id: 'a' };
+    const B = { id: 'b' };
+    assert.equal(uniqueLoginMatch('x', [{ profile: A, login: 'x' }, { profile: B, login: 'y' }]), A);
+    assert.equal(uniqueLoginMatch('x', [{ profile: A, login: 'x' }, { profile: B, login: 'x' }]), null);
+    assert.equal(uniqueLoginMatch('x', [{ profile: A, login: 'y' }, { profile: B, login: null }]), null);
+    assert.equal(uniqueLoginMatch(null, [{ profile: A, login: null }]), null);
+    assert.equal(uniqueLoginMatch('', []), null);
+});
+
+test('AU23 기본 CLI의 로그인 파일은 실행 환경의 계정 변수로 정한다', () => {
+    const join = path.posix.join;
+    assert.equal(defaultLoginFile('claude', { HOME: '/home/me' }, join), '/home/me/.claude.json');
+    assert.equal(defaultLoginFile('claude', { HOME: '/home/me', CLAUDE_CONFIG_DIR: '/c' }, join), '/c/.claude.json');
+    assert.equal(defaultLoginFile('codex', { HOME: '/home/me' }, join), '/home/me/.codex/auth.json');
+    assert.equal(defaultLoginFile('codex', { HOME: '/home/me', CODEX_HOME: '/x' }, join), '/x/auth.json');
+    assert.equal(defaultLoginFile('codex', {}, join), null);
+    assert.equal(defaultLoginFile('bash', { HOME: '/home/me' }, join), null);
+});
+
+test('AU24 기본 Codex 로그인은 같은 로그인의 등록 Codex 계정 하나에만 연결되고, 같은 로그인이 둘이면 모호해 연결하지 않는다', async context => {
+    const { directory, accounts, reader } = fixture(context);
+    const main = await accounts.create({ provider: 'codex', label: 'Main' });
+    const other = await accounts.create({ provider: 'codex', label: 'Other' });
+    const claude = await accounts.create({ provider: 'claude', label: 'Claude' });
+    writeRecord(path.join((await reader.resolve(main.id)).configDir, 'auth.json'), { tokens: { account_id: 'acc-main', access_token: 'secret' } });
+    writeRecord(path.join((await reader.resolve(other.id)).configDir, 'auth.json'), { tokens: { account_id: 'acc-other' } });
+    writeRecord(path.join((await reader.resolve(claude.id)).configDir, '.claude.json'), { oauthAccount: { accountUuid: 'acc-main' } });
+    writeRecord(path.join(directory, '.codex', 'auth.json'), { tokens: { account_id: 'acc-main' } });
+    const login = codexLogin(path.join(directory, '.codex', 'auth.json'));
+    assert.equal(login, 'acc-main');
+    assert.equal((await reader.matchLogin({ provider: 'codex', login, runtime: 'native' })).id, main.id, '다른 도구의 같은 문자열 id는 대조하지 않는다');
+    assert.equal(await reader.matchLogin({ provider: 'codex', login, runtime: 'wsl', wslDistribution: 'Ubuntu' }), null, '다른 실행 환경의 계정은 대조하지 않는다');
+    assert.equal(await reader.matchLogin({ provider: 'codex', login: 'acc-unknown', runtime: 'native' }), null);
+    assert.equal(await reader.matchLogin({ provider: 'codex', login: null, runtime: 'native' }), null);
+    assert.equal(codexLogin(path.join(directory, 'missing.json')), null);
+
+    // 같은 로그인을 두 등록 계정이 쓰면 어느 쪽인지 단정할 수 없다. 새 읽기(캐시 없음)로 확인한다.
+    writeRecord(path.join((await reader.resolve(other.id)).configDir, 'auth.json'), { tokens: { account_id: 'acc-main' } });
+    const fresh = new AccountUsage({ accounts, readWslInfo: async () => { throw new Error('unused'); } });
+    assert.equal(await fresh.matchLogin({ provider: 'codex', login, runtime: 'native' }), null);
+});
+
+test('AU25 같은 로그인의 등록 Claude 계정이 둘이면 기본 Claude를 어느 쪽에도 연결하지 않는다', async context => {
+    const { accounts, reader } = fixture(context);
+    const first = await accounts.create({ provider: 'claude', label: 'First' });
+    const second = await accounts.create({ provider: 'claude', label: 'Second' });
+    for (const profile of [first, second]) writeRecord(path.join((await reader.resolve(profile.id)).configDir, '.claude.json'), { oauthAccount: { accountUuid: 'same-login' } });
+    assert.equal(await reader.matchClaudeLogin('same-login'), null);
+    assert.equal(await reader.matchClaudeLogin('same-login', { runtime: 'native' }), null);
+});
+
+test('AU26 계정을 추가·삭제하면 로그인 캐시가 남아 있어도 다음 대조에 바로 반영된다', async context => {
+    const { accounts, reader } = fixture(context);
+    const main = await accounts.create({ provider: 'codex', label: 'Main' });
+    writeRecord(path.join((await reader.resolve(main.id)).configDir, 'auth.json'), { tokens: { account_id: 'acc-main' } });
+    const request = { provider: 'codex', login: 'acc-main', runtime: 'native' };
+    assert.equal((await reader.matchLogin(request)).id, main.id);
+    // 같은 로그인의 두 번째 계정을 등록하면, 캐시 시간이 지나기 전이어도 모호해져 연결하지 않는다.
+    const second = await accounts.create({ provider: 'codex', label: 'Second' });
+    writeRecord(path.join((await reader.resolve(second.id)).configDir, 'auth.json'), { tokens: { account_id: 'acc-main' } });
+    assert.equal(await reader.matchLogin(request), null);
+    await accounts.remove(second.id);
+    assert.equal((await reader.matchLogin(request)).id, main.id);
+    assert.equal(reader.savedLoginCache.has(second.id), false, '지운 계정의 캐시는 남지 않는다');
+});
+
+test('AU27 기본 Claude 설정 파일이 링크면 링크를 끊지 않고 실제 파일에 상태 줄을 넣는다', { skip: process.platform === 'win32' }, context => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'paddock-settings-link-'));
+    context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+    const target = path.join(directory, 'dotfiles', 'settings.json');
+    writeRecord(target, { theme: 'dark' });
+    const link = path.join(directory, '.claude', 'settings.json');
+    fs.mkdirSync(path.dirname(link), { recursive: true });
+    fs.symlinkSync(target, link);
+    assert.equal(settingsTarget(link), fs.realpathSync(target));
+    const previousFile = path.join(directory, 'previous.json');
+    const state = applyStatusLine({ settingsPath: settingsTarget(link), previousFile, command: 'paddock-status', enabled: true, isAutomatic: true, toLocal: file => file });
+    assert.equal(state, 'on');
+    assert.equal(fs.lstatSync(link).isSymbolicLink(), true, 'the link stays a link');
+    assert.equal(JSON.parse(fs.readFileSync(target, 'utf8')).statusLine.command, 'paddock-status');
+    assert.equal(JSON.parse(fs.readFileSync(target, 'utf8')).theme, 'dark');
+    // 링크가 아니거나 아직 없는 파일은 그대로다. 대상이 없는 링크도 그대로 두어 applyStatusLine이 거부한다.
+    assert.equal(settingsTarget(target), target);
+    assert.equal(settingsTarget(path.join(directory, 'missing.json')), path.join(directory, 'missing.json'));
+    const dangling = path.join(directory, 'dangling.json');
+    fs.symlinkSync(path.join(directory, 'nowhere.json'), dangling);
+    assert.equal(settingsTarget(dangling), dangling);
+    assert.throws(() => applyStatusLine({ settingsPath: dangling, previousFile, command: 'x', enabled: true, isAutomatic: false, toLocal: file => file }), /redirected/);
+});
+
+test('AU28 같은 상태 줄 명령이 이미 들어 있으면 설정 파일을 다시 쓰지 않고 백업도 만들지 않는다', context => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'paddock-settings-same-'));
+    context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+    const settingsPath = path.join(directory, 'settings.json');
+    // 사용자가 손으로 쓴 서식(끝 줄바꿈 없음)을 그대로 둔다.
+    const original = '{"theme": "dark", "statusLine": {"type": "command", "command": "paddock-status"}}';
+    fs.writeFileSync(settingsPath, original);
+    const state = applyStatusLine({ settingsPath, previousFile: path.join(directory, 'previous.json'), command: 'paddock-status', enabled: true, isAutomatic: true, toLocal: file => file });
+    assert.equal(state, 'on');
+    assert.equal(fs.readFileSync(settingsPath, 'utf8'), original);
+    assert.equal(fs.existsSync(`${settingsPath}.paddock-backup`), false);
+    assert.equal(fs.existsSync(path.join(directory, 'previous.json')), false);
 });

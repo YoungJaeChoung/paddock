@@ -1,16 +1,23 @@
-/* Account names stay attached to their own limits, while the full list remains reachable at narrow widths. */
-.paddock-shell .statusbar { max-width: 100vw; }
+/* Account names stay attached to their own limits, while the full list remains reachable at narrow widths.
+   좁은 폭에서 넘침을 막는 일은 아래 status-left·#statusbar-right의 min-width: 0·overflow: hidden과 media 규칙이 맡는다.
+   상태 줄(.statusbar)의 폭은 Theia 레이아웃(Lumino)이 창 폭으로 정하므로 따로 상한을 두지 않는다.
+   Lumino는 맞춤 계산 때 상태 줄의 min/max-width·height를 px로 읽어 저장하고, 창 크기가 바뀌어도 다시 읽지 않는다.
+   그래서 이 값들에 vw·vh나 media 쿼리로 바뀌는 값을 두면 작은 창에서 계산한 폭으로 굳는다.
+   예: max-width: 100vw를 두면 작은 모니터에서 켠 창을 큰 모니터로 옮기거나 최대화할 때 상태 줄이 옛 폭으로 가운데에 남는다. */
 .paddock-shell .status-left { min-width: 0; overflow: hidden; }
 .paddock-shell #statusbar-right { min-width: 0; overflow: hidden; }
 .paddock-shell #statusbar-right > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.paddock-shell .status-right { flex-shrink: 0; gap: 8px; }
-.paddock-shell .ai-usage { align-items: center; gap: 8px; }
-/* Each provider owns its account name and limits inside one visible, clickable boundary. */
-.paddock-shell .account-usage-selected { box-sizing: border-box; min-width: 0; height: 22px; gap: 6px; padding: 0 8px; border: 1px solid var(--p-border); border-radius: 4px; background: color-mix(in srgb, var(--p-status-fg) 6%, var(--p-status-bg)); }
-.paddock-shell .account-usage-selected::before { display: none; }
+.paddock-shell .status-right { flex-shrink: 0; gap: 8px; margin-left: auto; }
+/* 줄 맞춤은 style.css의 stretch를 따른다 — 묶음마다 줄 높이 전체가 누르는 자리·hover 배경이 되어 Claude·Codex·Memory 높이가 같다. */
+.paddock-shell .ai-usage { gap: 8px; }
+/* Each provider keeps its account name beside its limits, separated like the memory gauge instead of boxed. */
+.paddock-shell .account-usage-selected { box-sizing: border-box; min-width: 0; gap: 6px; }
 .paddock-shell .account-usage-selected .source-name { flex-shrink: 0; font-weight: 600; }
 .account-usage-name { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--p-fg-muted); }
 .account-usage-state { color: var(--p-fg-muted); font-size: 12px; white-space: nowrap; }
+/* 지금 값이 아닐 수 있는 기록(오래되었거나 실시간 조회 대신 쓴 세션 기록): 게이지를 흐리게 하고 경과 시간을 붙인다. */
+.is-stale > .meter { opacity: 0.55; }
+.account-usage-age { flex-shrink: 0; color: var(--p-fg-muted); font-size: 11px; white-space: nowrap; }
 .paddock-shell .account-usage-selected .meter { margin-left: 2px; }
 .account-usage-compact { display: none; align-items: center; gap: 7px; min-width: 0; padding: 0 8px; border: 0; background: transparent; color: inherit; font: inherit; }
 .account-usage-compact.is-only { display: flex; }
@@ -39,6 +46,8 @@
 .account-usage-row-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .account-usage-row-title { display: flex; align-items: center; gap: 8px; }
 .account-usage-selected-badge { flex-shrink: 0; padding: 1px 5px; border-radius: 3px; background: var(--p-selected-bg); color: var(--p-fg-strong); font-size: 10px; }
+/* 기본 CLI(그냥 claude·codex)가 이 계정으로 로그인돼 있다는 표시. 상태 바 표시(채운 배지)와 구별되게 테두리만 둔다. */
+.account-usage-current-badge { background: transparent; border: 1px solid var(--p-popup-border); color: var(--p-fg-muted); padding: 0 4px; }
 .account-usage-environment { display: block; margin-top: 3px; color: var(--p-fg-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .account-usage-values { display: flex; flex-direction: column; justify-content: center; min-height: 42px; width: 100%; gap: 8px; margin-top: 2px; }
 .paddock-shell .account-usage-values .meter { display: grid; grid-template-columns: 44px minmax(0, 1fr) 42px; gap: 8px; width: 100%; }
@@ -54,26 +63,20 @@
     .paddock-shell .account-usage-selected { gap: 4px; padding-left: 7px; }
     .paddock-shell .account-usage-selected .source-name,
     .paddock-shell .account-usage-selected .meter ~ .meter,
-    .paddock-shell .memory-usage .source-name,
     .paddock-shell .memory-usage .meter-bar { display: none; }
+    /* Memory는 표지가 없으므로 이름은 숨기지 않는다 — 숨기면 무엇의 %인지 모르는 숫자만 남는다. */
     .account-usage-name { max-width: 58px; }
 }
-/* Two rows preserve the account and period when a narrow window or zoom leaves little room. */
+/* Keep the footer on one baseline even when another display changes the CSS viewport width. */
 @media (max-width: 600px) {
-    .paddock-shell .statusbar { min-height: 50px; max-height: 50px; padding-right: 8px; gap: 8px; }
+    .paddock-shell .statusbar { padding-right: 8px; gap: 8px; }
     .paddock-shell .status-left { flex-shrink: 0; }
     .paddock-shell #statusbar-right { display: none; }
-    .paddock-shell .status-right, .paddock-shell .ai-usage { flex: 1; min-width: 0; gap: 6px; }
-    .paddock-shell .account-usage-selected { display: grid; grid-template-columns: 12px minmax(0, 1fr); grid-template-rows: 18px 18px; align-content: center; flex: 1; height: 44px; gap: 0 4px; padding: 2px 6px; }
-    .paddock-shell .account-usage-selected .source-mark { grid-row: 1; grid-column: 1; }
-    .paddock-shell .account-usage-selected .account-usage-name { grid-row: 1; grid-column: 2; max-width: none; min-width: 0; text-align: left; }
-    .paddock-shell .account-usage-selected .meter,
-    .paddock-shell .account-usage-selected .account-usage-state { grid-row: 2; grid-column: 1 / -1; margin-left: 0; min-width: 0; }
-    .paddock-shell .account-usage-selected .meter { justify-content: space-between; }
-    .paddock-shell .account-usage-selected .account-usage-state { overflow: hidden; text-overflow: ellipsis; text-align: left; }
+    .paddock-shell .status-right, .paddock-shell .ai-usage { min-width: 0; gap: 6px; }
+    .paddock-shell .account-usage-selected .account-usage-name { display: none; }
+    .paddock-shell .account-usage-selected .account-usage-state { max-width: 64px; overflow: hidden; text-overflow: ellipsis; }
     .paddock-shell .memory-usage .usage-group { padding-left: 8px; }
     .paddock-shell .memory-usage .meter { margin-left: 0; }
-    .account-usage-popup { bottom: 56px; }
 }
 @media (max-width: 440px) {
     .account-usage-row-header { align-items: flex-start; flex-direction: column; gap: 8px; }

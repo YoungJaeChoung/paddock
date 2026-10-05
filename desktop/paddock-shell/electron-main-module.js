@@ -9,7 +9,7 @@ const { ContainerModule, injectable, decorate } = require('@theia/core/shared/in
 const { ElectronMainApplication } = require('@theia/core/lib/electron-main/electron-main-application');
 const { isOSX } = require('@theia/core/lib/common/os');
 const { moveLegacyDirectory } = require('./legacy-directory');
-const { isViewportStale } = require('./window-fit');
+const { isViewportStale, fillsWorkArea, boundsWithin } = require('./window-fit');
 
 // macOS에서만 의미 있는 창 옵션. Windows에서 titleBarStyle을 넘기면 창 틀과 닫기 버튼이 사라진다.
 const MAC_ONLY_WINDOW_OPTIONS = ['titleBarStyle', 'trafficLightPosition'];
@@ -106,6 +106,8 @@ const MAXIMIZE_CHECK_MS = 1500;
  * 최대화한 창의 내용이 창 크기를 따라오지 못하고 멈춰 있으면 최대화를 한 번 풀었다 다시 건다.
  * Windows에서 최대화한 창이 배율(DPI)이 다른 모니터에 걸리면 창 틀만 커지고 내용은 이전 크기로 남는 경우가 있다 —
  * 사용자가 최소화했다 복원해야 맞춰졌다. 정상이면 아무것도 하지 않고, 한 번 바로잡은 뒤에는 다시 시도하지 않는다.
+ * 최대화 표시만 남고 창이 작업 영역을 채우지 않으면 건드리지 않는다. 다시 걸 때는 지금 모니터에 다시 최대화한다 —
+ * 그렇지 않으면 창이 최대화 전 자리(다른 모니터일 수 있다)의 최대화 크기로 튄다.
  */
 function keepMaximizedContentFitted(
     window,
@@ -116,20 +118,28 @@ function keepMaximizedContentFitted(
     const check = () => {
         clearTimeout(timer);
         timer = setTimeout(async () => {
-            if (!window.isDestroyed() && window.isMaximized() && !window.isMinimized()) {
+            const workArea = window.isDestroyed() ? null : screen.getDisplayMatching(window.getBounds()).workArea;
+            if (workArea && window.isMaximized() && !window.isMinimized() && fillsWorkArea(window.getBounds(), workArea)) {
                 const viewport = await window.webContents.executeJavaScript('[innerWidth, innerHeight]').catch(() => null);
                 const isStale = Boolean(viewport) && isViewportStale(window.getContentSize(), viewport, window.webContents.getZoomFactor());
                 if (!isStale) {
                     n_refits = 0;
-                } else if (n_refits < 1) {
+                } else if (n_refits < 1 && !window.isDestroyed()) {
                     n_refits += 1;
                     window.unmaximize();
+                    // 최대화 전 자리가 다른 모니터면 지금 모니터 안으로 옮긴 뒤 다시 최대화한다.
+                    const restored = window.getBounds();
+                    const inside = boundsWithin(restored, workArea);
+                    if (inside.x !== restored.x || inside.y !== restored.y || inside.width !== restored.width || inside.height !== restored.height) window.setBounds(inside);
                     window.maximize();
                 }
             }
         }, MAXIMIZE_CHECK_MS);
     };
     window.on('maximize', check);
+    // Moving between existing displays does not emit display-metrics-changed.
+    window.on('moved', check);
+    window.on('resize', check);
     screen.on('display-metrics-changed', check);
     window.once('closed', () => {
         clearTimeout(timer);

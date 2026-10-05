@@ -16,7 +16,7 @@ class WorkPresenceRegistry {
         now = Date.now(),
     ) {
         const folders = Array.isArray(snapshot?.folders) ? snapshot.folders.filter(folder => typeof folder?.key === 'string').map(folder => ({ key: folder.key, expanded: folder.expanded !== false, label: typeof folder.label === 'string' ? folder.label : '' })) : [];
-        const terminals = Array.isArray(snapshot?.terminals) ? snapshot.terminals.filter(terminal => typeof terminal?.id === 'string' && typeof terminal?.folder === 'string' && typeof terminal?.name === 'string').map(terminal => ({ id: terminal.id, folder: terminal.folder, name: terminal.name, program: typeof terminal.program === 'string' ? terminal.program : '' })) : [];
+        const terminals = Array.isArray(snapshot?.terminals) ? snapshot.terminals.filter(terminal => typeof terminal?.id === 'string' && typeof terminal?.folder === 'string' && typeof terminal?.name === 'string').map(terminal => ({ id: terminal.id, folder: terminal.folder, name: terminal.name, program: typeof terminal.program === 'string' ? terminal.program : '', ...(Number.isSafeInteger(terminal.terminalId) && terminal.terminalId >= 0 ? { terminalId: terminal.terminalId } : {}) })) : [];
         this.windows.set(windowId, { updatedAt: now, folders, terminals });
         return this.list(windowId, now);
     }

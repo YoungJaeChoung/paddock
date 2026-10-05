@@ -17,6 +17,17 @@ test('C-agent-A1.1: 명령줄에서 프로그램 이름을 뽑고 에이전트�
     assert.equal(agent.isAgent('bash'), false);
 });
 
+test('C-account-idle-judge: 셸 이름만 빈 셸로 보고 셸이 실행한 스크립트·에이전트·다른 프로그램·모름은 빈 셸이 아니다', () => {
+    for (const argv of [['-bash'], ['/bin/zsh', '-l'], ['/usr/bin/fish'], ['C:\\Program Files\\PowerShell\\7\\pwsh.exe'], ['powershell.exe', '-NoLogo'], ['cmd.exe']]) {
+        assert.equal(agent.isShell(agent.programName(argv)), true, argv.join(' '));
+    }
+    for (const argv of [['/bin/bash', '/home/me/build.sh'], ['/home/me/.local/bin/claude'], ['node', 'server.js'], ['vim', 'a.txt']]) {
+        assert.equal(agent.isShell(agent.programName(argv)), false, argv.join(' '));
+    }
+    assert.equal(agent.isShell(null), false);
+    assert.equal(agent.isShell(undefined), false);
+});
+
 test('C-agent-A2.1: Enter 뒤 오래 일하던 에이전트가 조용해지면 한 번 알린다', () => {
     const { QUIET_MS, MIN_BUSY_MS } = agent.ACTIVITY;
     let a = agent.noteInput(agent.idle(), 'fix the bug\r', 0);
@@ -77,4 +88,30 @@ test('C-agent-A3.3: 한동안 조용하다가 Enter 없이 출력이 재개돼�
     assert.equal(agent.activityState(resumed, 5000, true), 'working');
     assert.equal(agent.settle(resumed, 5000 + QUIET_MS, true).finished, false, '무입력 출력은 완료 알림을 반복하지 않는다');
     assert.equal(agent.activityState(agent.noteOutput(agent.idle(), 0), 1, true), 'working', '시작 화면 출력도 최근 활동으로 표시한다');
+});
+
+test('C-agent-A3.4: 입력 후 출력이 없어도 3초 경계에서 Sent가 끝나고 Quiet가 된다', () => {
+    const sent = agent.noteInput(agent.idle(), '\r', 100);
+    assert.equal(agent.activityState(sent, 100 + agent.ACTIVITY.QUIET_MS - 1, true), 'waiting');
+    assert.equal(agent.activityState(sent, 100 + agent.ACTIVITY.QUIET_MS, true), 'quiet');
+    assert.equal(agent.activityState(sent, 60000, true), 'quiet');
+    const lateOutput = agent.noteOutput(sent, 60001);
+    assert.equal(agent.activityState(lateOutput, 60001, true), 'working');
+});
+
+test('C-agent-A3.5: 시작·입력·응답·재출력·셸 복귀를 빠짐없이 한 상태로 표시한다', () => {
+    const histories = [
+        [agent.idle(), ['quiet', 'quiet', 'quiet', 'quiet']],
+        [agent.noteInput(agent.idle(), '\r', 100), ['waiting', 'quiet', 'quiet', 'quiet']],
+        [agent.noteOutput(agent.idle(), 200), ['working', 'working', 'quiet', 'quiet']],
+        [agent.noteOutput(agent.noteInput(agent.idle(), '\r', 100), 200), ['working', 'working', 'quiet', 'quiet']],
+    ];
+    for (const [history, expectedStates] of histories) {
+        for (const [index, now] of [200, 3100, 3200, 10000].entries()) {
+            const expected = expectedStates[index];
+            assert.equal(agent.activityState(history, now, true), expected);
+            assert.equal(agent.activityState(history, now, false), null);
+            assert.equal(agent.activityState(history, now, null), 'unknown');
+        }
+    }
 });

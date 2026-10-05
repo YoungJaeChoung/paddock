@@ -74,7 +74,7 @@ body {
 .paddock-shell #theia-main-content-panel { background: var(--p-app-bg); }
 .paddock-shell .terminal-container { padding: 14px 20px; }
 
-/* 위쪽 줄: 작업 폴더 밖의 추가 터미널만 둔다. 높이는 28px로 낮춰 본문을 넓힌다. */
+/* Non-integrated title bars keep only a drag region and window controls. */
 .paddock-shell .paddock-tabbar { display: flex; align-items: flex-end; min-height: 28px; max-height: 28px; background: var(--p-titlebar-bg); border-bottom: 1px solid var(--p-border); -webkit-app-region: drag; }
 .paddock-shell .sidebar-toggle { display: grid; place-items: center; flex: none; align-self: center; width: 28px; height: 24px; margin: 0 4px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--p-fg-muted); -webkit-app-region: no-drag; }
 .paddock-shell .sidebar-toggle:hover { background: var(--p-hover-bg); color: var(--p-fg-strong); }
@@ -88,11 +88,9 @@ body {
 .paddock-shell .window-controls .is-maximized .icon-restore { display: block; }
 .paddock-shell .window-controls button:hover { background: var(--p-hover-bg); color: var(--p-fg-strong); }
 .paddock-shell .window-controls .window-close:hover { background: var(--p-danger-bg); color: var(--p-danger-fg); }
-.paddock-shell .paddock-tabbar .tab-strip { display: flex; flex: 0 1 auto; min-width: 0; height: 28px; align-items: flex-end; overflow-x: auto; border: 0; background: transparent; scrollbar-width: none; }
-.paddock-shell .paddock-tabbar .tab, .paddock-shell .folder-bar .tab { display: flex; align-items: center; flex: 0 0 170px; min-width: 110px; height: 24px; padding: 0 6px 0 10px; border-radius: 5px 5px 0 0; background: var(--p-tab-bg); color: var(--p-tab-fg); -webkit-app-region: no-drag; }
+.paddock-shell .folder-bar .tab { display: flex; align-items: center; flex: 0 0 170px; min-width: 110px; height: 24px; padding: 0 6px 0 10px; border-radius: 5px 5px 0 0; background: var(--p-tab-bg); color: var(--p-tab-fg); -webkit-app-region: no-drag; }
 /* 선택은 탭의 채움과 글자로 표시한다. 여러 탭 아래의 선이 본문 분할선과 이어져 보이지 않게 한다. */
-.paddock-shell .paddock-tabbar .tab.is-active, .paddock-shell .folder-bar .tab.is-active { background: var(--p-tab-active-bg); color: var(--p-fg-strong); }
-.paddock-shell .paddock-tabbar .tab.is-group { background: var(--p-tab-active-bg); color: var(--p-fg-strong); }
+.paddock-shell .folder-bar .tab.is-active { background: var(--p-tab-active-bg); color: var(--p-fg-strong); }
 .paddock-shell .tab-select { flex: 1; min-width: 0; overflow: hidden; border: 0; background: transparent; color: inherit; font-size: 12px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .paddock-shell .tab-close { display: grid; place-items: center; width: 18px; height: 18px; border: 0; border-radius: 4px; background: transparent; color: var(--p-fg-muted); }
 .paddock-shell .tab-close:hover { background: var(--p-hover-bg); color: var(--p-fg-strong); }
@@ -105,7 +103,8 @@ body {
 /* 탭은 줄이지 않는다 — 이름이 잘리면 "terminal 2"와 "terminal 11"이 모두 "termi…"가 되어 구분이 사라진다. 넘치면 스크롤·가장자리 흐림·활성 탭 따라가기로 처리한다. */
 .paddock-shell .folder-bar .tab { flex: 0 0 150px; height: 26px; }
 .paddock-shell .window-drag-space { flex: 1 0 72px; height: 100%; }
-.paddock-shell #shell-menu { position: fixed; inset: 28px auto auto 0; margin: 0; min-width: 220px; padding: 6px; border: 1px solid var(--p-popup-border); border-radius: 8px; background: var(--p-popup-bg); color: var(--p-fg); box-shadow: 0 12px 35px var(--theia-widget-shadow, #0007); -webkit-app-region: no-drag; }
+.paddock-shell #shell-menu { position: fixed; inset: 28px auto auto 0; margin: 0; min-width: 220px; max-width: calc(100vw - 16px); max-height: calc(100vh - 120px); overflow-y: auto; padding: 6px; border: 1px solid var(--p-popup-border); border-radius: 8px; background: var(--p-popup-bg); color: var(--p-fg); box-shadow: 0 12px 35px var(--theia-widget-shadow, #0007); -webkit-app-region: no-drag; }
+.paddock-shell .shell-menu-state { padding: 9px 12px; color: var(--p-fg-muted); font-size: 12px; }
 .paddock-shell .shell-option { display: block; width: 100%; padding: 9px 12px; font-size: 14px; color: var(--p-fg-strong); border: 0; border-radius: 4px; background: transparent; color: inherit; text-align: left; }
 .paddock-shell .shell-option:hover, .paddock-shell .shell-option:focus-visible { background: var(--p-selected-bg); }
 
@@ -124,6 +123,22 @@ body {
 
 /* Work 보기: 작업 폴더 → 작업 터미널 트리와 선택한 폴더의 파일. */
 .paddock-shell .section-header { display: flex; align-items: center; gap: 4px; width: 100%; height: 30px; padding: 0 10px 0 8px; border: 0; border-bottom: 1px solid var(--p-border-subtle); background: transparent; color: var(--p-fg-muted); font-size: 11px; font-weight: 700; letter-spacing: .3px; text-align: left; }
+.paddock-shell .files-toolbar { display: flex; align-items: center; gap: 4px; padding-right: 6px; border-bottom: 1px solid var(--p-border-subtle); }
+.paddock-shell .files-toolbar .section-header { flex: 1; min-width: 0; border-bottom: 0; }
+.paddock-shell .files-toolbar .section-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.paddock-shell .file-create { display: grid; place-items: center; flex: 0 0 24px; height: 24px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--p-fg-muted); }
+.paddock-shell .file-create:hover { background: var(--p-hover-bg); color: var(--p-fg-strong); }
+.paddock-shell .work-toolbar { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; height: 32px; border-bottom: 1px solid var(--p-border-subtle); background: var(--p-sidebar-bg); }
+.paddock-shell .work-toolbar .section-header { flex: 1; min-width: 0; border-bottom: 0; }
+.paddock-shell .work-actions { display: flex; flex: none; gap: 2px; padding-right: 8px; }
+.paddock-shell .work-actions button, .paddock-shell .work-close { display: grid; place-items: center; flex: none; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--p-fg-muted); }
+.paddock-shell .work-actions button:hover, .paddock-shell .work-close:hover { background: var(--p-hover-bg); color: var(--p-fg-strong); }
+.paddock-shell .unassigned-heading { padding: 10px 14px 4px; color: var(--p-fg-muted); font-size: 11px; }
+.paddock-shell .row-label { display: flex; flex: 1; flex-direction: column; justify-content: center; gap: 2px; min-width: 0; }
+.paddock-shell .row-title { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.paddock-shell .row-environment { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--p-fg-muted); font-size: 10px; line-height: 13px; }
+.paddock-shell .terminal-row.has-environment, .paddock-shell .terminal-row.has-environment .row-main { min-height: 42px; }
+.paddock-shell .unassigned-row .row-main { padding-left: 12px; }
 .paddock-shell .work-list { padding: 4px 0; }
 .paddock-shell .work-row { display: flex; align-items: center; width: 100%; min-height: 28px; padding-right: 8px; border: 0; border-left: 2px solid transparent; background: transparent; color: var(--p-fg-muted); text-align: left; }
 .paddock-shell .work-row:hover { background: var(--p-hover-bg); }
@@ -131,9 +146,9 @@ body {
 .paddock-shell .folder-row { color: var(--p-fg-soft); }
 .paddock-shell .folder-row.is-current { background: var(--p-current-bg); color: var(--p-fg-strong); font-weight: 600; }
 .paddock-shell .terminal-row .row-main { padding-left: calc(22px + var(--p-sidebar-indent, 12px)); }
-.paddock-shell .terminal-row.is-remote .row-main { cursor: default; }
+.paddock-shell .terminal-row.is-remote .row-main { cursor: pointer; }
 .paddock-shell .terminal-row.is-remote .row-meta { max-width: 92px; font-size: 11px; }
-.paddock-shell .terminal-row.is-current { border-left-color: var(--p-accent); background: var(--p-tab-active-bg); color: var(--p-fg-strong); }
+.paddock-shell .terminal-row.is-current { background: var(--p-tab-active-bg); color: var(--p-fg-strong); }
 .paddock-shell .row-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .paddock-shell .row-suffix, .paddock-shell .row-meta { flex: none; color: var(--p-fg-muted); font-size: 12px; }
 .paddock-shell .row-meta { max-width: 70px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -148,6 +163,11 @@ body {
     .paddock-shell .terminal-row[data-agent-state] .row-main { grid-column: 1 / -1; grid-row: 1; width: 100%; height: 26px; }
     .paddock-shell .terminal-row[data-agent-state] .row-meta { grid-column: 1; grid-row: 2; margin-left: calc(22px + var(--p-sidebar-indent, 12px)); line-height: 16px; }
     .paddock-shell .terminal-row[data-agent-state] .agent-status { grid-column: 2; grid-row: 2; margin-left: 0; line-height: 16px; }
+    .paddock-shell .terminal-row.has-environment[data-agent-state] { grid-template-rows: 42px 16px; }
+    .paddock-shell .unassigned-row[data-agent-state] { grid-template-columns: minmax(0, 1fr) 65px 24px; }
+    .paddock-shell .unassigned-row[data-agent-state] .row-main { grid-column: 1 / 3; }
+    .paddock-shell .unassigned-row[data-agent-state] .row-meta { margin-left: 12px; }
+    .paddock-shell .unassigned-row[data-agent-state] .work-close { grid-column: 3; grid-row: 1 / 3; align-self: center; }
 }
 .paddock-shell .folder-row.is-current .row-meta { color: var(--p-fg-soft); }
 .paddock-shell .prompt-mark { font-family: ui-monospace, monospace; font-size: 11px; color: var(--p-fg-muted); }
@@ -161,6 +181,9 @@ body {
 .paddock-shell .work-steps li { padding: 4px 0; color: var(--p-fg-soft); }
 .paddock-shell .work-command { display: block; margin-top: 6px; color: var(--p-fg-strong); font: 12px/1.5 ui-monospace, monospace; overflow-wrap: anywhere; }
 .paddock-shell .work-empty-note { line-height: 1.6; }
+/* 본문에 화면도 열린 터미널도 없을 때의 안내. 본문 가운데에 두고 클릭은 아래로 통과시킨다. */
+.paddock-shell #theia-main-content-panel > .main-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; text-align: center; }
+.paddock-shell #theia-main-content-panel > .main-empty[hidden] { display: none; }
 .paddock-shell .file-list { padding: 4px 0; }
 .paddock-shell .file-row { display: flex; align-items: center; gap: 5px; width: 100%; height: 26px; padding-right: 12px; border: 0; background: transparent; color: var(--p-fg-muted); text-align: left; }
 .paddock-shell .file-row.is-file .codicon-file { margin-left: 18px; }
@@ -172,11 +195,19 @@ body {
 .paddock-menu .menu-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 12px; color: var(--p-fg-strong); border: 0; border-radius: 4px; background: transparent; color: inherit; text-align: left; }
 .paddock-menu .menu-item:hover { background: var(--p-selected-bg); }
 .paddock-menu .menu-item.is-danger { color: var(--p-danger); }
+.paddock-menu .menu-item-label { flex: 1; }
+.paddock-menu .menu-item-meta { color: var(--p-fg-muted); font-size: 12px; }
+.paddock-menu .menu-item-meta:empty { display: none; }
 .paddock-menu .menu-note { margin: 0; padding: 2px 12px 8px 38px; color: var(--p-fg-muted); font-size: 12px; line-height: 1.45; }
 
 /* 본문 칸의 탭 줄은 현재 항목 하나만 보이는 경로 줄로 쓴다. */
 .paddock-shell #theia-main-content-panel .lm-TabBar { position: relative; min-height: 30px; max-height: 30px; background: var(--p-tabs-header-bg); border-bottom: 1px solid var(--p-border-subtle); }
 .paddock-shell #theia-main-content-panel .lm-TabBar > :not(.path-bar) { visibility: hidden; }
+/* 분할 중에는 DockPanel의 실제 탭을 쓴다. 탭을 다른 칸으로 끌면 이동하고 빈 칸은 합쳐진다. */
+.paddock-shell #theia-main-content-panel.has-split-tabs .lm-TabBar > :not(.path-bar) { visibility: visible; }
+.paddock-shell #theia-main-content-panel.has-split-tabs .path-bar { display: none; }
+.paddock-shell .folder-bar.has-split-tabs > .folder-tabs,
+.paddock-shell .folder-bar.has-split-tabs > .tabs-scroll { display: none; }
 .paddock-shell .path-bar { position: absolute; inset: 0; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 16px; color: var(--p-fg-muted); font-size: 12px; white-space: nowrap; }
 .paddock-shell .path-bar.is-active { background: var(--p-current-bg); box-shadow: inset 0 -2px var(--p-tab-active-border); }
 .paddock-shell .path-bar .codicon { font-size: 13px; color: var(--p-fg-muted); }
@@ -192,6 +223,10 @@ body {
 
 /* 상태 줄: 왼쪽 원격 표시·PADDOCK, 오른쪽 상태·메모리. */
 .paddock-shell .statusbar { display: flex; align-items: stretch; justify-content: space-between; padding: 0 13px 0 0; border-top: 1px solid var(--p-status-border); background: var(--p-status-bg); color: var(--p-status-fg); font-size: 12px; }
+/* 상태 줄과 탭 줄은 앱 틀이라 글자를 고르지 않는다. 더블클릭·전체 선택(Ctrl+A)으로 틀 글자가 파랗게 칠해지지 않게 한다. */
+.paddock-shell .statusbar, .paddock-shell .folder-bar { user-select: none; }
+/* 틀에서 여는 팝업(사용량 목록·계정 메뉴)의 안내·오류 문구는 복사할 수 있게 둔다. */
+.paddock-shell .statusbar [popover], .paddock-shell .folder-bar [popover] { user-select: text; }
 .paddock-shell .status-left, .paddock-shell .status-right { display: flex; align-items: center; gap: 12px; }
 .paddock-shell .remote-indicator { display: flex; align-items: center; gap: 5px; height: 100%; padding: 0 8px; border: 0; background: var(--p-remote-bg); color: var(--p-remote-fg); font-size: 12px; }
 .paddock-shell .remote-indicator:hover { background: var(--p-selected-bg); }
@@ -200,12 +235,7 @@ body {
 /* 묶음이 상태 줄 높이를 다 차지해야 Claude 묶음(끄기 버튼)의 누르는 자리와 hover 배경이 줄 높이만큼 된다. */
 .paddock-shell .status-right > .usage-group { align-self: stretch; }
 .paddock-shell .memory-usage { display: flex; align-items: stretch; align-self: stretch; }
-/* 꺼진 항목은 표지·이름만 흐리게 남겨, 다시 눌러 켤 수 있음을 보인다. */
-.paddock-shell .usage-group.is-off .source-mark,
-.paddock-shell .usage-group.is-off .source-name { color: var(--p-fg-muted); opacity: 0.55; }
-.paddock-shell .usage-group.is-off:hover .source-mark,
-.paddock-shell .usage-group.is-off:hover .source-name { opacity: 0.9; }
-/* 출처 묶음(Claude·Codex·Memory): 앞에 가는 구분선, 표지·이름 한 번, 그 뒤 창별 게이지. */
+/* 출처 묶음(Claude·Codex·Memory): 앞에 가는 구분선, 표지·이름 한 번(Memory는 이름만), 그 뒤 창별 게이지. */
 .paddock-shell .usage-group { display: flex; align-items: center; gap: 5px; position: relative; height: 100%; padding: 0 2px 0 16px; border: 0; background: transparent; color: inherit; font: inherit; }
 .paddock-shell .usage-group::before { content: ""; position: absolute; left: 0; top: 50%; width: 1px; height: 14px; margin-top: -7px; background: var(--p-border); }
 .paddock-shell button.usage-group { cursor: pointer; }
@@ -236,10 +266,14 @@ body {
 .paddock-shell .save-action { border: 0; padding: 2px 8px; border-radius: 3px; background: var(--p-save-bg); color: var(--p-save-fg); font: inherit; }
 .paddock-shell button:disabled { opacity: .5; cursor: wait; }
 .paddock-shell .view-host.is-drop-target { outline: 2px dashed var(--p-accent); outline-offset: -4px; background: var(--p-current-bg); }
-/* 에이전트가 끝났는데 아직 안 본 터미널: 줄·탭에 초록 점. 그 터미널을 열면 사라진다. */
+.paddock-shell .unseen-dot { flex: none; }
+/* 긴 출력이 멎은 미확인 알림. 완료를 확정하지 않으며 해당 터미널을 실제로 확인하면 지워진다. */
 .paddock-shell .terminal-row.is-done .row-meta { color: var(--p-accent); }
-.paddock-shell .terminal-row.is-done .row-meta::before,
+.paddock-shell .unseen-dot,
+.paddock-shell .lm-TabBar-tab.has-unseen-activity .lm-TabBar-tabLabel::after,
 .paddock-shell .tab.is-done .tab-select::after { content: ""; display: inline-block; width: 6px; height: 6px; margin: 0 5px 1px 0; border-radius: 50%; background: var(--p-accent); vertical-align: middle; }
+.paddock-shell .unseen-dot,
+.paddock-shell .lm-TabBar-tab.has-unseen-activity .lm-TabBar-tabLabel::after,
 .paddock-shell .tab.is-done .tab-select::after { margin: 0 0 1px 6px; }
 
 /* Theia 팝업(확인·입력 창, 알림)을 폴더 메뉴와 같은 모양으로 맞춘다. 팝업은 창 틀 밖(body)에 붙으므로 body에서 색 변수를 덮어쓴다.
@@ -288,9 +322,9 @@ body .theia-button.secondary:hover { background: var(--theia-button-secondaryHov
 .quick-input-widget .monaco-list-row { font-size: 13px; }
 
 /* 탭이 줄을 넘치면 오른쪽 가장자리를 흐려 더 있다는 것을 알린다. 활성 탭은 코드가 보이는 자리로 스크롤한다. */
-.paddock-shell .tab-strip.is-overflowing, .paddock-shell .folder-tabs.is-overflowing { mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); }
-.paddock-shell .tab-strip.is-scrolled, .paddock-shell .folder-tabs.is-scrolled { mask-image: linear-gradient(to right, transparent, #000 32px); }
-.paddock-shell .tab-strip.is-scrolled.is-overflowing, .paddock-shell .folder-tabs.is-scrolled.is-overflowing { mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent); }
+.paddock-shell .folder-tabs.is-overflowing { mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); }
+.paddock-shell .folder-tabs.is-scrolled { mask-image: linear-gradient(to right, transparent, #000 32px); }
+.paddock-shell .folder-tabs.is-scrolled.is-overflowing { mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent); }
 
 /* 칸이 둘 이상일 때 입력이 가지 않는 칸은 흐리게(Ghostty의 unfocused-split-opacity와 같은 방식). */
 .paddock-shell .is-inactive-pane { opacity: 0.78; transition: opacity 120ms; }
@@ -341,9 +375,9 @@ body .theia-button.secondary:hover { background: var(--theia-button-secondaryHov
 /* 키보드 초점은 모든 Paddock 조작 요소에서 2px 초록 테두리로 분명히 */
 .paddock-shell button:focus-visible, .paddock-shell select:focus-visible, .paddock-menu button:focus-visible { outline: 2px solid var(--p-accent); outline-offset: -2px; }
 /* 왼쪽에서 잘린 탭은 숨긴다(닫기 ×만 남아 잘못 누르지 않게). ‹ 버튼으로 앞 탭을 본다. */
-.paddock-shell .folder-bar .tab.is-clipped, .paddock-shell .paddock-tabbar .tab.is-clipped { visibility: hidden; }
+.paddock-shell .folder-bar .tab.is-clipped { visibility: hidden; }
 /* 탭 위치(offsetLeft)를 탭 줄 스크롤 좌표로 재도록 탭 줄을 위치 기준 요소로 둔다(넘김 버튼·여백만큼 어긋나지 않게). */
-.paddock-shell .folder-tabs, .paddock-shell .paddock-tabbar .tab-strip { position: relative; }
+.paddock-shell .folder-tabs { position: relative; }
 
 /* 저장하지 않은 파일은 다른 탭을 보아도 점이 남는다. 닫기 버튼은 그대로 둬 저장 확인으로 이어지게 한다. */
 .paddock-shell .tab-unsaved { flex: none; width: 6px; height: 6px; margin: 0 5px; border-radius: 50%; background: var(--p-fg-strong); }
@@ -374,3 +408,18 @@ body .theia-button.secondary:hover { background: var(--theia-button-secondaryHov
 .account-menu-hint { margin: 5px 8px 8px; color: var(--p-fg-muted); font-size: 11px; line-height: 1.5; }
 .account-menu-manage { margin-top: 6px; border-top: 1px solid var(--p-border) !important; }
 .ai-usage[hidden] { display: none; }
+.paddock-tab-drag {
+    position: fixed;
+    z-index: 10000;
+    pointer-events: none;
+    padding: 8px 12px;
+    border: 1px solid var(--theia-panel-border);
+    border-radius: 6px;
+    background: var(--theia-editor-background);
+    color: var(--theia-editor-foreground);
+    box-shadow: 0 4px 16px #0004;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.paddock-tab-dock-preview { position: fixed; z-index: 9998; pointer-events: none; border: 2px solid var(--p-accent); background: color-mix(in srgb, var(--p-accent) 18%, transparent); }

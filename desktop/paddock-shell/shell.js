@@ -28,13 +28,10 @@ function savedSidebarWidth() {
 }
 
 /**
- * Paddock가 창 틀(추가 터미널 줄·사이드바·작업 폴더 탭 줄·상태 줄)을 그리고 본문은 Theia 편집 영역을 쓴다.
- *
- * 내부 터미널·파일 탭 줄은 창 맨 위가 아니라 본문 바로 위에 둔다. 맨 위 줄은 새 터미널 묶음용이라,
- * 두 줄이 같은 높이에 있으면 어느 ＋가 어느 폴더에 여는지 헷갈린다.
+ * Work navigation lives in the sidebar; the body tabs switch terminals and files inside the selected work.
  *
  * 본문은 여러 칸으로 나눌 수 있게 multiple-document 모드로 둔다. 칸마다 생기는 탭 줄은
- * 현재 항목 하나만 보이는 경로 줄로 꾸민다(workspace.js가 내용을 채운다).
+ * 분할 중에는 실제 탭을 쓰고 한 칸일 때는 경로 줄로 꾸민다(workspace.js가 내용을 채운다).
  */
 class PaddockShell extends ApplicationShell {
     createLayout() {
@@ -47,16 +44,15 @@ class PaddockShell extends ApplicationShell {
         this.mainPanel.mode = 'multiple-document';
         this.header = new Widget({ node: markup.header() });
         this.sidebar = new Widget({ node: markup.sidebar() });
-        const sidebarToggle = this.header.node.querySelector('.sidebar-toggle');
+        this.folderBar = new Widget({ node: markup.folderBar() });
+        const sidebarToggle = this.folderBar.node.querySelector('.sidebar-toggle');
         sidebarToggle.setAttribute('aria-keyshortcuts', isOSX ? 'Meta+B' : 'Control+B');
         sidebarToggle.addEventListener('click', () => this.toggleSidebar());
-        this.tabs = { node: this.header.node.querySelector('#tab-strip') };
         this.footer = new Widget({ node: markup.footer() });
         // Recalculate the workspace when zoom or a narrow window changes the footer's CSS height.
         const footerResize = new ResizeObserver(() => this.fit());
         footerResize.observe(this.footer.node);
         this.disposed.connect(() => footerResize.disconnect());
-        this.folderBar = new Widget({ node: markup.folderBar() });
         // 작업 폴더가 없어도 빈 탭 줄은 남긴다. workspace.js가 선택한 폴더의 탭과 버튼을 채운다.
         const body = new Panel({ layout: this.createBoxLayout(
             [this.folderBar, this.mainPanel], [0, 1], { direction: 'top-to-bottom', spacing: 0 },
@@ -99,7 +95,7 @@ class PaddockShell extends ApplicationShell {
     setSidebarVisible(
         visible,
     ) {
-        const toggle = this.header.node.querySelector('.sidebar-toggle');
+        const toggle = this.folderBar.node.querySelector('.sidebar-toggle');
         if (!visible) {
             // 빠른 설정이 열린 채 본체만 사라지지 않도록 함께 닫는다.
             for (const popover of this.sidebar.node.querySelectorAll('[popover]:popover-open')) popover.hidePopover();
@@ -133,6 +129,14 @@ class PaddockShell extends ApplicationShell {
     async activateWidget(
         id,
     ) {
+        const widget = this.getWidgetById(id);
+        if (widget?.secondaryWindow) {
+            // The main document's focus tracker cannot wait for focus in a
+            // different native window. Select the existing view there directly.
+            widget.secondaryWindow.focus();
+            widget.activate();
+            return widget;
+        }
         this.beforeActivate?.(id);
         return super.activateWidget(id);
     }
@@ -142,7 +146,7 @@ class PaddockShell extends ApplicationShell {
         options,
     ) {
         // 터미널은 아래 패널이 아니라 본문 칸에 연다. 본문이 이미 터미널이라 자리를 하나로 둔다.
-        const target = widget instanceof TerminalWidget ? { ...options, area: 'main' } : options;
+        const target = widget instanceof TerminalWidget && options?.area !== 'secondaryWindow' ? { ...options, area: 'main' } : options;
         await super.addWidget(widget, target);
     }
 
