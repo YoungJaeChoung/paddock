@@ -106,7 +106,7 @@ test('AA07 화면 범위는 실행 중인 도구의 계정이 이기고, 도구�
 test('AA08 범위 이름은 계정 이름, 미등록 폴더, Current CLI 중 하나다', () => {
     assert.equal(scopeName(WORK_CODEX), 'Work Codex');
     assert.equal(scopeName({ provider: 'codex', custom: true }), 'Unregistered folder');
-    assert.equal(scopeName({ provider: 'codex' }), 'Current CLI');
+    assert.equal(scopeName({ provider: 'codex' }), 'Default');
 });
 
 test('AA09 계정 터미널에서 같은 도구를 다른 설정 폴더로 실행하면 터미널을 연 계정이 아니라 감지 결과를 따른다', () => {

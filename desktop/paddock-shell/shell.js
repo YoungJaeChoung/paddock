@@ -157,8 +157,10 @@ class PaddockShell extends ApplicationShell {
         let confirmed = true;
         if (terminals.length) {
             const dialog = new ConfirmDialog({
-                title: terminals.length > 1 ? `Close ${terminals.length} terminals` : 'Close terminal',
-                msg: 'Running shells and commands in these terminals will stop.',
+                // 하나면 어느 터미널인지 이름으로 밝힌다. 여럿이면 수를 보인다.
+                title: terminals.length > 1 ? `Close ${terminals.length} terminals` : `Close ${this.terminalName?.(terminals[0]) || terminals[0].title.label}`,
+                msg: terminals.length > 1 ? 'The shells and any commands running in these terminals will stop.'
+                    : 'The shell and any command running in this terminal will stop.',
                 ok: 'Close',
                 cancel: 'Cancel',
             });

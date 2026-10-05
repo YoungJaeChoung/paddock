@@ -11,7 +11,7 @@ class AgentAccount {
     static READ = Object.freeze(['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'HOME']);
     static KINDS = Object.freeze({ DEFAULT: 'default', PROFILE: 'profile', CUSTOM: 'custom' });
     static CUSTOM_NAME = 'Unregistered folder';
-    static CURRENT_NAME = 'Current CLI';
+    static CURRENT_NAME = 'Default';
 }
 
 /**
@@ -180,7 +180,7 @@ function runningScope(
 }
 
 /**
- * 범위의 계정 이름: 등록 계정은 그 이름, 미등록 폴더는 'Unregistered folder', 기본 범위는 'Current CLI'.
+ * 범위의 계정 이름: 등록 계정은 그 이름, 미등록 폴더는 'Unregistered folder', 기본 범위는 'Default'.
  * 기본 범위라도 로그인이 등록 계정 하나와 같다고 확인됐으면(linked) 그 계정 이름이다.
  */
 function scopeName(

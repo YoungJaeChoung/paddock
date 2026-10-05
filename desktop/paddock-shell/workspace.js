@@ -511,6 +511,8 @@ class PaddockWorkspace {
         window.addEventListener('blur', releasePointer);
         this.shell = this.container.get(ApplicationShell);
         this.shell.beforeActivate = id => this.showRootOf(this.shell.getWidgetById(id));
+        // 닫기 확인창이 셸 제목(bash 등) 대신 탭·Work에 보이는 이름으로 대상을 밝힌다.
+        this.shell.terminalName = terminal => this.terminalDisplayName(terminal);
         this.messages = this.container.get(MessageService);
         this.files = this.container.get(FileService);
         this.terminals = this.container.get(TerminalService);
@@ -1077,8 +1079,8 @@ class PaddockWorkspace {
 
     /**
      * 사이드바 행에 붙일 실행 중 계정 이름. 실행 중인 도구의 계정 표시(`도구 · 계정`)가 행 이름과 같거나 비어 있으면 빈 문자열이다.
-     * 예: 일반 터미널에서 등록 계정 폴더로 codex 실행 → 'Work Codex', Claude 계정 터미널에서 기본 codex 실행 → 'Current CLI'.
-     * 기본 codex의 로그인이 등록 계정 'Work Codex' 하나와 같다고 확인되면 'Current CLI' 대신 'Work Codex'다.
+     * 예: 일반 터미널에서 등록 계정 폴더로 codex 실행 → 'Work Codex', Claude 계정 터미널에서 기본 codex 실행 → 'Default'.
+     * 기본 codex의 로그인이 등록 계정 'Work Codex' 하나와 같다고 확인되면 'Default' 대신 'Work Codex'다.
      */
     rowAccountName(
         terminal,
@@ -1086,6 +1088,15 @@ class PaddockWorkspace {
     ) {
         const label = this.runningAccountLabel(terminal);
         return label && label !== rowName ? agentAccount.scopeName(this.runningScope(terminal)) : '';
+    }
+
+    /** 탭과 Work 목록에 보이는 터미널 이름. 작업 폴더 터미널은 폴더 안 이름, 그 밖에는 Unassigned 이름이다. */
+    terminalDisplayName(
+        terminal,
+    ) {
+        const folder = model.folderOf(this.state, terminal.id);
+        const row = folder && model.terminalRows(this.state, folder).find(item => item.id === terminal.id);
+        return row ? `${row.name}${row.suffix}` : this.unassignedName(terminal);
     }
 
     /** 터미널에서 지금 실행 중인 프로그램 이름. 아직 모르면 터미널 제목(셸 이름)이다. */
@@ -1119,17 +1130,24 @@ class PaddockWorkspace {
 
     /**
      * Unassigned 터미널 기본 이름(`terminal N`)의 번호. 처음 부를 때 다른 Unassigned 터미널이 쓰지 않는 가장 작은 번호를 정해 터미널에 붙인다.
-     * 번호는 Unassigned 안에서만 겹치지 않게 고른다. 작업 폴더 터미널은 폴더마다 따로 번호를 매긴다(model.folderTerminalName).
+     * 번호는 Work 목록 전체(Unassigned와 작업 폴더 터미널의 `terminal N`)에서 겹치지 않게 고른다(model.folderTerminalName과 같은 규칙).
      */
     terminalNumber(
         terminal,
     ) {
         if (!(terminal.paddockNumber > 0)) {
-            const used = new Set(this.terminals.all.filter(item => item !== terminal && !this.state.terminals[item.id])
-                .map(item => item.paddockNumber).filter(Boolean));
+            const used = new Set([...this.unassignedNumbers(terminal), ...model.usedTerminalNumbers(this.state)]);
             terminal.paddockNumber = model.freeTerminalNumber(used);
         }
         return terminal.paddockNumber;
+    }
+
+    /** 작업 폴더에 속하지 않은 터미널이 기본 이름에 쓰고 있는 번호. `except`는 번호를 새로 받을 터미널이다. */
+    unassignedNumbers(
+        except = null,
+    ) {
+        return new Set(this.terminals.all.filter(item => item !== except && !this.state.terminals[item.id])
+            .map(item => item.paddockNumber).filter(Boolean));
     }
 
     /** Reuses the selected shell, without carrying account launch commands into a plain new terminal. */
@@ -2016,6 +2034,8 @@ class PaddockWorkspace {
 
     async updateAccountLabels() {
         const profiles = await this.accounts.list();
+        // ＋가 메뉴 없이 바로 터미널을 열지 정할 때 쓴다. 아직 읽은 적 없으면 값이 없어 메뉴를 띄운다.
+        this.n_knownAccounts = profiles.length;
         let changed = false;
         for (const terminal of this.terminals.all) {
             const previous = terminal.options?.paddockAccount;
@@ -2390,7 +2410,7 @@ class PaddockWorkspace {
             : model.terminalsOf(this.state, folderKey).map(id => this.shell.getWidgetById(id)).find(Boolean);
         const terminal = await this.createTerminal(folderKey, this.profileForTerminal(source));
         // 폴더의 첫 터미널도 Unassigned와 같은 `terminal N` 규칙이다(폴더마다 1부터). 번호는 지금 정해 이름에 저장하므로 다른 터미널을 닫아도 바뀌지 않는다.
-        this.state = model.assignTerminal(this.state, terminal.id, folderKey, model.folderTerminalName(this.state, folderKey));
+        this.state = model.assignTerminal(this.state, terminal.id, folderKey, model.folderTerminalName(this.state, this.unassignedNumbers()));
         this.cwdCache.set(terminal.id, folderKey);
         this.selectedFolder = model.folderOf(this.state, terminal.id);
         await this.save();
@@ -2670,8 +2690,9 @@ class PaddockWorkspace {
         const key = JSON.stringify([
             merged.state.folders, rows, currentId, this.workExpanded, this.filesExpanded, filesFolder, directory,
             current?.getResourceUri?.()?.toString(), this.sidebarIndent(),
-            [...this.doneIds], selectedRoot, unassigned.map(terminal => [terminal.id, this.unassignedName(terminal), this.programOf(terminal), this.runningAccountLabel(terminal), this.terminalEnvironment(terminal),
-                this.cwdCache.get(terminal.id), this.doneIds.has(terminal.id), this.innerTabIds(terminal.id).length]),
+            [...this.doneIds], selectedRoot, [...new Set(this.terminals.all.map(terminal => this.terminalEnvironment(terminal)))], unassigned.map(terminal => [terminal.id, this.unassignedName(terminal), this.programOf(terminal), this.runningAccountLabel(terminal), this.terminalEnvironment(terminal),
+                this.cwdCache.get(terminal.id), this.doneIds.has(terminal.id), this.innerTabIds(terminal.id).length,
+                agent.activityState(this.activity.get(terminal.id) ?? agent.idle(), Date.now(), this.programs.has(terminal.id) ? agent.isAgent(this.programs.get(terminal.id)) : null)]),
             rows.map(row => {
                 const terminal = this.shell.getWidgetById(row.id);
                 return [this.remoteWorkRows.get(row.id), terminal ? this.programOf(terminal) : '', terminal ? this.runningAccountLabel(terminal) : '', terminal ? this.terminalEnvironment(terminal) : '', this.doneIds.has(row.id),
@@ -2686,12 +2707,15 @@ class PaddockWorkspace {
             if (this.workExpanded) {
                 const list = element('div', 'work-list');
                 list.id = 'work-list';
-                if (!merged.state.folders.length && !unassigned.length) {
+                // 처음 켜면 기본 터미널이 Unassigned에 하나 있으므로, 작업 폴더가 없으면 그 터미널이 있어도 시작 안내를 보인다.
+                if (!merged.state.folders.length) {
                     // 작업 폴더는 에이전트를 실행하면 생긴다. 등록 버튼 대신 그 다음 행동을 알려 준다.
                     list.append(element('p', 'work-empty-title', 'Start a work session'));
                     list.append(element('p', 'work-empty', 'No work folders yet.'));
                     const steps = element('ol', 'work-steps');
-                    steps.append(element('li', '', 'Use + to open a terminal, or choose an environment with the arrow.'));
+                    // 이미 열린 터미널이 있으면 그 터미널을 쓰면 되므로 새로 열기를 첫 단계로 요구하지 않는다.
+                    steps.append(element('li', '', unassigned.length ? 'Use the terminal under Unassigned, or + for another.'
+                        : 'Use + to open a terminal, or choose an environment with the arrow.'));
                     const directoryStep = element('li', '', 'Go to your project in the terminal.');
                     directoryStep.append(element('code', 'work-command', 'cd /path/to/project'));
                     const agentStep = element('li', '', 'Run claude or codex.');
@@ -2699,6 +2723,9 @@ class PaddockWorkspace {
                     list.append(steps);
                     list.append(element('p', 'work-empty work-empty-note', 'Its terminals and files will appear here together.'));
                 }
+                // 실행 환경 줄(예: bash · Linux, WSL · Ubuntu)은 환경이 둘 이상 섞일 때만 터미널을 가르는 정보가 된다.
+                // 모두 같으면 행마다 같은 글자가 반복될 뿐이라 숨기고, 행의 도움말에만 남긴다.
+                this.showEnvironments = new Set(this.terminals.all.map(terminal => this.terminalEnvironment(terminal))).size > 1;
                 for (const row of rows) {
                     list.append(this.renderRow(row, currentId));
                 }
@@ -2723,7 +2750,7 @@ class PaddockWorkspace {
                         }
                         // 행은 묶음 전체를 가리키므로 x는 묶음의 모든 터미널을 닫는다. 확인 창이 닫을 터미널 수를 보여 준다.
                         const close = button([codicon('close')], 'work-close', () => this.run(() => this.closeTerminalGroup(terminal.id)));
-                        close.setAttribute('aria-label', n_terminals > 1 ? `Close ${n_terminals} terminals in this group` : `Close ${this.programOf(terminal)} · ${this.terminalEnvironment(terminal)}`);
+                        close.setAttribute('aria-label', n_terminals > 1 ? `Close ${n_terminals} terminals in this group` : `Close ${this.unassignedName(terminal)}`);
                         close.title = close.getAttribute('aria-label');
                         row.append(close);
                         list.append(row);
@@ -2835,23 +2862,28 @@ class PaddockWorkspace {
             if (unseen) title.append(element('span', 'unseen-dot'));
             const label = element('span', 'row-label');
             label.append(title);
-            if (terminal) label.append(element('span', 'row-environment', this.terminalEnvironment(terminal)));
+            const showEnvironment = Boolean(terminal) && this.showEnvironments;
+            if (showEnvironment) label.append(element('span', 'row-environment', this.terminalEnvironment(terminal)));
             // Unassigned 행은 묶음을 가리키므로 그 묶음에서 마지막으로 쓴 터미널로 돌아간다.
             const select = button([element('span', 'prompt-mark', '›_'), label], 'row-main', () => this.run(() => this.activate(row.unassigned ? this.groupTerminal(row.id) : row.id)));
             select.dataset.widgetId = row.id;
-            if (terminal) node.classList.add('has-environment');
+            if (showEnvironment) node.classList.add('has-environment');
             select.addEventListener('dblclick', () => this.run(() => this.renameTerminal(row.id)));
-            select.title = `${row.name}${this.doneIds.has(row.id) ? ' · Unseen activity' : ''} — double-click to rename`;
+            select.title = `${row.name}${terminal ? ` · ${this.terminalEnvironment(terminal)}` : ''}${this.doneIds.has(row.id) ? ' · Unseen activity' : ''} — double-click to rename`;
             const programName = terminal ? this.programOf(terminal) : '';
             const state = agent.activityState(this.activity.get(row.id) ?? agent.idle(), Date.now(), this.programs.has(row.id) ? agent.isAgent(this.programs.get(row.id)) : null);
             // 기본 이름이 프로그램명과 같으면 한 번만 적는다. 사용자가 바꾼 이름 옆에는 실행 프로그램을 유지한다.
             // 실행 중인 도구의 계정이 행 이름(계정 터미널의 이름)과 다르면 프로그램 옆에 그 계정을 붙인다.
             const accountName = terminal ? this.rowAccountName(terminal, row.name) : '';
-            const program = element('span', 'row-meta', [row.name.toLowerCase() === programName.toLowerCase() ? '' : programName, accountName].filter(Boolean).join(' · '));
+            // 셸만 떠 있으면 아래 줄의 실행 환경(예: bash · Linux)이 이미 그 셸을 말하므로 프로그램 칸에 다시 적지 않는다.
+            const shellName = String(terminal?.options.shellPath || '').split(/[\\/]/).pop().replace(/\.exe$/i, '').toLowerCase();
+            const isShellOnly = Boolean(terminal) && programName.toLowerCase() === shellName;
+            const program = element('span', 'row-meta', [row.name.toLowerCase() === programName.toLowerCase() || isShellOnly ? '' : programName, accountName].filter(Boolean).join(' · '));
             node.append(select, program);
-            if (terminal && state) {
+            // 앞쪽 프로그램을 아직 모르는 순간(막 연 터미널 등)은 상태를 그리지 않는다. 대부분 곧 셸로 밝혀져
+            // 상태 칸이 사라지므로, 잠깐 'Unknown'을 보이면 뜻 없는 글자가 깜빡일 뿐이다.
+            if (terminal && state && state !== 'unknown') {
                 const labels = {
-                    unknown: ['Unknown', 'The foreground program has not been identified; agent activity cannot be classified.'],
                     working: ['Output', 'Terminal output was detected in the last 3 seconds; this can include prompt redraws. This does not confirm the agent is working.'],
                     waiting: ['Sent', 'Enter was sent less than 3 seconds ago; no subsequent terminal output has been detected. This does not confirm the agent received a request.'],
                     quiet: ['Quiet', 'No terminal output in the last 3 seconds. The agent may be waiting for input or still thinking.'],
@@ -2938,8 +2970,21 @@ class PaddockWorkspace {
      * `folderKey`가 있으면(폴더 줄 ＋) 그 작업 폴더의 최상위에 연다. 없으면(탭 줄 ＋) 탭 줄 ＋와 같은 자리 — 보이는 폴더나 현재 터미널의 묶음 — 에 연다.
      * 첫 항목(Terminal)에 초점을 두어 ＋ 뒤 Enter 한 번이면 예전 ＋처럼 일반 터미널이 열린다.
      * 계정 목록은 메뉴를 띄운 뒤 채운다. 읽지 못하면 안내 문구와 Manage accounts…만 남는다.
+     * 등록 계정이 없다고 이미 알면 메뉴 없이 일반 터미널을 바로 연다(`openNewTerminalMenu`).
      */
     openNewTerminalMenu(
+        anchor,
+        folderKey,
+    ) {
+        // 등록 계정이 없다고 이미 알면 메뉴의 고를 항목이 Terminal 하나뿐이므로 바로 연다. 계정 진입은 오른쪽 위 Accounts에 남는다.
+        if (this.n_knownAccounts === 0) {
+            this.run(() => folderKey ? this.newWorkTerminal({ folderKey }) : this.newTerminalFromFolderBar());
+        } else {
+            this.showNewTerminalMenu(anchor, folderKey);
+        }
+    }
+
+    showNewTerminalMenu(
         anchor,
         folderKey,
     ) {
@@ -3497,6 +3542,7 @@ class PaddockWorkspace {
         const innerCwd = root ? this.cwdCache.get(this.currentWidget()?.id) : this.isFileOnlyGroup(this.currentWidget()) ? this.currentWidget().getResourceUri?.()?.parent?.toString() : null;
         add.title = key ? `New terminal in ${this.displayPath(key)}` : `New terminal in ${innerCwd ? this.displayPath(innerCwd) : 'this terminal\'s folder'}`;
         add.setAttribute('aria-label', add.title);
+        add.setAttribute('aria-haspopup', this.n_knownAccounts === 0 ? 'false' : 'menu');
         if (key) {
             const current = this.currentWidget();
             bar.node.dataset.folder = key;
@@ -3901,10 +3947,8 @@ class PaddockWorkspace {
                 const renderLabel = tabBar.renderer.renderLabel.bind(tabBar.renderer);
                 tabBar.renderer.renderLabel = (data, side) => {
                     const terminal = data.title.owner;
-                    const folder = this.isTerminal(terminal) && model.folderOf(this.state, terminal.id);
-                    const row = folder && model.terminalRows(this.state, folder).find(row => row.id === terminal.id);
                     return this.isTerminal(terminal) && !side
-                        ? h.div({ className: 'lm-TabBar-tabLabel' }, row ? `${row.name}${row.suffix}` : this.unassignedName(terminal))
+                        ? h.div({ className: 'lm-TabBar-tabLabel' }, this.terminalDisplayName(terminal))
                         : renderLabel(data, side);
                 };
             }

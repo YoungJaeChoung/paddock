@@ -380,7 +380,7 @@ class PaddockStatusRoutes {
                         let claudeFile = newest?.record ?? null;
                         let account = null;
                         // 기본 Claude를 등록 계정으로 보이는 것은 로그인한 기본 환경이 모두 그 계정 하나와 맞을 때뿐이다(Codex와 같은 규칙).
-                        // 가장 최근 기록의 환경만 보면, 다른 환경의 `claude`가 다른 계정을 쓰는데도 그 계정에 'Current CLI'가 붙는다.
+                        // 가장 최근 기록의 환경만 보면, 다른 환경의 `claude`가 다른 계정을 쓰는데도 그 계정에 'Default'가 붙는다.
                         const linked = await this.linkDefault('claude', claudeSources);
                         const match = linked ? await this.accountUsage.claudeRecord(linked.id) : null;
                         if (match) {

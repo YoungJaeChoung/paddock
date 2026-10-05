@@ -349,27 +349,36 @@ function freeTerminalNumber(
 }
 
 /**
- * 작업 폴더에 새로 여는 터미널의 기본 이름(`terminal N`). 번호는 그 폴더 안에서만 겹치지 않게 고른다.
- * 폴더마다 1부터 시작하므로 다른 폴더·Unassigned의 터미널 수와 무관하다. 사용자가 바꾼 이름은 번호로 보지 않는다.
+ * 작업 폴더에 새로 여는 터미널의 기본 이름(`terminal N`). 번호는 Work 목록 전체에서 겹치지 않게 고른다.
+ * 다른 폴더나 Unassigned에 같은 `terminal 1`이 있으면 이름만으로 어느 터미널인지 가릴 수 없기 때문이다.
+ * `unassignedNumbers`는 작업 폴더에 속하지 않은 터미널이 쓰는 번호다. 사용자가 바꾼 이름은 번호로 보지 않는다.
  *
  * Examples
  * --------
- * | 폴더의 터미널 이름            | 결과         |
- * | ----------------------------- | ------------ |
- * | (없음)                        | `terminal 1` |
- * | `terminal 1`, `claude`        | `terminal 2` |
- * | `terminal 2`                  | `terminal 1` |
+ * | 모든 폴더의 터미널 이름       | unassignedNumbers | 결과         |
+ * | ----------------------------- | ----------------- | ------------ |
+ * | (없음)                        | {}                | `terminal 1` |
+ * | `terminal 1`, `claude`        | {}                | `terminal 2` |
+ * | `terminal 2`                  | {1}               | `terminal 3` |
  */
 function folderTerminalName(
     state,
-    key,
+    unassignedNumbers = new Set(),
+) {
+    const used = new Set([...unassignedNumbers, ...usedTerminalNumbers(state)]);
+    return `terminal ${freeTerminalNumber(used)}`;
+}
+
+/** 작업 폴더 터미널들의 기본 이름(`terminal N`)이 쓰고 있는 번호. */
+function usedTerminalNumbers(
+    state,
 ) {
     const used = new Set();
-    for (const id of terminalsOf(state, key)) {
-        const match = /^terminal (\d+)$/.exec(state.terminals[id].name);
+    for (const terminal of Object.values(state.terminals)) {
+        const match = /^terminal (\d+)$/.exec(terminal.name);
         if (match) used.add(Number(match[1]));
     }
-    return `terminal ${freeTerminalNumber(used)}`;
+    return used;
 }
 
 /**
@@ -500,6 +509,7 @@ module.exports = {
     nearestTerminal,
     freeTerminalNumber,
     folderTerminalName,
+    usedTerminalNumbers,
     visibleRows,
     mergeWorkPresence,
     serialize,

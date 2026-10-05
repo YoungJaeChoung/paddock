@@ -35,7 +35,7 @@ test('C-account-usage-isolation: each provider keeps its last selected account a
     assert.equal(data.selected.codex.id, 'x');
     assert.equal(data.active.id, 'x');
     assert.equal(data.snapshot({ provider: 'codex' }).data.windows[0].used, 99);
-    assert.equal(accountName({ provider: 'codex' }), 'Current CLI');
+    assert.equal(accountName({ provider: 'codex' }), 'Default');
     assert.equal(accountName({ ...codex, label: 'Default' }), 'Default');
 });
 
@@ -58,7 +58,7 @@ test('C-account-usage-active: shell selection clears the active account and an u
     data.select({ provider: 'claude' });
     await data.refresh();
     assert.equal(data.active.id, undefined);
-    assert.equal(accountName(data.active), 'Current CLI');
+    assert.equal(accountName(data.active), 'Default');
     assert.equal(data.snapshot(data.active).data.windows[0].used, 88);
     const n_before = n_changes;
     data.select(profile);
@@ -455,7 +455,7 @@ test('C-account-usage-age: old or recorded values carry their age next to the va
             const panel = {
                 data: { snapshot: () => ({ status: 'ready', data: { state, windows: [{ label: '5h', used: 21, resetsAt: now + 600 }], updatedAt: now - 60 } }) },
                 meter: (id, label, used) => ({ meter: label, used }),
-                displayName: () => 'Current CLI',
+                displayName: () => 'Default',
             };
             UsagePanel.prototype.appendValues.call(panel, target, { provider: 'claude' });
             return target;

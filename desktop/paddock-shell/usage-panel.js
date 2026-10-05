@@ -6,8 +6,8 @@ class UsageAccounts {
     static MARKS = Object.freeze({ claude: '✱', codex: '◎' });
     static N_SEARCH_THRESHOLD = 6;
     static POLL_INTERVAL_MS = 120000;
-    static CUSTOM_MESSAGE = 'This CLI runs with a configuration folder that is not a saved account. Usage from Current CLI is not shown for it.';
-    static CURRENT_NAME = 'Current CLI';
+    static CUSTOM_MESSAGE = 'This CLI runs with a configuration folder that is not a saved account. Usage from the default CLI is not shown for it.';
+    static CURRENT_NAME = 'Default';
     static CURRENT_HINT = 'The default CLI (plain claude or codex in a terminal) is signed in to this account.';
     /** 이 시간보다 오래된 기록은 지금 값처럼 보이지 않게 경과 시간을 함께 보인다. */
     static STALE_SECONDS = 3600;
@@ -437,7 +437,7 @@ class UsagePanel {
         trigger?.focus();
     }
 
-    /** Names an unregistered CLI after the saved account whose sign-in it verifiably shares; otherwise keeps Current CLI. */
+    /** Names an unregistered CLI after the saved account whose sign-in it verifiably shares; otherwise keeps Default. */
     displayName(
         profile,
     ) {
@@ -478,9 +478,10 @@ class UsagePanel {
                 target.append(label);
             }
         } else {
+            // 사용량 기록이 아직 없다는 뜻이다. 에이전트가 응답을 기다린다는 진행 상태로 읽히지 않게 사용량을 주어로 쓴다.
             const waitingForClaude = profile.provider === 'claude' && snapshot.status === 'ready' && snapshot.data.state === 'on';
             const text = snapshot.status === 'unavailable' ? 'Unavailable' : snapshot.status === 'loading' ? 'Loading…'
-                : waitingForClaude ? 'Waiting for response' : 'Not reported';
+                : waitingForClaude ? 'No usage yet' : 'Not reported';
             const state = node('span', 'account-usage-state', text);
             state.title = snapshot.removed ? 'This account was removed from the list. Its existing terminal is kept.'
                 : snapshot.status === 'unavailable' ? snapshot.message || 'Usage could not be read. Open Account usage and select Retry.'
@@ -538,7 +539,7 @@ class UsagePanel {
         const profiles = [...this.data.profiles];
         // An unregistered CLI has no verified link to a saved account unless its sign-in matches exactly one saved account
         // (same login identifier, same runtime and WSL distribution). Only that verified link merges it into the account's row,
-        // which then carries a Current CLI badge; an unmatched or ambiguous sign-in keeps its own Current CLI row.
+        // which then carries a Default badge; an unmatched or ambiguous sign-in keeps its own Default row.
         profiles.unshift(...Object.values(this.data.selected).filter(profile => !profile.id && !this.data.current(profile).id));
         const key = JSON.stringify([query, profiles.map(profile => [profile, this.data.snapshot(profile), this.data.isEnabled(profile.provider)]),
             this.data.selected, Object.keys(UsageAccounts.PROVIDERS).map(provider => this.data.linkedProfile(provider)?.id),

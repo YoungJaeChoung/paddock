@@ -244,14 +244,15 @@ test('C-work-F12: 기본 이름 번호는 쓰고 있는 번호를 피한 가장 
     assert.equal(model.freeTerminalNumber(new Set([2, 3])), 1);
 });
 
-test('C-work-F13: 작업 폴더의 기본 이름 번호는 그 폴더 안에서만 겹치지 않게 1부터 정한다', () => {
-    assert.equal(model.folderTerminalName(model.ensureFolder(model.empty(), 'file:///a'), 'file:///a'), 'terminal 1');
+test('C-work-F13: 작업 폴더의 기본 이름 번호는 Work 목록 전체에서 겹치지 않게 정한다', () => {
+    assert.equal(model.folderTerminalName(model.ensureFolder(model.empty(), 'file:///a')), 'terminal 1');
     let state = withTerminals('file:///a', ['terminal 1', 'claude', 'terminal 3']);
-    assert.equal(model.folderTerminalName(state, 'file:///a'), 'terminal 2');
-    // 다른 폴더의 번호는 영향을 주지 않는다.
+    assert.equal(model.folderTerminalName(state), 'terminal 2');
+    // 다른 폴더의 번호도 피한다.
     state = model.ensureFolder(state, 'file:///b');
-    assert.equal(model.folderTerminalName(state, 'file:///b'), 'terminal 1');
-    assert.equal(model.folderTerminalName(withTerminals('file:///a', ['terminal 2']), 'file:///a/'), 'terminal 1');
+    assert.equal(model.folderTerminalName(state), 'terminal 2');
+    // Unassigned 터미널이 쓰는 번호도 피한다.
+    assert.equal(model.folderTerminalName(withTerminals('file:///a', ['terminal 2']), new Set([1])), 'terminal 3');
 });
 
 test('C-work-F14.1: 새 터미널은 보이는 작업 폴더가 있으면 Unassigned 묶음보다 그 폴더에 연다', () => {
