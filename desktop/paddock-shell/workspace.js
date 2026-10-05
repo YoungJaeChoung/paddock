@@ -43,6 +43,7 @@ const agent = require('./agent-model');
 const wsl = require('./wsl-terminals');
 const { distributionOf, withDistribution, environmentLabel } = require('./terminal-environment');
 const cwdReport = require('./cwd-report');
+const { fileMarks, colorVariable } = require('./file-marks');
 const { AccountDialog } = require('./account-dialog');
 const { retryAccountStorage } = require('./account-access-dialog');
 const { AccountLaunch, accountTerminalOptions, refreshAccountResume } = require('./account-launch');
@@ -621,8 +622,8 @@ class PaddockWorkspace {
         this.scm.onDidAddRepository((repository) => {
             repository.provider.onDidChange(() => {
                 this.renderViewBadge();
-                const shown = this.shell.folderBar.node.querySelector('.folder-bar-branch-name').textContent;
-                if (this.branchOf(this.shownFolder()) !== shown) this.refreshSoon();
+                // 파일 목록의 변경 표시도 따라가야 하므로 늘 다시 그리기를 요청한다. 같은 내용이면 다시 그리기 판단 값이 같아 건너뛴다.
+                this.refreshSoon();
             });
             this.refreshSoon();
         });
@@ -781,6 +782,7 @@ class PaddockWorkspace {
         });
         this.shell.footer.node.querySelector('.remote-indicator').addEventListener('click', () => this.run(() => this.commands.executeCommand('remote.select')));
         this.files.onDidFilesChange((event) => {
+            this.refreshRepositoriesOf(event.changes.map(change => change.resource));
             // 파일 내용 변경은 행 표시를 바꾸지 않는다. 추가·삭제 때는 수정 시각의 정밀도에 기대지 않고 목록을 다시 읽는다.
             const changes = [...event.getAdded(), ...event.getDeleted()];
             if (changes.length) {
@@ -2420,12 +2422,45 @@ class PaddockWorkspace {
         return terminal;
     }
 
+    /**
+     * 바뀐 파일을 품은 저장소마다 Git 확장에 다시 읽기를 요청한다.
+     * Git 확장은 워크스페이스 밖 작업 폴더의 파일 변화를 스스로 듣지 못해서, 에이전트가 고친 파일이 변경 수·파일 목록 표시에 늦게 나타난다.
+     * Git이 스스로 쓰는 색인·잠금 파일 변화는 무시한다(다시 읽기가 그 파일을 고쳐 끝없이 반복되지 않게). 같은 저장소의 요청은 0.5초 동안 모은다.
+     */
+    refreshRepositoriesOf(
+        resources,
+    ) {
+        this.pendingRepositoryRefresh ??= new Map();
+        for (const resource of resources) {
+            const path = resource.path.toString();
+            const isGitInternal = /\/\.git\/(index|.*\.lock$)/.test(path);
+            const repository = isGitInternal ? null : this.scm.repositories
+                // 저장소 안에 다른 저장소가 있으면 더 깊은(경로가 긴) 쪽이 그 파일의 저장소다.
+                .filter(item => item.provider.rootUri && new URI(item.provider.rootUri).isEqualOrParent(resource))
+                .sort((left, right) => right.provider.rootUri.length - left.provider.rootUri.length)[0];
+            const root = repository ? new URI(repository.provider.rootUri).path.fsPath() : null;
+            if (root && !this.pendingRepositoryRefresh.has(root)) {
+                this.pendingRepositoryRefresh.set(root, setTimeout(() => {
+                    this.pendingRepositoryRefresh.delete(root);
+                    // 경로가 열린 저장소에 속하므로 Git 확장이 저장소 고르기 창을 띄우지 않는다.
+                    this.commands.executeCommand('git.refresh', root).catch(() => undefined);
+                }, 500));
+            }
+        }
+    }
+
     openRepository(
         key,
     ) {
         // Git 확장은 워크스페이스 루트만 찾으므로 작업 폴더의 저장소를 직접 알려 준다. 저장소가 아니면 조용히 넘긴다.
         const path = new URI(key).path.fsPath();
         this.plugins.willStart.then(() => this.commands.executeCommand('git.openRepository', path)).catch(() => undefined);
+        // 파일 감시도 워크스페이스 루트에만 걸려 있어서, 그대로 두면 에이전트가 고친 파일을 Git 확장이 모르고
+        // 변경 수·파일 목록 표시가 멈춘다. 작업 폴더마다 한 번 감시를 건다(내려받은 의존성 폴더는 뺀다).
+        this.watchedFolders ??= new Map();
+        if (!this.watchedFolders.has(key)) {
+            this.watchedFolders.set(key, this.files.watch(new URI(key), { recursive: true, excludes: ['**/node_modules/**', '**/.venv/**'] }));
+        }
     }
 
     async closeWidget(
@@ -2690,7 +2725,7 @@ class PaddockWorkspace {
         const key = JSON.stringify([
             merged.state.folders, rows, currentId, this.workExpanded, this.filesExpanded, filesFolder, directory,
             current?.getResourceUri?.()?.toString(), this.sidebarIndent(),
-            [...this.doneIds], selectedRoot, [...new Set(this.terminals.all.map(terminal => this.terminalEnvironment(terminal)))], unassigned.map(terminal => [terminal.id, this.unassignedName(terminal), this.programOf(terminal), this.runningAccountLabel(terminal), this.terminalEnvironment(terminal),
+            [...this.doneIds], selectedRoot, [...new Set(this.terminals.all.map(terminal => this.terminalEnvironment(terminal)))], filesFolder && this.filesExpanded ? this.gitChanges() : [], unassigned.map(terminal => [terminal.id, this.unassignedName(terminal), this.programOf(terminal), this.runningAccountLabel(terminal), this.terminalEnvironment(terminal),
                 this.cwdCache.get(terminal.id), this.doneIds.has(terminal.id), this.innerTabIds(terminal.id).length,
                 agent.activityState(this.activity.get(terminal.id) ?? agent.idle(), Date.now(), this.programs.has(terminal.id) ? agent.isAgent(this.programs.get(terminal.id)) : null)]),
             rows.map(row => {
@@ -2773,7 +2808,7 @@ class PaddockWorkspace {
                 node.append(toolbar);
                 if (this.filesExpanded) {
                     const files = element('div', 'file-list');
-                    this.appendDirectory(files, directory, 0);
+                    this.appendDirectory(files, directory, 0, fileMarks(this.gitChanges()));
                     node.append(files);
                 }
             }
@@ -3134,10 +3169,25 @@ class PaddockWorkspace {
         return { found: Boolean(stat), empty: !stat?.children?.length, children };
     }
 
+    /** 열린 모든 저장소의 바뀐 파일. `[{ uri, letter, color, tooltip }]` — 파일 목록의 변경 표시와 다시 그리기 판단에 쓴다. */
+    gitChanges() {
+        const changes = [];
+        for (const repository of this.scm.repositories) {
+            for (const group of repository.provider.groups) {
+                for (const resource of group.resources) {
+                    const { letter = '', color = '', tooltip = '' } = resource.decorations ?? {};
+                    changes.push({ uri: resource.sourceUri.toString().replace(/\/+$/, ''), letter, color, tooltip });
+                }
+            }
+        }
+        return changes;
+    }
+
     appendDirectory(
         parent,
         directory,
         depth,
+        marks,
     ) {
         if (!directory.found) {
             parent.append(element('p', 'work-empty', 'Folder not found.'));
@@ -3150,7 +3200,17 @@ class PaddockWorkspace {
             const uri = new URI(key);
             const expanded = entry.expanded;
             const icons = entry.isDirectory ? [codicon(expanded ? 'chevron-down' : 'chevron-right'), codicon(expanded ? 'folder-opened' : 'folder')] : [codicon('file')];
-            const row = button([...icons, element('span', 'row-name', entry.name)], `file-row${entry.isDirectory ? '' : ' is-file'}${key === current ? ' is-current' : ''}`, () => this.run(async () => {
+            // Git 변경: 파일은 상태 글자와 색, 바뀐 파일을 품은 폴더는 색만 붙인다(Source control 보기로 가지 않아도 보이게).
+            const mark = entry.isDirectory ? null : marks.file(key);
+            const markColor = entry.isDirectory ? marks.folder(key) : mark?.color;
+            const name = element('span', 'row-name', entry.name);
+            const parts = [...icons, name];
+            if (mark?.letter) {
+                const letter = element('span', 'file-mark', mark.letter);
+                letter.style.color = colorVariable(mark.color);
+                parts.push(letter);
+            }
+            const row = button(parts, `file-row${entry.isDirectory ? '' : ' is-file'}${key === current ? ' is-current' : ''}${markColor ? ' is-changed' : ''}`, () => this.run(async () => {
                 if (entry.isDirectory) {
                     if (expanded) this.expandedDirectories.delete(key);
                     else this.expandedDirectories.add(key);
@@ -3160,7 +3220,8 @@ class PaddockWorkspace {
                 }
             }));
             row.style.paddingLeft = `${8 + depth * this.sidebarIndent()}px`;
-            row.title = uri.path.toString();
+            if (markColor) name.style.color = colorVariable(markColor);
+            row.title = mark?.tooltip ? `${uri.path.toString()} · ${mark.tooltip}` : uri.path.toString();
             row.dataset.uri = key;
             row.addEventListener('contextmenu', (event) => {
                 event.preventDefault();
@@ -3171,7 +3232,7 @@ class PaddockWorkspace {
             });
             parent.append(row);
             if (entry.isDirectory && expanded) {
-                this.appendDirectory(parent, entry.directory, depth + 1);
+                this.appendDirectory(parent, entry.directory, depth + 1, marks);
             }
         }
     }

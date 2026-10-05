@@ -423,3 +423,6 @@ body .theia-button.secondary:hover { background: var(--theia-button-secondaryHov
 }
 
 .paddock-tab-dock-preview { position: fixed; z-index: 9998; pointer-events: none; border: 2px solid var(--p-accent); background: color-mix(in srgb, var(--p-accent) 18%, transparent); }
+/* Git 변경 표시: 바뀐 파일·폴더 이름의 색은 Git 확장의 색을 따르고, 상태 글자(M·U·A)는 행 오른쪽 끝에 둔다. */
+.paddock-shell .file-row .row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.paddock-shell .file-row .file-mark { flex: none; width: 14px; text-align: center; font-size: 11px; font-weight: 600; }
