@@ -390,6 +390,20 @@ class PaddockTerminal extends TerminalWidgetImpl {
         this.toDispose.push({ dispose: () => this.node.removeEventListener('webglcontextlost', showText, true) });
         // 화면 밖에서 그래픽 복구 실패가 통지돼도 기존 출력과 계속 들어오는 내용을 보존한다.
         this.toDispose.push(this.webglAddon.onContextLoss(() => this.webglAddon.dispose()));
+        // 창을 오래 가려 두거나 절전에서 돌아오면 그래픽 연결은 살아 있어도 글자 그림 저장소가 손상돼
+        // 이미 그린 글자가 깨져 보일 수 있다. 창으로 돌아올 때 저장소를 비우고 화면을 다시 그린다.
+        // 기본 그리기로 이미 돌아간 뒤에는 이 호출이 아무 일도 하지 않는다.
+        const redrawText = () => {
+            if (!this.isDisposed && document.visibilityState === 'visible') this.webglAddon.clearTextureAtlas();
+        };
+        document.addEventListener('visibilitychange', redrawText);
+        window.addEventListener('focus', redrawText);
+        this.toDispose.push({
+            dispose: () => {
+                document.removeEventListener('visibilitychange', redrawText);
+                window.removeEventListener('focus', redrawText);
+            },
+        });
     }
 
     async attachTerminal(
