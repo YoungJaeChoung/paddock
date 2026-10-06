@@ -57,6 +57,9 @@
 .account-usage-actions { display: flex; flex-shrink: 0; gap: 8px; justify-content: flex-end; padding-top: 4px; }
 @media (max-width: 1150px) {
     .account-usage-name { max-width: 68px; }
+}
+/* 이름을 줄인 뒤에도 Claude·Codex 막대 네 개(약 130px)가 들어갈 자리가 1000px까지는 남는다. 그보다 좁으면 %만 남긴다. */
+@media (max-width: 1000px) {
     .paddock-shell .account-usage-selected .meter-bar { display: none; }
 }
 @media (max-width: 780px) {
