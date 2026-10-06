@@ -1596,6 +1596,16 @@ class PaddockWorkspace {
         // Git 확장은 워크스페이스 루트만 찾으므로 작업 폴더의 저장소를 직접 알려 준다. 저장소가 아니면 조용히 넘긴다.
         const path = new URI(key).path.fsPath();
         this.plugins.willStart.then(() => this.commands.executeCommand('git.openRepository', path)).catch(() => undefined);
+        // 작업 폴더 바로 아래에 따로 clone한 저장소도 연다(VS Code의 기본 탐색 깊이 1과 같다).
+        // 바깥 저장소가 그 폴더를 무시하면, 열지 않은 저장소의 변경은 파일 목록 표시와 Git 보기 어디에도 나타나지 않는다.
+        this.files.resolve(new URI(key)).then(async (folder) => {
+            const children = (folder.children ?? []).filter(child => child.isDirectory && child.name !== 'node_modules');
+            const nested = await Promise.all(children.map(child => this.files.exists(child.resource.resolve('.git')).then(isRepository => (isRepository ? child : null))));
+            await this.plugins.willStart;
+            for (const child of nested.filter(Boolean)) {
+                await this.commands.executeCommand('git.openRepository', child.resource.path.fsPath()).catch(() => undefined);
+            }
+        }).catch(() => undefined);
         // 파일 감시도 워크스페이스 루트에만 걸려 있어서, 그대로 두면 에이전트가 고친 파일을 Git 확장이 모르고
         // 변경 수·파일 목록 표시가 멈춘다. 작업 폴더마다 한 번 감시를 건다(내려받은 의존성 폴더는 뺀다).
         this.watchedFolders ??= new Map();
