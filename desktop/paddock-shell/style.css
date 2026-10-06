@@ -203,11 +203,9 @@ body {
 /* 본문 칸의 탭 줄은 현재 항목 하나만 보이는 경로 줄로 쓴다. */
 .paddock-shell #theia-main-content-panel .lm-TabBar { position: relative; min-height: 30px; max-height: 30px; background: var(--p-tabs-header-bg); border-bottom: 1px solid var(--p-border-subtle); }
 .paddock-shell #theia-main-content-panel .lm-TabBar > :not(.path-bar) { visibility: hidden; }
-/* 분할 중에는 DockPanel의 실제 탭을 쓴다. 탭을 다른 칸으로 끌면 이동하고 빈 칸은 합쳐진다. */
-.paddock-shell #theia-main-content-panel.has-split-tabs .lm-TabBar > :not(.path-bar) { visibility: visible; }
-.paddock-shell #theia-main-content-panel.has-split-tabs .path-bar { display: none; }
-.paddock-shell .folder-bar.has-split-tabs > .folder-tabs,
-.paddock-shell .folder-bar.has-split-tabs > .tabs-scroll { display: none; }
+/* 분할 중 파일이 든 칸은 DockPanel의 실제 탭을 쓴다. 탭을 다른 칸으로 끌면 이동하고 빈 칸은 합쳐진다. 터미널 탭은 위쪽 공통 탭 줄에 남는다. */
+.paddock-shell #theia-main-content-panel .lm-TabBar.shows-tabs > :not(.path-bar) { visibility: visible; }
+.paddock-shell #theia-main-content-panel .lm-TabBar.shows-tabs .path-bar { display: none; }
 .paddock-shell .path-bar { position: absolute; inset: 0; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 16px; color: var(--p-fg-muted); font-size: 12px; white-space: nowrap; }
 .paddock-shell .path-bar.is-active { background: var(--p-current-bg); box-shadow: inset 0 -2px var(--p-tab-active-border); }
 .paddock-shell .path-bar .codicon { font-size: 13px; color: var(--p-fg-muted); }
@@ -266,6 +264,7 @@ body {
 .paddock-shell .save-action { border: 0; padding: 2px 8px; border-radius: 3px; background: var(--p-save-bg); color: var(--p-save-fg); font: inherit; }
 .paddock-shell button:disabled { opacity: .5; cursor: wait; }
 .paddock-shell .view-host.is-drop-target { outline: 2px dashed var(--p-accent); outline-offset: -4px; background: var(--p-current-bg); }
+.paddock-shell .file-row.is-drop-target, .paddock-shell .file-list.is-drop-target { outline: 1px dashed var(--p-accent); outline-offset: -2px; background: var(--p-current-bg); }
 .paddock-shell .unseen-dot { flex: none; }
 /* 긴 출력이 멎은 미확인 알림. 완료를 확정하지 않으며 해당 터미널을 실제로 확인하면 지워진다. */
 .paddock-shell .terminal-row.is-done .row-meta { color: var(--p-accent); }

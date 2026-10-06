@@ -10,6 +10,14 @@ const { guessShellTypeFromExecutable } = require('@theia/terminal/lib/common/she
 const { injectable, inject, decorate } = require('@theia/core/shared/inversify');
 const { Unicode11Addon } = require('xterm-addon-unicode11');
 const { createEmojiWidthFixer } = require('./emoji-width');
+const { FileService } = require('@theia/filesystem/lib/browser/file-service');
+const { EnvVariablesServer } = require('@theia/core/lib/common/env-variables');
+const { MessageService } = require('@theia/core/lib/common/message-service');
+const { BinaryBuffer } = require('@theia/core/lib/common/buffer');
+const { FileUri } = require('@theia/core/lib/common/file-uri');
+const URI = require('@theia/core/lib/common/uri').default;
+const { isWslShell } = require('./wsl-terminals');
+const { PASTE_PLACE, pastePathText, imageExtension } = require('./paste-paths');
 
 class TerminalReplacement {
     static TIMEOUT_MS = 20000;
@@ -393,6 +401,28 @@ class PaddockTerminal extends TerminalWidgetImpl {
         this.term.options.allowProposedApi = allowProposedApi;
         // ⚠️처럼 원래 한 칸인 기호에 이모지 표시 문자를 붙인 경우는 이 기준으로도 한 칸이라, 출력을 넘기기 전에 빈칸을 채워 두 칸으로 맞춘다.
         this.fixEmojiWidth = createEmojiWidthFixer();
+        // 터미널은 붙여 넣은 글자만 받는다. 탐색기에서 복사하거나 끌어다 놓은 파일, 캡처한 이미지는 파일 경로로 바꿔 넣는다.
+        // Claude Code·Codex는 입력에 들어온 이미지 경로를 첨부 이미지로 읽는다. 터미널 그리기 모듈보다 먼저 받으려고 캡처 단계에서 듣는다.
+        const insertFiles = (event, transfer) => this.insertFiles(event, transfer);
+        const allowFileDrop = (event) => {
+            if ([...(event.dataTransfer?.items || [])].some(item => item.kind === 'file')) {
+                event.preventDefault();
+                event.stopPropagation();
+                event.dataTransfer.dropEffect = 'copy';
+            }
+        };
+        const onPaste = event => insertFiles(event, event.clipboardData);
+        const onDrop = event => insertFiles(event, event.dataTransfer);
+        this.node.addEventListener('paste', onPaste, true);
+        this.node.addEventListener('dragover', allowFileDrop, true);
+        this.node.addEventListener('drop', onDrop, true);
+        this.toDispose.push({
+            dispose: () => {
+                this.node.removeEventListener('paste', onPaste, true);
+                this.node.removeEventListener('dragover', allowFileDrop, true);
+                this.node.removeEventListener('drop', onDrop, true);
+            },
+        });
         // 많은 터미널을 열면 브라우저가 오래된 그래픽 자원을 회수할 수 있다.
         // 그래픽 연결이 끊기면 바로 기본 그리기로 돌아가 복구 대기 중 출력이 비지 않게 한다.
         const showText = () => queueMicrotask(() => {
@@ -429,6 +459,49 @@ class PaddockTerminal extends TerminalWidgetImpl {
                 window.removeEventListener('focus', redrawText);
             },
         });
+    }
+
+    /** 붙여넣기·끌어다 놓기에 글자 없이 파일만 있으면 그 경로를 입력한다. 글자가 있으면 터미널의 기본 붙여넣기에 맡긴다. */
+    insertFiles(
+        event,
+        transfer,
+    ) {
+        const files = [...(transfer?.files || [])];
+        if (files.length && !transfer.getData('text/plain') && this.enablePaste) {
+            event.preventDefault();
+            event.stopPropagation();
+            this.pasteFilePaths(files).catch(error => this.messageService.error(error instanceof Error ? error.message : String(error)));
+        }
+    }
+
+    async pasteFilePaths(
+        files,
+    ) {
+        const paths = [];
+        for (const file of files) {
+            // 디스크에 있는 파일은 경로가 있다. 캡처한 화면처럼 경로가 없는 그림은 저장한 뒤 그 경로를 넣는다.
+            const filePath = window.electronTheiaCore?.getPathForFile(file) || await this.savePastedImage(file);
+            paths.push(filePath);
+        }
+        const isWindows = OS.backend.type() === OS.Type.Windows;
+        const place = !isWindows ? PASTE_PLACE.POSIX : isWslShell(this.options.shellPath) ? PASTE_PLACE.WSL : PASTE_PLACE.WINDOWS;
+        this.term.focus();
+        // 뒤에 빈칸을 두어 이어서 입력하는 글자가 경로에 붙지 않게 한다.
+        this.paste(`${pastePathText(paths, place)} `);
+    }
+
+    /** 경로 없는 클립보드 그림을 앱 설정 폴더의 pasted-images에 저장하고 그 경로를 돌려준다. 그림이 아니면 이유를 알린다. */
+    async savePastedImage(
+        file,
+    ) {
+        if (!file.type.startsWith('image/')) {
+            throw new Error(`Cannot read the path of ${file.name || 'the pasted item'}. Copy the file from a folder on this computer.`);
+        }
+        const directory = new URI(await this.envVariablesServer.getConfigDirUri()).resolve('pasted-images');
+        const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+        const target = directory.resolve(`paste-${stamp}-${Math.random().toString(36).slice(2, 6)}.${imageExtension(file.type)}`);
+        await this.fileService.createFile(target, BinaryBuffer.wrap(new Uint8Array(await file.arrayBuffer())));
+        return FileUri.fsPath(target);
     }
 
     /** 화면 프로그램이 두 칸으로 센 기호가 실제로 두 칸을 차지하도록 출력을 고친 뒤 터미널에 넘긴다. */
@@ -476,5 +549,8 @@ class PaddockTerminal extends TerminalWidgetImpl {
 }
 decorate(injectable(), PaddockTerminal);
 decorate(inject(ApplicationShell), PaddockTerminal.prototype, 'applicationShell');
+decorate(inject(FileService), PaddockTerminal.prototype, 'fileService');
+decorate(inject(EnvVariablesServer), PaddockTerminal.prototype, 'envVariablesServer');
+decorate(inject(MessageService), PaddockTerminal.prototype, 'messageService');
 
 module.exports = { PaddockTerminal };

@@ -448,7 +448,12 @@ class PaddockWorkspace {
                 this.refreshSoon();
             }
         });
-        this.shell.mainPanel.layoutModified.connect(() => this.pathBar.renderPathBars());
+        // 칸 위 탭 줄의 접기 여부는 위쪽 탭 줄에 그 화면이 있는지로 정하므로, 배치가 바뀌면 위쪽 줄을 먼저 그린다.
+        // 위쪽 줄 없이 칸 줄만 그리면 새로 연 파일의 칸에 탭 줄이 잠깐 나타났다 사라진다.
+        this.shell.mainPanel.layoutModified.connect(() => {
+            this.folderTabs.renderFolderTabs();
+            this.pathBar.renderPathBars();
+        });
         // Git 보기는 선택된 저장소 하나만 보여 준다. 새 저장소가 열리면 지금 작업 폴더의 것인지 다시 맞추고, 브랜치가 바뀌면 탭 줄 표시도 다시 그린다.
         this.scm.onDidAddRepository((repository) => {
             repository.provider.onDidChange(() => {

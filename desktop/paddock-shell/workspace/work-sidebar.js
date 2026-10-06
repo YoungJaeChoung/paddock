@@ -183,6 +183,8 @@ class WorkSidebar {
                 node.append(toolbar);
                 if (this.workspace.filesExpanded) {
                     const files = element('div', 'file-list');
+                    // 목록의 빈 곳에 놓은 파일은 이 폴더 맨 위에 복사한다.
+                    this.workspace.fileTree.acceptFileDrops(files, new URI(filesFolder));
                     this.workspace.fileTree.appendDirectory(files, directory, 0, fileMarks(this.workspace.fileTree.gitChanges()));
                     node.append(files);
                 }

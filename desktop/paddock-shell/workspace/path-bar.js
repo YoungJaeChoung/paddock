@@ -17,15 +17,18 @@ class PathBar {
     /**
      * 본문 칸마다 생기는 탭 줄을 꾸민다.
      *
-     * 분할 중에는 실제 탭을 보여 칸 사이 드래그 이동과 합치기를 지원한다.
-     * 한 칸에서는 공통 탭 줄을 쓰고, 설정 화면 등에는 경로 줄을 둔다.
+     * 칸을 나눠도 위쪽 공통 탭 줄은 그대로 둔다. 파일을 옆 칸에 열 때마다 탭이 칸 위로 내려가면 탭 위치가 바뀌어 보이기 때문이다.
+     * 분할 중 위쪽 줄에 없는 화면(작업 폴더 밖 파일 등)이 든 칸만 실제 탭을 보여 칸 사이 드래그 이동과 합치기를 지원하고,
+     * 위쪽 줄에 이미 있는 화면만 든 칸은 줄을 접는다. 한 칸에서는 공통 탭 줄을 쓰고, 설정 화면 등에는 경로 줄을 둔다.
      */
     renderPathBars() {
         let isResized = false;
         const isSplit = [...this.workspace.shell.mainPanel.tabBars()].length > 1;
-        this.workspace.shell.mainPanel.toggleClass('has-split-tabs', isSplit);
-        this.workspace.shell.folderBar.toggleClass('has-split-tabs', isSplit);
+        // 위쪽 줄은 이 함수보다 먼저 그려진다(작업 화면 갱신 순서). 그 탭이 가리키는 화면을 모은다.
+        const listedIds = new Set([...this.workspace.shell.folderBar.node.querySelectorAll('.folder-tabs [data-widget-id]')].map(tab => tab.dataset.widgetId));
         for (const tabBar of this.workspace.shell.mainPanel.tabBars()) {
+            const showsTabs = isSplit && tabBar.titles.some(title => !listedIds.has(title.owner.id));
+            tabBar.node.classList.toggle('shows-tabs', showsTabs);
             if (!this.namedTabRenderers.has(tabBar.renderer)) {
                 this.namedTabRenderers.add(tabBar.renderer);
                 const renderLabel = tabBar.renderer.renderLabel.bind(tabBar.renderer);
@@ -49,7 +52,7 @@ class PathBar {
                 tabBar.node.append(bar);
             }
             bar.replaceChildren();
-            const isCompactPane = !isSplit && (this.workspace.isTerminal(widget) || Boolean(widget?.getResourceUri?.()) || widget instanceof WebviewWidget && (this.workspace.webviewFolders.has(widget.id) || this.workspace.fileRoots.has(widget.id)));
+            const isCompactPane = !showsTabs && (this.workspace.isTerminal(widget) || Boolean(widget?.getResourceUri?.()) || widget instanceof WebviewWidget && (this.workspace.webviewFolders.has(widget.id) || this.workspace.fileRoots.has(widget.id)));
             // 칸이 둘 이상이면 입력이 가지 않는 칸을 흐리게 해 지금 입력할 칸을 드러낸다.
             widget?.node.classList.toggle('is-inactive-pane', isSplit && widget !== this.workspace.currentWidget());
             isResized = isResized || tabBar.node.classList.contains('is-compact-pane') !== isCompactPane;

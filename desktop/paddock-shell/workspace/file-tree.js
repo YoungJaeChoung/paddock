@@ -1,7 +1,10 @@
 const { URI } = require('@theia/core');
+const { FileUri } = require('@theia/core/lib/common/file-uri');
+const { OS } = require('@theia/core/lib/common/os');
 const { ConfirmDialog, SingleTextInputDialog } = require('@theia/core/lib/browser/dialogs');
 const model = require('../work-model');
 const { fileMarks, colorVariable } = require('../file-marks');
+const { validateEntryName } = require('../entry-name');
 const { element, codicon, button } = require('./shared');
 
 /**
@@ -109,6 +112,8 @@ class FileTree {
             if (markColor) name.style.color = colorVariable(markColor);
             row.title = mark?.tooltip ? `${uri.path.toString()} · ${mark.tooltip}` : uri.path.toString();
             row.dataset.uri = key;
+            // 밖에서 끌어 온 파일은 폴더 행이면 그 폴더에, 파일 행이면 그 파일이 있는 폴더에 복사한다.
+            this.acceptFileDrops(row, entry.isDirectory ? uri : uri.parent);
             row.addEventListener('contextmenu', (event) => {
                 event.preventDefault();
                 const point = { x: event.clientX, y: event.clientY };
@@ -129,21 +134,80 @@ class FileTree {
     ) {
         const name = await new SingleTextInputDialog({
             title: isDirectory ? 'New Folder' : 'New File',
-            validate: value => !value.trim() || value === '.' || value === '..' || /[\\/\x00-\x1f]/.test(value)
-                ? 'Enter a name without path separators.' : '',
+            validate: value => validateEntryName(value),
         }).open();
         if (name === undefined) return;
         const uri = parent.resolve(name);
         if (await this.workspace.files.exists(uri)) throw new Error(`“${name}” already exists. Choose another name.`);
         if (isDirectory) await this.workspace.files.createFolder(uri);
         else await this.workspace.files.createFile(uri);
+        this.showAddedEntries(parent);
+        if (isDirectory) this.expandedDirectories.add(uri.toString());
+        else await this.workspace.openFile(uri);
+        await this.workspace.refresh();
+    }
+
+    /** 폴더에 항목을 더한 뒤 캐시를 비우고 그 폴더를 펼쳐 새 항목이 보이게 한다. 다시 그리기는 호출한 쪽이 한다. */
+    showAddedEntries(
+        parent,
+    ) {
         this.workspace.n_directoryRevision += 1;
         this.workspace.directoryEntries.clear();
         this.workspace.filesExpanded = true;
         this.expandedDirectories.add(parent.toString());
-        if (isDirectory) this.expandedDirectories.add(uri.toString());
-        else await this.workspace.openFile(uri);
+    }
+
+    /**
+     * 탐색기·Finder에서 끌어 온 파일·폴더를 받으면 대상 폴더에 복사한다.
+     *
+     * 같은 이름이 이미 있으면 덮어쓰지 않고 이유를 알린다. 안쪽 행이 받은 놓기는 바깥 목록으로 다시 전달하지 않는다.
+     */
+    acceptFileDrops(
+        target,
+        directory,
+    ) {
+        const hasFiles = event => [...(event.dataTransfer?.items || [])].some(item => item.kind === 'file');
+        target.addEventListener('dragover', (event) => {
+            if (hasFiles(event)) {
+                event.preventDefault();
+                event.stopPropagation();
+                event.dataTransfer.dropEffect = 'copy';
+                target.classList.add('is-drop-target');
+            }
+        });
+        target.addEventListener('dragleave', () => target.classList.remove('is-drop-target'));
+        target.addEventListener('drop', (event) => {
+            target.classList.remove('is-drop-target');
+            const files = [...(event.dataTransfer?.files || [])];
+            if (files.length) {
+                event.preventDefault();
+                event.stopPropagation();
+                this.workspace.run(() => this.copyDroppedFiles(files, directory));
+            }
+        });
+    }
+
+    async copyDroppedFiles(
+        files,
+        directory,
+    ) {
+        for (const file of files) {
+            const filePath = window.electronTheiaCore?.getPathForFile(file);
+            if (!filePath) throw new Error(`Cannot read the path of ${file.name}. Drag the file from a folder on this computer.`);
+            const source = FileUri.create(filePath);
+            const destination = directory.resolve(source.path.base);
+            if (await this.workspace.files.exists(destination)) throw new Error(`“${source.path.base}” already exists in this folder. Rename one of them first.`);
+            await this.workspace.files.copy(source, destination);
+        }
+        this.showAddedEntries(directory);
         await this.workspace.refresh();
+    }
+
+    /** 운영체제의 파일 관리자(탐색기·Finder)를 열고 그 항목을 선택해 보여 준다. */
+    revealInSystem(
+        uri,
+    ) {
+        window.electronTheiaCore.showItemInFolder(FileUri.fsPath(uri));
     }
 
     /** 폴더에는 생성 동작을, 파일에는 설치된 확장의 편집기 선택을 제공한다. */
@@ -155,9 +219,12 @@ class FileTree {
         const menu = element('div', 'paddock-menu');
         menu.setAttribute('popover', '');
         menu.setAttribute('role', 'menu');
+        const systemName = OS.backend.type() === OS.Type.Windows ? 'File Explorer' : OS.backend.type() === OS.Type.OSX ? 'Finder' : 'File Manager';
+        const reveal = ['folder-opened', `Reveal in ${systemName}`, () => this.revealInSystem(uri)];
         const items = isDirectory ? [
             ['new-file', 'New File...', () => this.createFileEntry(uri, false)],
             ['new-folder', 'New Folder...', () => this.createFileEntry(uri, true)],
+            reveal,
         ] : [
             ['file', 'Open', () => this.workspace.openFile(uri)],
             ['open-preview', 'Open With...', () => this.openFileWith(uri)],
@@ -167,6 +234,7 @@ class FileTree {
                 else await this.workspace.openFile(uri);
                 await this.workspace.commands.executeCommand('workbench.action.showCommands');
             }],
+            reveal,
         ];
         for (const [icon, label, action] of items) {
             const item = button([codicon(icon), element('span', '', label)], 'menu-item', () => {
