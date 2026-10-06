@@ -125,23 +125,24 @@ test('AD04 restored folder access removes obsolete Allow access and preserves th
 
 test('AD05 cancelling storage recovery during the existing terminal switch never stops or replaces its process', async context => {
     const setup = fixture(context);
-    const source = fs.readFileSync(path.join(__dirname, '../workspace.js'), 'utf8');
+    const source = fs.readFileSync(path.join(__dirname, '../workspace/account-terminals.js'), 'utf8');
     const method = source.slice(source.indexOf('    async switchTerminalAccount('), source.indexOf('    async renderAccountMenu('));
-    const workspace = vm.runInNewContext(`({${method}})`, { retryAccountStorage: setup.retryAccountStorage });
+    const accountTerminals = vm.runInNewContext(`({${method}})`, { retryAccountStorage: setup.retryAccountStorage });
     const options = { paddockAccount: { id: 'original', label: 'Main', provider: 'claude' }, paddockResume: { sessionId: 'original-conversation' } };
     let n_stops = 0;
     let n_replacements = 0;
     const terminal = { id: 'original-tab', options, processId: Promise.resolve(99), replaceProcess: async () => { n_replacements += 1; } };
-    Object.assign(workspace, {
-        isTerminal: () => true, renderFolderTabs: () => {}, refresh: async () => {},
-        accountSessionRequest: () => ({ terminalId: terminal.id, accountId: 'original', provider: 'claude', shellPid: 99 }),
+    accountTerminals.workspace = {
+        isTerminal: () => true, refresh: async () => {},
+        folderTabs: { renderFolderTabs: () => {} },
+        agentActivity: { accountSessionRequest: () => ({ terminalId: terminal.id, accountId: 'original', provider: 'claude', shellPid: 99 }) },
         accounts: {
             prepareResume: async () => { throw new Error('Account storage is blocked.'); },
             inspectStorageAccess: async () => ({ status: 'repair', message: 'Allow storage access.' }),
             stopSession: async () => { n_stops += 1; },
         },
-    });
-    const pending = workspace.switchTerminalAccount('target', terminal);
+    };
+    const pending = accountTerminals.switchTerminalAccount('target', terminal);
     const rejected = assert.rejects(pending, /Account storage is blocked/);
     await setup.tick();
     assert.equal(terminal.paddockAccountSwitching, true);

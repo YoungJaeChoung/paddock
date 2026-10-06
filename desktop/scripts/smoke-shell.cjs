@@ -144,8 +144,8 @@ async function main() {
         // Step 1b: 상태 줄 항목은 눌러도 숨지 않는다(누르면 자세히 보기). 숨기기·다시 켜기는 빠른 설정의 체크 상자만 한다.
         await mouseClick('.memory-usage .usage-group');
         assert.equal(await evaluate('!!document.querySelector("[data-meter=memory]")'), true);
-        const quickCheck = index => evaluate(`${service('PaddockWorkspace')}.renderQuickSettings(); document.querySelectorAll("#quick-settings .quick-check")[${index}].click()`);
-        await evaluate(`${service('PaddockWorkspace')}.renderQuickSettings()`);
+        const quickCheck = index => evaluate(`${service('PaddockWorkspace')}.quickSettings.renderQuickSettings(); document.querySelectorAll("#quick-settings .quick-check")[${index}].click()`);
+        await evaluate(`${service('PaddockWorkspace')}.quickSettings.renderQuickSettings()`);
         const statusChecks = await evaluate('[...document.querySelectorAll("#quick-settings .quick-check")].map(box => box.checked)');
         assert.deepEqual(statusChecks, [true, true, true]);
         await quickCheck(2);
