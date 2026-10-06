@@ -147,6 +147,13 @@ class FileTree {
         await this.workspace.refresh();
     }
 
+    /** 읽어 둔 폴더 내용을 모두 버리고 디스크에서 다시 읽어 그린다. 펼친 폴더는 그대로 둔다. */
+    async reloadDirectory() {
+        this.workspace.n_directoryRevision += 1;
+        this.workspace.directoryEntries.clear();
+        await this.workspace.refresh();
+    }
+
     /** 폴더에 항목을 더한 뒤 캐시를 비우고 그 폴더를 펼쳐 새 항목이 보이게 한다. 다시 그리기는 호출한 쪽이 한다. */
     showAddedEntries(
         parent,

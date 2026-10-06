@@ -180,6 +180,11 @@ class WorkSidebar {
                     action.setAttribute('aria-label', label);
                     toolbar.append(action);
                 }
+                // 폴더 감시가 놓친 변경(네트워크 드라이브·감시 제외 폴더·너무 많은 변경)을 사용자가 바로 다시 읽게 한다.
+                const reload = button([codicon('refresh')], 'file-create', () => this.workspace.run(() => this.workspace.fileTree.reloadDirectory()));
+                reload.title = 'Refresh';
+                reload.setAttribute('aria-label', 'Refresh file list');
+                toolbar.append(reload);
                 node.append(toolbar);
                 if (this.workspace.filesExpanded) {
                     const files = element('div', 'file-list');
