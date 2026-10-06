@@ -15,7 +15,7 @@ const { CodexUsage } = require('./codex-usage');
 const { AccountSessions } = require('./account-session');
 const { readJson, usageError } = require('./usage-files');
 const { applyStatusLine, settingsTarget } = require('./claude-usage-settings');
-const { memoryPercent } = require('./work-model');
+const { memoryPercent, macUsedMemory } = require('./work-model');
 const usage = require('./usage-model');
 const agent = require('./agent-model');
 const { WorkPresenceRegistry } = require('./work-presence');
@@ -180,6 +180,11 @@ class WindowsProcessList {
     }
 }
 
+/** macOS에서 캐시를 뺀 사용 메모리(바이트). `vm_stat`을 실행하지 못하거나 출력을 해석하지 못하면 null이라 호출부가 os.freemem()으로 돌아간다. */
+function readMacUsedMemory() {
+    return new Promise(resolve => execFile('vm_stat', (error, stdout) => resolve(error ? null : macUsedMemory(stdout))));
+}
+
 const wslInfoPromises = new Map();
 
 /**
@@ -300,9 +305,11 @@ class PaddockStatusRoutes {
             if (typeof request.query.windowId === 'string') this.workPresence.remove(request.query.windowId);
             response.status(204).end();
         });
-        app.get('/paddock/memory', (request, response) => {
+        app.get('/paddock/memory', async (request, response) => {
             const total = os.totalmem();
-            const free = os.freemem();
+            // Linux(MemAvailable)·Windows(사용 가능 메모리)의 os.freemem()은 캐시를 이미 가용으로 센다. macOS만 캐시를 뺀 사용량을 따로 읽는다.
+            const used = process.platform === 'darwin' ? await readMacUsedMemory() : null;
+            const free = used === null ? os.freemem() : Math.max(0, total - used);
             response.json({ percent: memoryPercent(total, free), total, free });
         });
         app.get('/paddock/foreground', async (request, response) => {

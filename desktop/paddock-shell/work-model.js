@@ -487,6 +487,31 @@ function memoryPercent(
     return total > 0 ? Math.round(((total - free) / total) * 100) : null;
 }
 
+/**
+ * macOS에서 앱이 실제로 차지한 메모리(바이트). `vm_stat` 출력을 받아 활성 상태 보기의 "사용된 메모리"와 같은 값을 돌려준다.
+ * macOS는 남는 메모리를 파일 캐시로 채워 두므로 `os.freemem()`(완전히 빈 페이지)으로 재면 늘 100% 가까이 보인다.
+ * 그래서 곧바로 비울 수 있는 캐시(파일 캐시·비우기 허용 페이지)는 빼고 앱 메모리 + 고정 메모리 + 압축 메모리만 센다.
+ * 출력에서 필요한 줄을 하나라도 못 찾으면 `null`이다.
+ *
+ * Examples
+ * --------
+ * | 페이지 크기 | Anonymous | purgeable | wired | occupied by compressor | 결과            |
+ * | 4096        | 100       | 20        | 50    | 30                     | 160 × 4096      |
+ * | (줄 없음)   |           |           |       |                        | null            |
+ */
+function macUsedMemory(
+    vmStat,
+) {
+    const pageSize = Number(/page size of (\d+) bytes/.exec(vmStat)?.[1]);
+    const pages = label => Number(new RegExp(`^${label}:\\s+(\\d+)\\.`, 'm').exec(vmStat)?.[1]);
+    // 앱 메모리 = 익명 페이지(앱이 직접 만든 데이터) 중 시스템이 언제든 버려도 되는 페이지를 뺀 몫.
+    const appPages = pages('Anonymous pages') - pages('Pages purgeable');
+    const usedPages = [appPages, pages('Pages wired down'), pages('Pages occupied by compressor')];
+    // 줄을 못 찾은 항목은 NaN이 되어 여기서 걸러진다.
+    const isComplete = pageSize > 0 && usedPages.every(Number.isFinite);
+    return isComplete ? usedPages.reduce((sum, count) => sum + count, 0) * pageSize : null;
+}
+
 module.exports = {
     N_VISIBLE_TERMINALS,
     empty,
@@ -515,4 +540,5 @@ module.exports = {
     serialize,
     restore,
     memoryPercent,
+    macUsedMemory,
 };

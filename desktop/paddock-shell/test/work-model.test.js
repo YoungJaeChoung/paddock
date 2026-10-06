@@ -126,6 +126,21 @@ test('C-work-F5.1: 메모리 사용률은 (전체-가용)/전체를 0~100 정수
     assert.equal(model.memoryPercent(0, 0), null);
 });
 
+test('C-work-F5.1: macOS 사용 메모리는 캐시를 빼고 앱·고정·압축 메모리만 센다', () => {
+    const vmStat = [
+        'Mach Virtual Memory Statistics: (page size of 4096 bytes)',
+        'Pages free:                                     5077.',
+        'Pages inactive:                              1228632.',
+        'Pages wired down:                                 50.',
+        'Pages purgeable:                                  20.',
+        'File-backed pages:                            764182.',
+        'Anonymous pages:                                 100.',
+        'Pages occupied by compressor:                     30.',
+    ].join('\n');
+    assert.equal(model.macUsedMemory(vmStat), 160 * 4096);
+    assert.equal(model.macUsedMemory('Mach Virtual Memory Statistics: (page size of 4096 bytes)'), null);
+});
+
 test('C-work-F3.5: 폴더 목록 이름을 바꾸면 그 이름을 쓰고, 비우면 폴더 이름으로 돌아간다', () => {
     let state = model.ensureFolder(model.empty(), 'file:///home/a');
     state = model.setFolderLabel(state, 'file:///home/a/', 'mind');
