@@ -432,24 +432,24 @@ class PaddockTerminal extends TerminalWidgetImpl {
         this.toDispose.push({ dispose: () => this.node.removeEventListener('webglcontextlost', showText, true) });
         // 화면 밖에서 그래픽 복구 실패가 통지돼도 기존 출력과 계속 들어오는 내용을 보존한다.
         this.toDispose.push(this.webglAddon.onContextLoss(() => this.webglAddon.dispose()));
-        // 한글처럼 서로 다른 글자를 많이 그리면 글자 그림 저장소의 페이지가 가득 차, 그리기 모듈이 페이지 넷을 하나로 합친다.
-        // 합친 뒤 GPU 쪽 페이지가 다시 올라가지 않아 같은 자리의 다른 글자 조각이 그려지는 결함이 있다.
-        // 합치기가 끝나면 저장소를 비우고 다시 그려 모든 글자를 새로 올린다. 한 번 합칠 때 페이지 넷이 빠지므로 한 번만 예약한다.
-        let isAtlasResetQueued = false;
-        this.toDispose.push(this.webglAddon.onRemoveTextureAtlasCanvas(() => {
-            if (!isAtlasResetQueued) {
-                isAtlasResetQueued = true;
+        // 한글처럼 서로 다른 글자를 많이 그리면 글자 그림 저장소의 페이지가 가득 차, 그리기 모듈이 페이지 넷을 하나로 합치고 뒤 페이지의 번호를 당긴다.
+        // GPU에 올린 그림은 페이지 번호별 버전으로만 갱신을 판단해, 번호가 당겨진 페이지의 버전이 우연히 같으면 옛 그림 위에 새 좌표로 그려 글자가 깨진다.
+        // 합치기가 끝나면 모든 페이지를 다시 올리고 화면을 다시 그린다. 저장소는 비우지 않는다 — 비우면 합쳐진 페이지가 빈 채로 남아 다시 못 쓰고,
+        // 화면의 글자 수가 남은 용량에 가까우면 비우기와 합치기가 되풀이되며 글자가 빈칸으로 남는다. 한 번 합칠 때 페이지 넷이 빠지므로 한 번만 예약한다.
+        let isReuploadQueued = false;
+        const reuploadGlyphs = () => {
+            if (!isReuploadQueued) {
+                isReuploadQueued = true;
                 queueMicrotask(() => {
-                    isAtlasResetQueued = false;
-                    if (!this.isDisposed) this.webglAddon.clearTextureAtlas();
+                    isReuploadQueued = false;
+                    if (!this.isDisposed) this.reuploadGlyphTextures();
                 });
             }
-        }));
-        // 창을 오래 가려 두거나 절전에서 돌아오면 그래픽 연결은 살아 있어도 글자 그림 저장소가 손상돼
-        // 이미 그린 글자가 깨져 보일 수 있다. 창으로 돌아올 때 저장소를 비우고 화면을 다시 그린다.
-        // 기본 그리기로 이미 돌아간 뒤에는 이 호출이 아무 일도 하지 않는다.
+        };
+        this.toDispose.push(this.webglAddon.onRemoveTextureAtlasCanvas(reuploadGlyphs));
+        // 창을 오래 가려 두거나 절전에서 돌아오면 그래픽 연결은 살아 있어도 GPU에 올린 글자 그림이 손상될 수 있다. 창으로 돌아올 때 같은 방법으로 다시 올린다.
         const redrawText = () => {
-            if (!this.isDisposed && document.visibilityState === 'visible') this.webglAddon.clearTextureAtlas();
+            if (document.visibilityState === 'visible') reuploadGlyphs();
         };
         document.addEventListener('visibilitychange', redrawText);
         window.addEventListener('focus', redrawText);
@@ -459,6 +459,20 @@ class PaddockTerminal extends TerminalWidgetImpl {
                 window.removeEventListener('focus', redrawText);
             },
         });
+    }
+
+    /**
+     * GPU에 올린 글자 그림을 전부 다시 올리고 화면을 다시 그린다.
+     *
+     * 그리기 모듈은 옵션이 하나라도 바뀌면 글자 저장소를 다시 연결하며 페이지 버전을 초기화해, 다음 그리기에서 모든 페이지를 다시 올린다.
+     * 저장소 구성에 들어가지 않는 옵션을 잠깐 바꿨다 되돌려 그 경로만 빌린다. 저장소의 글자는 그대로라 다시 그리는 비용만 든다.
+     * 기본 그리기로 이미 돌아간 뒤에는 옵션 변경이 화면에 아무 영향도 주지 않는다.
+     */
+    reuploadGlyphTextures() {
+        const duration = this.term.options.smoothScrollDuration || 0;
+        this.term.options.smoothScrollDuration = duration + 1;
+        this.term.options.smoothScrollDuration = duration;
+        this.term.refresh(0, this.term.rows - 1);
     }
 
     /** 붙여넣기·끌어다 놓기에 글자 없이 파일만 있으면 그 경로를 입력한다. 글자가 있으면 터미널의 기본 붙여넣기에 맡긴다. */
