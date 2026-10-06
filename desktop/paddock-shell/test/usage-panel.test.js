@@ -467,3 +467,24 @@ test('C-account-usage-age: old or recorded values carry their age next to the va
         global.document = previousDocument;
     }
 });
+
+test('C-account-usage-launch: a new Claude account gets the status line before its terminal starts', async () => {
+    const fresh = { id: 'n', provider: 'claude', label: 'New' };
+    const calls = [];
+    let profiles = [];
+    const data = new UsageData({
+        listProfiles: async () => profiles,
+        isEnabled: () => true,
+        fetchJson: async (path, method, query) => {
+            calls.push(`${method} ${path}${query}`);
+            return path === '/paddock/usage/claude' ? { state: 'on' } : { claude: { state: 'unset', windows: [], updatedAt: null } };
+        },
+    });
+    await data.refresh();
+    profiles = [fresh];
+    await data.prepareLaunch(fresh);
+    assert.ok(calls.includes('POST /paddock/usage/claude?enabled=true&accountId=n&automatic=true'));
+    calls.length = 0;
+    await data.prepareLaunch({ id: 'x', provider: 'codex', label: 'Codex' });
+    assert.deepEqual(calls, []);
+});

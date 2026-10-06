@@ -105,6 +105,7 @@ class AccountTerminals {
         const directory = cwd && await this.workspace.files.resolve(new URI(cwd)).catch(() => undefined);
         if (!directory?.isDirectory) throw new Error('The current folder is unavailable. Open an existing folder and try the account again.');
         const prepared = await retryAccountStorage(() => this.workspace.accounts.prepare(id), this.workspace.accounts, { accountId: id });
+        await this.workspace.usagePanel.data.prepareLaunch(prepared.profile);
         const uri = new URI(cwd);
         const isWindows = OS.backend.type() === OS.Type.Windows;
         let launchCwd = cwd;
@@ -252,6 +253,8 @@ class AccountTerminals {
             if (!request) throw new Error('No conversation has been identified in this terminal. Start Claude Code before switching accounts.');
             request.shellPid = await terminal.processId.catch(() => request.shellPid);
             const prepared = await retryAccountStorage(() => this.workspace.accounts.prepareResume(id, request), this.workspace.accounts, { accountId: id });
+            // 새 탭으로 여는 경로(accountLaunchOptions)와 같이, 바뀐 계정의 Claude가 시작하기 전에 상태 줄을 넣어 둔다.
+            await this.workspace.usagePanel.data.prepareLaunch(prepared.profile);
             const cwd = await this.workspace.readCwd(terminal);
             const directory = cwd && await this.workspace.files.resolve(new URI(cwd)).catch(() => undefined);
             if (!directory?.isDirectory) throw new Error('The current folder is unavailable. Restore it before switching accounts.');

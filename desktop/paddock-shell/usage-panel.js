@@ -207,6 +207,21 @@ class UsageData {
         return next;
     }
 
+    /**
+     * 등록 Claude 계정의 터미널을 띄우기 전에 Paddock 상태 줄을 그 계정 설정에 넣어 둔다.
+     * Claude Code는 시작할 때 읽은 상태 줄 설정만 쓰므로, 주기 갱신이 뒤늦게 넣으면 그 터미널의 대화는 사용량을 남기지 않는다.
+     * 방금 만든 계정은 아직 목록에 없어 지운 계정으로 보이므로 목록을 먼저 다시 읽는다.
+     * Claude 표시가 꺼져 있거나 다른 도구의 계정이면 아무것도 하지 않는다. 설정에 실패해도 터미널은 그대로 띄우도록 오류를 던지지 않는다.
+     */
+    async prepareLaunch(
+        profile,
+    ) {
+        if (profile.provider === 'claude' && profile.id && this.isEnabled('claude')) {
+            if (!this.profiles.some(item => item.id === profile.id)) await this.updateProfiles();
+            await this.read(profile);
+        }
+    }
+
     async read(
         profile,
     ) {
