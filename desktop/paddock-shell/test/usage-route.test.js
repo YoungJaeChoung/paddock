@@ -19,9 +19,18 @@ function fixture(
         return { toSelf: () => ({ inSingletonScope() {} }), toService() {}, toConstantValue() {} };
     });
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'paddock-usage-route-'));
-    const previous = process.env.THEIA_CONFIG_DIR;
-    process.env.THEIA_CONFIG_DIR = root;
-    context.after(() => { if (previous === undefined) delete process.env.THEIA_CONFIG_DIR; else process.env.THEIA_CONFIG_DIR = previous; fs.rmSync(root, { recursive: true, force: true }); });
+    // 테스트를 Paddock 계정 터미널에서 돌리면 CLAUDE_CONFIG_DIR·CODEX_HOME이 실제 계정 폴더를 가리킨다.
+    // 그대로 두면 실제 로그인 계정과 사용량 기록이 픽스처 값을 덮으므로, 홈과 함께 임시 폴더로 돌린다.
+    const isolated = { THEIA_CONFIG_DIR: root, HOME: root, CLAUDE_CONFIG_DIR: undefined, CODEX_HOME: undefined };
+    const previous = Object.fromEntries(Object.keys(isolated).map(name => [name, process.env[name]]));
+    const assign = values => {
+        for (const [name, value] of Object.entries(values)) {
+            if (value === undefined) delete process.env[name];
+            else process.env[name] = value;
+        }
+    };
+    assign(isolated);
+    context.after(() => { assign(previous); fs.rmSync(root, { recursive: true, force: true }); });
     const contribution = new Contribution();
     const routes = new Map();
     contribution.configure({ get: (url, route) => routes.set(url, route), post() {}, delete() {} });

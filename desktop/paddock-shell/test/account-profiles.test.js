@@ -11,7 +11,7 @@ const { BrowserBridge } = require('../account-browser');
 function fixture(
     context,
 ) {
-    const homeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'paddock-accounts-'));
+    const homeDirectory = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'paddock-accounts-'));
     const configDirectory = path.join(homeDirectory, '.paddock', 'config');
     const claudeDirectory = path.join(homeDirectory, '.claude');
     const codexDirectory = path.join(homeDirectory, '.codex');

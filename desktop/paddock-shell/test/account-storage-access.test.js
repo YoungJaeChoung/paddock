@@ -10,7 +10,7 @@ const { spawnSync } = require('node:child_process');
 function fixture(
     context,
 ) {
-    const homeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'paddock-storage-access-'));
+    const homeDirectory = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'paddock-storage-access-'));
     const configDirectory = path.join(homeDirectory, '.paddock', 'config');
     const accounts = new AccountProfiles({ homeDirectory, configDirectory });
     const restore = [];
