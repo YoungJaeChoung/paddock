@@ -12,6 +12,8 @@ const { PaddockWorkspace } = require('./workspace');
 const { PaddockPdfOpener } = require('./pdf-viewer');
 const { PaddockBinaryNoticeOpener } = require('./binary-notice');
 const { OpenHandler } = require('@theia/core/lib/browser/opener-service');
+const { KeyboardLayoutService } = require('@theia/core/lib/browser/keyboard/keyboard-layout-service');
+const { PaddockKeyboardLayoutService } = require('./keyboard-layout');
 require('./controls.css');
 
 // Paddock 설정. 설정 화면(Preferences)에서 "paddock"로 찾을 수 있다.
@@ -57,6 +59,8 @@ require('./usage-panel.css');
 exports.default = new ContainerModule((bind, unbind, isBound, rebind) => {
     rebind(ApplicationShell).to(PaddockShell).inSingletonScope();
     rebind(AboutDialog).to(PaddockAboutDialog).inSingletonScope();
+    // 한글 입력 중에도 Cmd·Ctrl 단축키가 키 자리대로 듣게 한다.
+    rebind(KeyboardLayoutService).to(PaddockKeyboardLayoutService).inSingletonScope();
     bind(PaddockWorkspace).toDynamicValue(({ container }) => new PaddockWorkspace(container)).inSingletonScope();
     bind(FrontendApplicationContribution).toService(PaddockWorkspace);
     bind(CommandContribution).toService(PaddockWorkspace);
