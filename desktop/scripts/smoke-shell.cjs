@@ -67,10 +67,11 @@ async function main() {
         code,
         text,
         keyCode,
+        modifiers = 2 | 8,
     ) {
-        // Control+Shift 조합을 문서에 보내 Paddock 단축키를 누른다.
+        // 조합키(기본 Control+Shift)를 문서에 보내 Paddock 단축키를 누른다. ctrlcmd로 건 단축키는 macOS에서 Command(4)다.
         for (const type of ['rawKeyDown', 'keyUp']) {
-            await send('Input.dispatchKeyEvent', { type, modifiers: 2 | 8, key: text, code, windowsVirtualKeyCode: keyCode });
+            await send('Input.dispatchKeyEvent', { type, modifiers, key: text, code, windowsVirtualKeyCode: keyCode });
         }
     }
     /** 실제 포인터를 누른 채 초점 변경이 일어나도 첫 클릭이 선택으로 끝나는지 확인한다. */
@@ -121,10 +122,15 @@ async function main() {
         await until(`${shell}.widgets.some(widget => widget.id.startsWith('terminal-'))`);
         await evaluate(`${shell}.widgets.find(widget => widget.id.startsWith('terminal-')).activate()`);
         const sidebarModifiers = await evaluate('document.querySelector(".paddock-shell").classList.contains("is-macos")') ? 4 : 2;
-        for (const type of ['rawKeyDown', 'keyUp']) {
-            await send('Input.dispatchKeyEvent', { type, modifiers: sidebarModifiers, key: 'b', code: 'KeyB', windowsVirtualKeyCode: 66 });
+        // 앱이 뜬 직후 몇 초는 단축키 처리가 준비되지 않아 누른 키가 그냥 지나간다. 사이드바가 접힐 때까지 1초 간격으로 다시 누른다.
+        const isSidebarCollapsed = 'document.querySelector(".sidebar-toggle").getAttribute("aria-expanded") === "false"';
+        for (let n_presses = 0; n_presses < 10 && !(await evaluate(isSidebarCollapsed)); n_presses += 1) {
+            for (const type of ['rawKeyDown', 'keyUp']) {
+                await send('Input.dispatchKeyEvent', { type, modifiers: sidebarModifiers, key: 'b', code: 'KeyB', windowsVirtualKeyCode: 66 });
+            }
+            await new Promise(resolve => setTimeout(resolve, 1000));
         }
-        await until('document.querySelector(".sidebar-toggle").getAttribute("aria-expanded") === "false"');
+        await until(isSidebarCollapsed);
         await mouseClick('.sidebar-toggle');
         await until('document.querySelector(".sidebar-toggle").getAttribute("aria-expanded") === "true"');
         if (await evaluate('document.querySelector(".paddock-shell").classList.contains("is-linux")')) {
@@ -154,14 +160,14 @@ async function main() {
         await until('/^\\d+%$/.test(document.querySelector("[data-meter=memory] .meter-percent")?.textContent || "")');
 
         // 첫 실행: 작업 폴더는 에이전트를 실행해야 생기므로 목록은 비어 있고 다음 행동을 안내한다.
-        // 첫 터미널은 맨 위 추가 터미널 줄에 있고, 아래 작업 폴더 탭 줄은 비어 있다.
+        // 첫 터미널은 Unassigned 묶음이고, 아래 탭 줄에 그 터미널 탭 하나가 처음부터 보인다.
         // Unassigned 묶음도 나누기를 지원하므로 나누기 버튼이 보인다(단축키·탭 끌기 분할과 같은 표면).
         // 본문의 빈 상태 안내(.main-empty)도 같은 .work-empty 문단을 쓰므로 사이드바 문구는 전체에서 찾는다.
         await until('[...document.querySelectorAll(".work-empty")].some(item => item.textContent.includes("No work folders"))');
         await until('document.querySelector(".work-steps")?.textContent.includes("Run claude or codex")');
         await until('document.querySelectorAll(".unassigned-row .row-main").length === 1');
         assert.equal(await evaluate('document.querySelector(".folder-bar").classList.contains("lm-mod-hidden")'), false);
-        assert.equal(await evaluate('document.querySelectorAll(".folder-tabs [role=tab]").length'), 0);
+        assert.equal(await evaluate('document.querySelectorAll(".folder-tabs [role=tab]").length'), 1);
         assert.equal(await evaluate('document.querySelector(".folder-tab-add").getClientRects().length > 0'), true);
         assert.equal(await evaluate('document.querySelector(".work-add").getClientRects().length > 0'), true);
         assert.equal(await evaluate('document.querySelector(".folder-bar-actions").hidden'), false);
@@ -215,9 +221,10 @@ async function main() {
         assert.equal(await evaluate(`${current}.id`), firstTerminal);
 
         // 작업 폴더 탭 줄의 ＋는 그 폴더에서 새 작업 터미널을 연다.
+        // 이름 번호는 Work 목록 전체에서 비어 있는 가장 작은 번호다. 첫 터미널은 이미 claude로 바뀌어 1번이 비어 있다.
         await evaluate('document.querySelector(".folder-tab-add").click()');
         await until('document.querySelectorAll(".folder-tabs [role=tab]").length === 2');
-        await until(`document.querySelector('.folder-tabs .tab.is-active [role=tab]')?.textContent === 'terminal 2'`);
+        await until(`document.querySelector('.folder-tabs .tab.is-active [role=tab]')?.textContent === 'terminal 1'`);
         assert.equal(await evaluate('document.querySelector(".folder-tab-add").getClientRects().length > 0'), true);
         await untilPrompts();
         await capture('3-working');
@@ -226,7 +233,7 @@ async function main() {
         const n_bars = await evaluate('document.querySelectorAll(".path-bar").length');
         await key('Backquote', '`', 192);
         await until(`document.querySelectorAll(".path-bar").length === ${n_bars + 1}`);
-        await key('Digit5', '5', 53);
+        await key('Digit5', '5', 53, (sidebarModifiers === 4 ? 4 : 2) | 8);
         await until(`document.querySelectorAll(".path-bar").length === ${n_bars + 2}`);
         // 레포 폴더에 claude·＋로 연 터미널·나눈 터미널 2개.
         await until(`document.querySelectorAll('.terminal-row:not(.unassigned-row)').length === 4`);
@@ -241,8 +248,9 @@ async function main() {
         const n_panesBeforeFile = await evaluate(`[...${shell}.mainPanel.tabBars()].length`);
         await mouseClick('.file-row[data-uri$="README.md"]');
         await until('document.querySelector(".folder-tabs .tab.is-active [role=tab]")?.textContent === "README.md"');
-        assert.equal(await evaluate('document.querySelector(".path-bar.is-active .path-item") === null'), true);
-        assert.equal(await evaluate('Math.round(document.querySelector(".path-bar.is-active").getBoundingClientRect().height)'), 3);
+        // 칸이 나뉘면 칸마다 실제 탭 줄을 보여(칸 사이 탭 끌기) 경로 줄은 숨긴다.
+        await until('document.querySelector("#theia-main-content-panel").classList.contains("has-split-tabs")');
+        assert.equal(await evaluate('Math.round(document.querySelector(".path-bar.is-active").getBoundingClientRect().height)'), 0);
         await until(`[...${shell}.mainPanel.tabBars()].length === ${n_panesBeforeFile + 1}`);
         assert.equal(await evaluate(`(() => { const terminal = ${shell}.getWidgetById(${JSON.stringify(terminalBeforeFile)}); const file = ${workspace}.currentWidget(); return terminal.isVisible && ${shell}.getTabBarFor(file) !== ${shell}.getTabBarFor(terminal) && ${shell}.getTabBarFor(file).node.getBoundingClientRect().left > ${shell}.getTabBarFor(terminal).node.getBoundingClientRect().left; })()`), true);
         await until('document.querySelector(".folder-tabs .tab.is-active [role=tab]")?.textContent === "README.md"');
