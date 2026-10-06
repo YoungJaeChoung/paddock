@@ -922,12 +922,14 @@ class PaddockWorkspace {
         try {
             // Windows는 터미널 프로세스의 처음 폴더만 알려 준다. WSL 터미널은 WSL 안에서 읽은 폴더를,
             // Git Bash·PowerShell·명령 프롬프트는 셸이 프롬프트마다 알린 폴더를 쓴다.
+            // macOS·Linux는 운영체제가 셸의 지금 폴더를 알려 주므로 그 값을 먼저 쓴다. 사용자 셸 설정(zsh 등)이 프롬프트 때만 보내는
+            // 알림을 먼저 쓰면, `cd 폴더; claude`처럼 한 줄로 실행했을 때 직전 폴더가 작업 폴더로 잡힌다.
             if (inWsl) cwd = URI.fromFilePath(inWsl.replace(/\\/g, '/')).toString();
-            else if (reported) cwd = reported;
+            else if (reported && OS.backend.type() === OS.Type.Windows) cwd = reported;
             else cwd = (await terminal.cwd).toString();
         } catch {
-            // 셸이 막 끝났거나 현재 폴더를 보고하지 않으면 마지막으로 알던 폴더를 쓴다.
-            cwd = cwd || terminal.lastCwd?.toString();
+            // 셸이 막 끝났거나 현재 폴더를 보고하지 않으면 셸이 알린 폴더, 그것도 없으면 마지막으로 알던 폴더를 쓴다.
+            cwd = reported || cwd || terminal.lastCwd?.toString();
         }
         if (cwd) this.cwdCache.set(terminal.id, cwd);
         return cwd;
