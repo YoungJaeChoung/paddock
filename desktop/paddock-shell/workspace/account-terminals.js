@@ -330,7 +330,8 @@ class AccountTerminals {
             const startHere = !openInNewTerminal && !continueConversation && this.isIdleShell(terminal);
             const choices = continueConversation ? profiles.filter(profile => profile.provider === source.provider && profile.runtime === source.runtime
                 && (source.runtime !== 'wsl' || !source.wslDistribution || profile.wslDistribution?.toLowerCase() === source.wslDistribution.toLowerCase())) : profiles;
-            const hint = continueConversation ? 'Continue this conversation with' : startHere ? 'Start in this terminal' : 'Open a new terminal';
+            // 고를 계정이 없으면 "이어갈 계정"을 말하는 안내가 항목(새 대화·계정 관리)과 어긋나므로 없다는 사실을 적는다.
+            const hint = choices.length === 0 ? 'No accounts added yet' : continueConversation ? 'Continue this conversation with' : startHere ? 'Start in this terminal' : 'Open a new terminal';
             menu.replaceChildren(element('p', 'account-menu-hint', hint));
             for (const profile of choices) {
                 const isCurrent = continueConversation && profile.id === source.accountId;

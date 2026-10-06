@@ -210,6 +210,8 @@ body {
 .paddock-shell .path-bar.is-active { background: var(--p-current-bg); box-shadow: inset 0 -2px var(--p-tab-active-border); }
 .paddock-shell .path-bar .codicon { font-size: 13px; color: var(--p-fg-muted); }
 .paddock-shell .path-bar.is-active > .codicon:first-child { color: var(--p-accent); }
+/* 나눈 칸에서 지금 입력이 가는 칸은 이름을 진하게 써서 아래 선만으로 찾지 않게 한다. */
+.paddock-shell .path-bar.is-active .path-item { color: var(--p-fg-strong); font-weight: 600; }
 .paddock-shell .path-folder { font-weight: 600; color: var(--p-fg-strong); }
 .paddock-shell .path-item { color: var(--p-fg); overflow: hidden; text-overflow: ellipsis; }
 .paddock-shell .path-meta { color: var(--p-fg-muted); font-size: 11px; }
@@ -297,7 +299,7 @@ body .theia-button.secondary:hover { background: var(--theia-button-secondaryHov
 .paddock-shell .paddock-workspace-split > .lm-SplitPanel-handle:hover,
 .paddock-shell .paddock-workspace-split.lm-mod-dragging > .lm-SplitPanel-handle { background: var(--p-accent); }
 
-/* 터미널·파일 이름과 닫기는 본문 위 탭 줄에 있다. 나눈 칸의 입력 위치만 1px 선으로 표시한다. */
+/* 한 칸일 때 터미널·파일 이름과 닫기는 본문 위 탭 줄에 있어 칸 위 줄은 1px 선으로 입력 위치만 표시한다. 칸을 나누면 이름 줄이 펼쳐진다. */
 .paddock-shell #theia-main-content-panel .lm-TabBar.is-compact-pane { min-height: 1px; max-height: 1px; border-bottom: 0; }
 .paddock-shell .is-compact-pane .path-bar.is-active { background: transparent; box-shadow: inset 0 -1px var(--p-tab-active-border); }
 .paddock-shell .folder-bar-space { flex: 1; }
@@ -307,7 +309,7 @@ body .theia-button.secondary:hover { background: var(--theia-button-secondaryHov
 .paddock-shell .markdown-view-actions button:hover { background: var(--p-hover-bg); color: var(--p-fg-strong); }
 .paddock-shell .markdown-view-actions button[aria-pressed="true"] { background: var(--p-selected-bg); color: var(--p-fg-strong); }
 .paddock-shell .folder-bar .tab-actions[hidden] { display: none; }
-.paddock-shell .folder-bar-branch { display: flex; align-items: center; align-self: center; gap: 4px; height: 22px; margin-right: 4px; padding: 0 8px; border: 0; border-radius: 5px; background: transparent; color: var(--p-fg-muted); font-size: 11px; white-space: nowrap; }
+.paddock-shell .folder-bar-branch { display: flex; align-items: center; align-self: center; gap: 4px; height: 24px; margin-right: 4px; padding: 0 8px; border: 0; border-radius: 5px; background: transparent; color: var(--p-fg-muted); font-size: 11px; white-space: nowrap; }
 .paddock-shell .folder-bar-branch:hover { background: var(--p-hover-bg); color: var(--p-fg-strong); }
 .paddock-shell .folder-bar-branch[hidden] { display: none; }
 .paddock-shell .folder-bar-branch .codicon { font-size: 13px; }
@@ -394,7 +396,7 @@ body .theia-button.secondary:hover { background: var(--theia-button-secondaryHov
 .paddock-binary-notice .binary-notice-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 10px; }
 .paddock-binary-notice .binary-notice-action { height: 26px; padding: 0 12px; border: 1px solid var(--p-popup-border, #454545); border-radius: 5px; background: transparent; color: inherit; font-size: 12px; }
 .paddock-binary-notice .binary-notice-action:hover { background: var(--p-hover-bg, #2a2d2e); color: var(--p-fg-strong, #ffffff); }
-.account-picker { display: flex; align-items: center; gap: 6px; max-width: 210px; flex-shrink: 0; height: 28px; padding: 0 8px; color: var(--p-fg-muted); background: transparent; border: 1px solid transparent; border-radius: 4px; cursor: pointer; }
+.account-picker { display: flex; align-items: center; align-self: center; gap: 6px; max-width: 210px; flex-shrink: 0; height: 24px; padding: 0 8px; color: var(--p-fg-muted); background: transparent; border: 1px solid transparent; border-radius: 4px; cursor: pointer; }
 .account-picker:hover { background: var(--p-hover); color: var(--p-fg); }
 .account-picker:focus-visible { outline: 1px solid var(--p-accent); outline-offset: -1px; }
 .account-picker-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

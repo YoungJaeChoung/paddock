@@ -175,7 +175,7 @@ class WorkSidebar {
                     this.workspace.refreshSoon();
                 }));
                 for (const [icon, label, isDirectory] of [['new-file', 'New File...', false], ['new-folder', 'New Folder...', true]]) {
-                    const action = button([codicon(icon)], 'file-create', () => this.workspace.run(() => this.workspace.fileTree.createFileEntry(new URI(filesFolder), isDirectory)));
+                    const action = button([codicon(icon)], 'file-create', () => this.workspace.run(() => this.workspace.fileTree.createFileEntry(this.workspace.fileTree.creationFolder(new URI(filesFolder)), isDirectory)));
                     action.title = label;
                     action.setAttribute('aria-label', label);
                     toolbar.append(action);
@@ -219,8 +219,11 @@ class WorkSidebar {
         const current = this.workspace.currentWidget();
         const root = this.workspace.shownTopTerminal();
         const key = this.workspace.shownFolder() || (this.workspace.isTerminal(current) ? this.workspace.cwdCache.get(current.id) : root ? this.workspace.cwdCache.get(root) : this.workspace.isFileOnlyGroup(current) ? current.getResourceUri?.()?.parent?.toString() : null) || null;
-        const isHome = key && new URI(key).path.toString() === this.workspace.homePathOf(key);
-        return key && !isHome ? key : null;
+        // 홈·파일 시스템 루트는 프로젝트가 아니다. 홈 전체나 루트의 수십 개 시스템 폴더를 파일 목록으로 보이지 않는다.
+        const path = key ? new URI(key).path.toString() : '';
+        const isHome = key && path === this.workspace.homePathOf(key);
+        const isRoot = key && /^\/([A-Za-z]:\/?)?$/.test(path);
+        return key && !isHome && !isRoot ? key : null;
     }
 
     renderRow(
@@ -488,6 +491,7 @@ class WorkSidebar {
         menu.setAttribute('role', 'menu');
         const items = [
             ['edit', 'Rename terminal', () => this.workspace.renameTerminal(id), false],
+            ['split-horizontal', 'Show to the Side', () => this.workspace.folderTabs.showBeside(id), false],
             ['link-external', 'Move to New Window', () => this.workspace.folderTabs.moveTabToWindow(id), false],
             ['close', 'Close terminal', () => this.workspace.closeWidget(this.workspace.shell.getWidgetById(id)), true],
         ];

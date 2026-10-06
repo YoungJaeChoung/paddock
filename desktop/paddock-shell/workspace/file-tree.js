@@ -103,6 +103,8 @@ class FileTree {
                 if (entry.isDirectory) {
                     if (expanded) this.expandedDirectories.delete(key);
                     else this.expandedDirectories.add(key);
+                    // 마지막으로 펼친 폴더를 기억해 머리줄의 새 파일·새 폴더가 그 안에 만들게 한다(펼쳐 둔 폴더가 지금 보는 폴더).
+                    this.lastExpandedDirectory = expanded ? (this.lastExpandedDirectory === key ? null : this.lastExpandedDirectory) : key;
                     await this.workspace.refresh();
                 } else {
                     await this.workspace.openFile(uri);
@@ -132,8 +134,10 @@ class FileTree {
         parent,
         isDirectory,
     ) {
+        // 어느 폴더에 생기는지 창에서 보이게 한다. 머리줄 버튼은 보이는 폴더의 맨 위에, 폴더 메뉴는 그 폴더 안에 만든다.
         const name = await new SingleTextInputDialog({
-            title: isDirectory ? 'New Folder' : 'New File',
+            title: `${isDirectory ? 'New Folder' : 'New File'} in ${this.folderLabel(parent)}`,
+            placeholder: isDirectory ? 'Folder name' : 'File name',
             validate: value => validateEntryName(value),
         }).open();
         if (name === undefined) return;
@@ -152,6 +156,30 @@ class FileTree {
         this.workspace.n_directoryRevision += 1;
         this.workspace.directoryEntries.clear();
         await this.workspace.refresh();
+    }
+
+    /**
+     * 머리줄의 새 파일·새 폴더가 만들 폴더. 마지막으로 펼친 폴더가 아직 펼쳐져 있고 지금 보는 폴더 안이면 그 폴더, 아니면 보는 폴더의 맨 위.
+     *
+     * 폴더를 펼친 사용자는 그 안에서 일하는 중이다 — 두 회차의 처음 사용자가 모두 `src`를 펼친 뒤 머리줄 버튼으로 만들고 `src`에 생겼다고 믿었다.
+     * 만드는 위치는 창 제목에 보이므로 착오가 있어도 확인할 수 있다.
+     */
+    creationFolder(
+        filesFolder,
+    ) {
+        const last = this.lastExpandedDirectory;
+        const inside = last && this.expandedDirectories.has(last) && last.startsWith(`${filesFolder.toString()}/`);
+        return inside ? new URI(last) : filesFolder;
+    }
+
+    /** 폴더를 작업 폴더 기준 짧은 이름으로 쓴다(`shop-api`, `shop-api/src`). 작업 폴더 밖이면 홈 기준 경로다. */
+    folderLabel(
+        uri,
+    ) {
+        const own = this.workspace.state.folders.find(folder => folder.key === uri.toString().replace(/\/$/, ''))?.key;
+        const key = own || model.folderContaining(this.workspace.state, uri.toString());
+        const relative = key ? uri.toString().slice(key.length).replace(/^\//, '') : '';
+        return key ? [this.workspace.folderName(key), decodeURIComponent(relative)].filter(Boolean).join('/') : this.workspace.displayPath(uri.toString());
     }
 
     /** 폴더에 항목을 더한 뒤 캐시를 비우고 그 폴더를 펼쳐 새 항목이 보이게 한다. 다시 그리기는 호출한 쪽이 한다. */

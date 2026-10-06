@@ -161,14 +161,25 @@ class FolderTabs {
                 }
             }
         }
-        for (const widget of this.workspace.shell.widgets) {
+        const belongs = (widget) => {
             const uri = widget.getResourceUri?.();
-            const belongs = !this.workspace.isTerminal(widget) && (this.workspace.isFileOnlyGroup(widget) || (uri
+            return !this.workspace.isTerminal(widget) && (this.workspace.isFileOnlyGroup(widget) || (uri
                 ? (key ? this.workspace.workFolderOf(widget) === key : root && this.workspace.fileRoots.get(widget.id) === root)
                 : widget instanceof WebviewWidget && (key ? this.workspace.webviewFolders.get(widget.id) === key : root && this.workspace.fileRoots.get(widget.id) === root)));
-            if (belongs) {
+        };
+        const fileWidgets = [...this.workspace.shell.widgets].filter(belongs);
+        // 같은 이름의 파일이 둘 이상 열려 있으면 탭에 상위 폴더를 붙여 구분한다(`notes.md · src`).
+        const n_sameNames = new Map();
+        for (const widget of fileWidgets) {
+            const base = widget.getResourceUri?.()?.path.base;
+            if (base) n_sameNames.set(base, (n_sameNames.get(base) || 0) + 1);
+        }
+        for (const widget of fileWidgets) {
+            const uri = widget.getResourceUri?.();
+            {
                 const tab = element('div', `tab${widget === this.workspace.currentWidget() ? ' is-active' : ''}`);
-                const label = uri?.path.base || widget.title.label;
+                const base = uri?.path.base;
+                const label = base ? (n_sameNames.get(base) > 1 ? `${base} · ${uri.parent.path.base || uri.parent.path.toString()}` : base) : widget.title.label;
                 const isDirty = Saveable.isDirty(widget);
                 const select = button(label, 'tab-select', () => this.workspace.run(() => this.workspace.activate(widget.id)));
                 select.setAttribute('role', 'tab');
@@ -205,6 +216,25 @@ class FolderTabs {
         }
         if (tabOverflow.replaceTabs(strip, contents)) this.keepActiveTabVisible(strip);
         else this.updateTabOverflow(strip);
+    }
+
+    /**
+     * 터미널을 지금 보이는 칸 옆에 나란히 둔다. 새 터미널을 만들지 않고 기존 터미널을 옮기므로 실행 중인 프로그램·출력이 그대로다.
+     *
+     * 기준 칸은 지금 선택한 화면이고, 그것이 옮길 터미널 자신이면 다른 보이는 칸을 쓴다. 보이는 다른 칸이 없으면 아무 일도 하지 않는다.
+     */
+    async showBeside(
+        id,
+    ) {
+        const widget = this.workspace.shell.getWidgetById(id);
+        const current = this.workspace.currentWidget();
+        const ref = widget && (current && current !== widget && current.isVisible ? current
+            : [...this.workspace.shell.mainPanel.tabBars()].map(bar => bar.currentTitle?.owner).find(owner => owner && owner !== widget && owner.isVisible));
+        if (widget && ref) {
+            this.workspace.shell.addWidget(widget, { area: 'main', mode: 'split-right', ref });
+            await this.workspace.activate(id);
+            await this.workspace.refresh();
+        }
     }
 
     /** Move the existing widget so its process, output and unsaved edits remain alive. */
