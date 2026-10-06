@@ -488,3 +488,40 @@ test('C-account-usage-launch: a new Claude account gets the status line before i
     await data.prepareLaunch({ id: 'x', provider: 'codex', label: 'Codex' });
     assert.deepEqual(calls, []);
 });
+
+test('C-account-usage-restore: the last account per tool survives a restart without inventing or reviving accounts', async () => {
+    const saves = [];
+    const claude = { id: 'a', provider: 'claude', label: 'Main' };
+    const codex = { id: 'c', provider: 'codex', label: 'Work' };
+    let profiles = [claude, codex];
+    const make = () => new UsageData({
+        listProfiles: async () => profiles,
+        isEnabled: () => true,
+        fetchJson: async () => ({ claude: { state: 'on', windows: [], updatedAt: null }, codex: { windows: [], updatedAt: null } }),
+        saveSelection: selection => saves.push(selection),
+    });
+    const before = make();
+    // 저장 값을 되살리기 전의 선택은 저장하지 않는다 — 아직 읽지 않은 다른 도구의 선택을 지우지 않기 위해서다.
+    before.select(claude);
+    assert.deepEqual(saves, []);
+    before.restoreSelection({});
+    before.select(codex);
+    before.select({ provider: 'codex', custom: true, label: 'Elsewhere' });
+    before.select({ provider: 'claude', linked: { id: 'a' } });
+    // 미등록 폴더는 직전 계정으로, 터미널 판정 연결(linked)은 빼고 저장한다.
+    assert.deepEqual(saves.at(-1), { claude: { provider: 'claude' }, codex });
+
+    const after = make();
+    after.select(claude);
+    after.restoreSelection(saves.at(-1));
+    // 이번 실행에서 이미 고른 Claude는 그대로, 아직 고르지 않은 Codex만 되살린다.
+    assert.deepEqual(after.selected, { claude, codex });
+
+    profiles = [claude];
+    const removed = make();
+    removed.restoreSelection({ codex, claude: { provider: 'codex' } });
+    await removed.refresh();
+    // 지운 계정과 도구가 맞지 않는 항목은 되살리지 않는다.
+    assert.deepEqual(removed.selected, {});
+    assert.deepEqual(saves.at(-1), {});
+});

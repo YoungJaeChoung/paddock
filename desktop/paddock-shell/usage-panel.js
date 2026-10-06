@@ -30,7 +30,7 @@ function accountName(
 /** Keeps each account's response separate, including failures and responses received after a selection changes. */
 class UsageData {
     constructor(
-        { fetchJson, listProfiles, isEnabled, onChange = () => {}, isClaudeChosen = () => true, onLegacyDisabled = async () => {}, onAutomaticSetup = () => {} },
+        { fetchJson, listProfiles, isEnabled, onChange = () => {}, isClaudeChosen = () => true, onLegacyDisabled = async () => {}, onAutomaticSetup = () => {}, saveSelection = () => {} },
     ) {
         this.fetchJson = fetchJson;
         this.listProfiles = listProfiles;
@@ -39,12 +39,18 @@ class UsageData {
         this.isClaudeChosen = isClaudeChosen;
         this.onLegacyDisabled = onLegacyDisabled;
         this.onAutomaticSetup = onAutomaticSetup;
+        this.saveSelection = saveSelection;
         this.profiles = [];
         this.profilesKnown = false;
         this.profilesFailed = false;
         this.selected = {};
         /** 도구별로 미등록 폴더를 고르기 직전의 선택. 미등록 폴더에서 벗어나면 이 값으로 돌아간다. */
         this.beforeCustom = {};
+        /** 지난 실행에서 되살린 등록 계정 선택의 도구. 계정 목록을 처음 읽을 때 지워진 계정이면 선택을 비운다. */
+        this.restoredProviders = new Set();
+        // 저장 값을 되살리기 전에는 저장하지 않는다. 먼저 저장하면 아직 읽지 않은 다른 도구의 선택을 지운다.
+        this.isSelectionRestored = false;
+        this.savedSelectionKey = null;
         this.active = null;
         this.snapshots = new Map();
         this.pending = new Map();
@@ -68,6 +74,7 @@ class UsageData {
         if (next) {
             if (next.custom && !this.selected[next.provider]?.custom) this.beforeCustom[next.provider] = this.selected[next.provider];
             this.selected[next.provider] = next;
+            this.restoredProviders.delete(next.provider);
         }
         // 터미널 판정의 연결(linked)은 그 터미널에서 기본 CLI가 실행 중인 동안만 믿는다. 판정이 다시 오지 않으면 낡기 때문이다.
         // 셸로 돌아오거나 다른 화면·도구로 옮기면 지운다. 그 뒤에는 계속 읽는 기본 CLI 사용량 응답의 account만 연결 근거가 된다 —
@@ -81,11 +88,73 @@ class UsageData {
             }
         }
         this.active = next;
+        this.persistSelection();
         if (unlinked && previousKey === nextKey) this.onChange();
         if (previousKey !== nextKey) {
             // A → B → A must not accept the response from the first A request.
             this.n_revision += 1;
             this.onChange();
+        }
+    }
+
+    /**
+     * 지난 실행의 도구별 마지막 선택을 되살린다. 앱을 다시 켜도 하단에 Claude·Codex가 각각 남게 하기 위해서다.
+     * 이번 실행에서 이미 고른 도구는 덮지 않는다. 다른 도구의 항목, 미등록 폴더, 터미널 판정 연결(linked)은 받지 않는다.
+     * 계정 목록을 이미 읽었으면 지워진 계정은 바로 버리고, 아직이면 처음 읽을 때 버린다(`dropRemovedRestored`).
+     *
+     * Examples
+     * --------
+     * | 저장 값                                  | 이번 실행 선택      | 결과 selected                      |
+     * | ---------------------------------------- | ------------------- | ---------------------------------- |
+     * | `{ codex: { id: 'c', provider: 'codex' } }` | `{}`                | `{ codex: { id: 'c', ... } }`      |
+     * | `{ claude: { provider: 'claude' } }`     | `{ claude: A }`     | `{ claude: A }` (덮지 않음)        |
+     * | `{ codex: { provider: 'claude' } }`      | `{}`                | `{}` (도구 불일치)                 |
+     */
+    restoreSelection(
+        saved,
+    ) {
+        let isChanged = false;
+        for (const provider of Object.keys(UsageAccounts.PROVIDERS)) {
+            const entry = saved?.[provider];
+            if (!this.selected[provider] && entry?.provider === provider && !entry.custom) {
+                const { linked, custom, ...profile } = entry;
+                this.selected[provider] = profile;
+                if (profile.id) this.restoredProviders.add(provider);
+                isChanged = true;
+            }
+        }
+        this.isSelectionRestored = true;
+        if (this.profilesKnown) this.dropRemovedRestored();
+        else this.persistSelection();
+        if (isChanged) this.onChange();
+    }
+
+    /** 되살린 선택 중 계정 목록에 없는 등록 계정을 비운다. 지운 계정이 하단에 "삭제됨"으로 남지 않게 한다. 한 번 확인하면 끝난다. */
+    dropRemovedRestored() {
+        for (const provider of this.restoredProviders) {
+            if (!this.profiles.some(profile => profile.id === this.selected[provider]?.id)) delete this.selected[provider];
+        }
+        this.restoredProviders.clear();
+        this.persistSelection();
+    }
+
+    /**
+     * 도구별 마지막 선택을 저장 콜백에 넘긴다. 바뀌었을 때만 넘기고, 저장 값을 되살리기(`restoreSelection`) 전에는 넘기지 않는다.
+     * 미등록 폴더는 그 터미널에서만 쓰는 범위라 그 직전 선택을 저장하고, 터미널 판정 연결(linked)은 다시 켜면 낡으므로 뺀다.
+     */
+    persistSelection() {
+        const saved = {};
+        for (const provider of Object.keys(UsageAccounts.PROVIDERS)) {
+            const chosen = this.selected[provider]?.custom ? this.beforeCustom[provider] : this.selected[provider];
+            if (chosen) {
+                const { linked, custom, ...profile } = chosen;
+                saved[provider] = profile;
+            }
+        }
+        const key = JSON.stringify(saved);
+        if (this.isSelectionRestored && key !== this.savedSelectionKey) {
+            this.savedSelectionKey = key;
+            this.saveSelection(saved);
         }
     }
 
@@ -149,6 +218,7 @@ class UsageData {
                     const current = profiles.find(profile => profile.id === selected.id);
                     if (current) this.selected[provider] = { ...current };
                 }
+                this.dropRemovedRestored();
                 this.profilesKnown = true;
                 this.profilesFailed = false;
             }
@@ -332,7 +402,7 @@ function action(
 /** Keeps the last selected account for each CLI visible and opens the complete list without switching a conversation. */
 class UsagePanel {
     constructor(
-        { host, fetchJson, listProfiles, isEnabled, meter, onOpen, onManage, isClaudeChosen, onLegacyDisabled, onAutomaticSetup },
+        { host, fetchJson, listProfiles, isEnabled, meter, onOpen, onManage, isClaudeChosen, onLegacyDisabled, onAutomaticSetup, saveSelection },
     ) {
         this.host = host;
         this.meter = meter;
@@ -340,7 +410,7 @@ class UsagePanel {
         this.onManage = onManage;
         this.refreshes = new Map();
         this.lastRefreshAt = 0;
-        this.data = new UsageData({ fetchJson, listProfiles, isEnabled, isClaudeChosen, onLegacyDisabled, onAutomaticSetup, onChange: () => this.render() });
+        this.data = new UsageData({ fetchJson, listProfiles, isEnabled, isClaudeChosen, onLegacyDisabled, onAutomaticSetup, saveSelection, onChange: () => this.render() });
         this.popup = node('section', 'account-usage-popup');
         this.popup.popover = 'auto';
         this.popup.setAttribute('role', 'dialog');

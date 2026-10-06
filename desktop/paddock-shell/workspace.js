@@ -386,6 +386,7 @@ class PaddockWorkspace {
                 return inspected?.globalValue !== undefined || inspected?.workspaceValue !== undefined;
             },
             onLegacyDisabled: () => this.quickSettings.setPreference(STATUS_ITEMS.CLAUDE, false),
+            saveSelection: selection => this.storage.setData(STORAGE.USAGE_SELECTION, selection),
         });
         this.quickSettings.applyInterfacePreferences();
         this.preferences.onPreferenceChanged(({ preferenceName }) => {
@@ -682,6 +683,10 @@ class PaddockWorkspace {
             this.wslHomePath = home ? URI.fromFilePath(home.replace(/\\/g, '/')).path.toString() : '';
         }
         const saved = await this.storage.getData(STORAGE.WORK_FOLDERS, '');
+        // 지난 실행의 도구별 마지막 사용량 계정을 되살린다. 저장소는 작업 목록과 같은 시점에 읽는다 — 더 일찍 읽으면 빈 값이 온다.
+        // 읽지 못하면 빈 선택으로 시작하고 이후 선택부터 저장한다.
+        this.usagePanel.data.restoreSelection(await this.storage.getData(STORAGE.USAGE_SELECTION, {}).catch(() => ({})));
+        void this.usagePanel.refresh();
         const liveIds = new Set(this.terminals.all.map(terminal => terminal.id));
         this.state = model.restore(saved || '', liveIds);
         const savedInner = await this.storage.getData(STORAGE.INNER_TABS, '{}');

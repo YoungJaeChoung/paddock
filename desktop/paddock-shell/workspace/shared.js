@@ -1,11 +1,12 @@
 // 작업 화면 협력 클래스들이 함께 쓰는 DOM 도우미·저장 키·명령 정의.
 
-// 작업 목록, 상단 터미널 묶음의 내부 탭, 창을 닫을 때 보던 위젯과 묶음별 칸 배치를 각각 저장한다.
+// 작업 목록, 상단 터미널 묶음의 내부 탭, 창을 닫을 때 보던 위젯과 묶음별 칸 배치, 상태 줄의 도구별 마지막 사용량 계정을 각각 저장한다.
 class STORAGE {
     static WORK_FOLDERS = 'paddock.work-folders.v1';
     static INNER_TABS = 'paddock.inner-tabs.v1';
     static SHOWN_WIDGET = 'paddock.shown-widget.v1';
     static ROOT_LAYOUTS = 'paddock.root-layouts.v1';
+    static USAGE_SELECTION = 'paddock.usage-selection.v1';
 }
 
 // 상태 줄 오른쪽 항목별 표시 설정. 설정 화면·빠른 설정이 같은 값을 바꾸고, 사용량 항목은 전체 계정 목록을 연다. 기본은 모두 켜짐이다.
