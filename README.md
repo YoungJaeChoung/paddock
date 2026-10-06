@@ -4,13 +4,18 @@
 
 ## 다운로드
 
-최신 릴리스의 설치 파일을 받습니다. 링크는 새 릴리스가 나오면 자동으로 그 파일을 가리킵니다.
+아직 공개 릴리스가 없습니다. 지금은 GitHub Actions의 **Package** 작업이 만든 설치 파일을 받습니다. 저장소 접근 권한이 있는 GitHub 계정이 필요합니다.
 
-- [macOS (Apple Silicon) — Paddock-mac-arm64.dmg](https://github.com/YoungJaeChoung/paddock/releases/latest/download/Paddock-mac-arm64.dmg)
-- [macOS (Intel) — Paddock-mac-x64.dmg](https://github.com/YoungJaeChoung/paddock/releases/latest/download/Paddock-mac-x64.dmg)
-- [Windows — Paddock-win-x64.exe](https://github.com/YoungJaeChoung/paddock/releases/latest/download/Paddock-win-x64.exe)
+1. 저장소의 **Actions → Package**에서 성공한 실행을 엽니다.
+2. 아래 **Artifacts**에서 운영체제에 맞는 파일을 받아 압축을 풉니다.
 
-지난 버전은 [릴리스 목록](https://github.com/YoungJaeChoung/paddock/releases)에 있습니다. 저장소가 비공개인 동안에는 저장소 접근 권한이 있는 GitHub 계정으로 로그인해야 받을 수 있습니다.
+| Artifact | 설치 파일 |
+| --- | --- |
+| `paddock-mac-arm64` | macOS (Apple Silicon) — `Paddock-mac-arm64.dmg` |
+| `paddock-mac-x64` | macOS (Intel) — `Paddock-mac-x64.dmg` |
+| `paddock-win-x64` | Windows — `Paddock-win-x64.exe` |
+
+Artifacts는 실행 뒤 90일이 지나면 사라집니다. 사라졌으면 Package 작업을 다시 실행합니다(아래 [설치 파일 만들기](#설치-파일-만들기)).
 
 처음 실행할 때 macOS는 앱을 Control-클릭해 **열기**를 고르고, Windows는 SmartScreen 창에서 **추가 정보 → 실행**을 누릅니다. 설치 파일에 개발자 인증서 서명이 없기 때문입니다.
 
@@ -46,7 +51,7 @@ Windows에 `make`가 없으면 `npm run setup` 다음 `npm run package:win`을 �
 | 올리는 것 | 결과 |
 | --- | --- |
 | `package/`로 시작하는 브랜치 | 실행 화면의 Artifacts에 설치 파일 (확인용) |
-| `make release` (`v<버전>` 태그) | GitHub 릴리스 생성. 위 다운로드 링크가 이 파일로 바뀜 |
+| `make release` (`v<버전>` 태그) | GitHub 릴리스 생성. 설치 파일이 릴리스에 올라감 |
 
 `make release`는 `desktop/package.json`의 버전으로 태그를 만듭니다. 새 버전을 내려면 먼저 그 버전을 올리고 커밋하세요. 설치본은 개발 실행과 같은 `~/.paddock/extensions`·`~/.paddock/config`를 씁니다.
 

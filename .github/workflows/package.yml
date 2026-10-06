@@ -41,7 +41,7 @@ jobs:
             desktop/dist/*.exe
           if-no-files-found: error
 
-  # README의 다운로드 링크(releases/latest/download/...)가 이 릴리스의 파일을 가리킨다.
+  # 최신 릴리스의 파일은 releases/latest/download/<파일 이름> 주소로 받을 수 있다.
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: package
