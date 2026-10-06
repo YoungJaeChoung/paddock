@@ -390,6 +390,19 @@ class PaddockTerminal extends TerminalWidgetImpl {
         this.toDispose.push({ dispose: () => this.node.removeEventListener('webglcontextlost', showText, true) });
         // 화면 밖에서 그래픽 복구 실패가 통지돼도 기존 출력과 계속 들어오는 내용을 보존한다.
         this.toDispose.push(this.webglAddon.onContextLoss(() => this.webglAddon.dispose()));
+        // 한글처럼 서로 다른 글자를 많이 그리면 글자 그림 저장소의 페이지가 가득 차, 그리기 모듈이 페이지 넷을 하나로 합친다.
+        // 합친 뒤 GPU 쪽 페이지가 다시 올라가지 않아 같은 자리의 다른 글자 조각이 그려지는 결함이 있다.
+        // 합치기가 끝나면 저장소를 비우고 다시 그려 모든 글자를 새로 올린다. 한 번 합칠 때 페이지 넷이 빠지므로 한 번만 예약한다.
+        let isAtlasResetQueued = false;
+        this.toDispose.push(this.webglAddon.onRemoveTextureAtlasCanvas(() => {
+            if (!isAtlasResetQueued) {
+                isAtlasResetQueued = true;
+                queueMicrotask(() => {
+                    isAtlasResetQueued = false;
+                    if (!this.isDisposed) this.webglAddon.clearTextureAtlas();
+                });
+            }
+        }));
         // 창을 오래 가려 두거나 절전에서 돌아오면 그래픽 연결은 살아 있어도 글자 그림 저장소가 손상돼
         // 이미 그린 글자가 깨져 보일 수 있다. 창으로 돌아올 때 저장소를 비우고 화면을 다시 그린다.
         // 기본 그리기로 이미 돌아간 뒤에는 이 호출이 아무 일도 하지 않는다.
