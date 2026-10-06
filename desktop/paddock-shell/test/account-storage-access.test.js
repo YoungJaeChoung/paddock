@@ -21,7 +21,8 @@ function fixture(
     return { homeDirectory, configDirectory, accounts, restore };
 }
 
-test('AC01 diagnoses without mutation and repairs owned managed folders only after an explicit action', { skip: process.platform === 'win32' }, async context => {
+// 권한 자동 복구(repair)는 Linux에서만 제공한다. macOS는 시스템 설정 안내, Windows는 폴더 속성 안내로 간다(AC07).
+test('AC01 diagnoses without mutation and repairs owned managed folders only after an explicit action', { skip: process.platform !== 'linux' }, async context => {
     const setup = fixture(context);
     const account = await setup.accounts.create({ provider: 'claude' });
     const prepared = await setup.accounts.prepare(account.id);
@@ -41,7 +42,7 @@ test('AC01 diagnoses without mutation and repairs owned managed folders only aft
     assert.equal((await setup.accounts.prepare(account.id)).profile.id, account.id);
 });
 
-test('AC02 repairs blocked parent before retrying account creation without creating a duplicate', { skip: process.platform === 'win32' }, async context => {
+test('AC02 repairs blocked parent before retrying account creation without creating a duplicate', { skip: process.platform !== 'linux' }, async context => {
     const setup = fixture(context);
     const parent = path.join(setup.homeDirectory, '.paddock');
     fs.mkdirSync(parent, { mode: 0o500 });
