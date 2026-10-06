@@ -142,6 +142,8 @@ function fixture() {
             else if (name.endsWith('/terminal-protocol')) result = { terminalsPath: '/terminals' };
             else if (name.endsWith('/shell-type')) result = { guessShellTypeFromExecutable: () => 'bash' };
             else if (name.endsWith('/inversify')) result = { injectable: () => () => {}, inject: () => () => {}, decorate: () => {} };
+            else if (name === 'xterm-addon-unicode11') result = { Unicode11Addon: class {} };
+            else if (name === './emoji-width') result = require('../emoji-width');
             else throw new Error(`Unexpected dependency: ${name}`);
             return result;
         },

@@ -8,6 +8,8 @@ const { IBaseTerminalServer } = require('@theia/terminal/lib/common/base-termina
 const { terminalsPath } = require('@theia/terminal/lib/common/terminal-protocol');
 const { guessShellTypeFromExecutable } = require('@theia/terminal/lib/common/shell-type');
 const { injectable, inject, decorate } = require('@theia/core/shared/inversify');
+const { Unicode11Addon } = require('xterm-addon-unicode11');
+const { createEmojiWidthFixer } = require('./emoji-width');
 
 class TerminalReplacement {
     static TIMEOUT_MS = 20000;
@@ -381,6 +383,16 @@ class PaddockTerminal extends TerminalWidgetImpl {
         super.init();
         // 밝은 테마에서도 명령과 출력의 색을 읽을 수 있도록 배경과의 최소 명암비를 유지한다.
         this.term.options.minimumContrastRatio = 4.5;
+        // 터미널의 기본 글자 폭 기준(Unicode 6)은 ✅·😀 같은 이모지를 한 칸으로 센다. Claude Code 같은 화면 프로그램은 두 칸으로 세고
+        // 그 폭에 맞춰 커서를 옮기므로, 이모지가 든 줄부터 표 선과 이전 글자가 옆 칸에 겹쳐 남는다. 이모지를 두 칸으로 세는 Unicode 11 기준을 쓴다.
+        // 글자 폭 기준 변경은 실험 기능이라 바꾸는 순간에만 허용한다. 허용 여부는 Theia가 명령 기록 설정에 맞춰 관리하므로 원래 값으로 되돌린다.
+        const allowProposedApi = this.term.options.allowProposedApi;
+        this.term.options.allowProposedApi = true;
+        this.term.loadAddon(new Unicode11Addon());
+        this.term.unicode.activeVersion = '11';
+        this.term.options.allowProposedApi = allowProposedApi;
+        // ⚠️처럼 원래 한 칸인 기호에 이모지 표시 문자를 붙인 경우는 이 기준으로도 한 칸이라, 출력을 넘기기 전에 빈칸을 채워 두 칸으로 맞춘다.
+        this.fixEmojiWidth = createEmojiWidthFixer();
         // 많은 터미널을 열면 브라우저가 오래된 그래픽 자원을 회수할 수 있다.
         // 그래픽 연결이 끊기면 바로 기본 그리기로 돌아가 복구 대기 중 출력이 비지 않게 한다.
         const showText = () => queueMicrotask(() => {
@@ -417,6 +429,13 @@ class PaddockTerminal extends TerminalWidgetImpl {
                 window.removeEventListener('focus', redrawText);
             },
         });
+    }
+
+    /** 화면 프로그램이 두 칸으로 센 기호가 실제로 두 칸을 차지하도록 출력을 고친 뒤 터미널에 넘긴다. */
+    write(
+        data,
+    ) {
+        super.write(typeof data === 'string' ? this.fixEmojiWidth(data) : data);
     }
 
     async attachTerminal(
