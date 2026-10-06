@@ -247,18 +247,21 @@ async function main() {
         const terminalBeforeFile = await evaluate(`${workspace}.currentWidget().id`);
         const n_panesBeforeFile = await evaluate(`[...${shell}.mainPanel.tabBars()].length`);
         await mouseClick('.file-row[data-uri$="README.md"]');
-        await until('document.querySelector(".folder-tabs .tab.is-active [role=tab]")?.textContent === "README.md"');
-        // 칸이 나뉘면 칸마다 실제 탭 줄을 보여(칸 사이 탭 끌기) 경로 줄은 숨긴다.
+        await until(`${workspace}.currentWidget()?.getResourceUri?.()?.path.base === "README.md"`);
+        // 칸이 나뉘면 칸마다 실제 탭 줄을 보여(칸 사이 탭 끌기) 경로 줄과 위쪽 폴더 탭 줄은 숨긴다.
         await until('document.querySelector("#theia-main-content-panel").classList.contains("has-split-tabs")');
+        assert.equal(await evaluate('document.querySelector(".folder-tabs").getClientRects().length'), 0);
         assert.equal(await evaluate('Math.round(document.querySelector(".path-bar.is-active").getBoundingClientRect().height)'), 0);
         await until(`[...${shell}.mainPanel.tabBars()].length === ${n_panesBeforeFile + 1}`);
         assert.equal(await evaluate(`(() => { const terminal = ${shell}.getWidgetById(${JSON.stringify(terminalBeforeFile)}); const file = ${workspace}.currentWidget(); return terminal.isVisible && ${shell}.getTabBarFor(file) !== ${shell}.getTabBarFor(terminal) && ${shell}.getTabBarFor(file).node.getBoundingClientRect().left > ${shell}.getTabBarFor(terminal).node.getBoundingClientRect().left; })()`), true);
-        await until('document.querySelector(".folder-tabs .tab.is-active [role=tab]")?.textContent === "README.md"');
+        // 폴더 탭 줄은 숨겨도 이 폴더의 터미널 4개와 파일 1개를 그대로 담고 있어, 칸을 합치면 다시 보인다.
         assert.equal(await evaluate('document.querySelectorAll(".folder-tabs [role=tab]").length'), 5);
         const fileTabId = await evaluate(`${workspace}.currentWidget().id`);
-        await mouseClick(`.folder-tabs [data-widget-id=${JSON.stringify(firstTerminal)}]`);
+        // 칸별 탭으로 터미널과 파일을 오간다.
+        const paneTab = id => `[id=${JSON.stringify(`shell-tab-${id}`)}]`;
+        await mouseClick(paneTab(firstTerminal));
         await until(`${workspace}.currentWidget()?.id === ${JSON.stringify(firstTerminal)}`);
-        await mouseClick(`.folder-tabs [data-widget-id=${JSON.stringify(fileTabId)}]`);
+        await mouseClick(paneTab(fileTabId));
         await until(`${workspace}.currentWidget()?.id === ${JSON.stringify(fileTabId)}`);
 
         // Step 4b: 내용이 같은 파일 목록은 행·선택·스크롤을 유지하고, 실제 파일 변경과 하위 폴더 펼침은 반영한다.
@@ -309,7 +312,8 @@ async function main() {
         await evaluate('document.querySelector("[data-view=work]").click()');
 
         // Step 7: 폴더 메뉴 → 목록 이름 바꾸기 → 목록에서 빼기(확인). 폴더는 디스크에 남는다.
-        const folderAction = `document.querySelector('.folder-row[data-folder=${JSON.stringify(repoKey)}] .row-action')`;
+        // 폴더 행의 ＋(folder-add)는 새 터미널이고, 이름 바꾸기·목록에서 빼기는 옆 … 메뉴에 있다.
+        const folderAction = `document.querySelector('.folder-row[data-folder=${JSON.stringify(repoKey)}] .row-action:not(.folder-add)')`;
         await until(folderAction);
         await evaluate(`${folderAction}.click()`);
         await until('document.querySelector(".paddock-menu .menu-note")');
@@ -353,7 +357,7 @@ async function main() {
 
         // Step 7b: 보고 있지 않은 터미널의 에이전트가 오래 일하다 멈추면 소리와 완료 표시(초록 점)가 붙고, 그 터미널을 열면 지워진다.
         // 홈의 추가 터미널에서 에이전트를 실행하므로 홈도 작업 폴더로 올라간다.
-        await evaluate(`(() => { window.__paddockRings = 0; const hw = ${workspace}; const play = hw.playDoneSound.bind(hw); hw.playDoneSound = () => { window.__paddockRings += 1; play(); }; })()`);
+        await evaluate(`(() => { window.__paddockRings = 0; const activity = ${workspace}.agentActivity; const play = activity.playDoneSound.bind(activity); activity.playDoneSound = () => { window.__paddockRings += 1; play(); }; })()`);
         const extraTerminal = await evaluate(`${shell}.widgets.find(w => w.id.startsWith('terminal-') && w.isVisible).id`);
         const topRoot = await evaluate(`${workspace}.selectedTopTerminal`);
         await evaluate(`${workspace}.newExtraTerminal().then(() => true)`);
