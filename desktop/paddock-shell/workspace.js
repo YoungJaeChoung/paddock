@@ -794,6 +794,7 @@ class PaddockWorkspace {
     }
 
     async refresh() {
+        this.watchShownFolder();
         if (this.pointerPressed) {
             this.refreshAfterPointer = true;
         } else {
@@ -1614,11 +1615,23 @@ class PaddockWorkspace {
                 await this.commands.executeCommand('git.openRepository', child.resource.path.fsPath()).catch(() => undefined);
             }
         }).catch(() => undefined);
-        // 파일 감시도 워크스페이스 루트에만 걸려 있어서, 그대로 두면 에이전트가 고친 파일을 Git 확장이 모르고
-        // 변경 수·파일 목록 표시가 멈춘다. 작업 폴더마다 한 번 감시를 건다(내려받은 의존성 폴더는 뺀다).
-        this.watchedFolders ??= new Map();
-        if (!this.watchedFolders.has(key)) {
-            this.watchedFolders.set(key, this.files.watch(new URI(key), { recursive: true, excludes: ['**/node_modules/**', '**/.venv/**'] }));
+    }
+
+    /**
+     * 파일 구획이 보여 주는 폴더(선택한 터미널의 작업 폴더) 하나에만 파일 변경 감시를 건다.
+     * 파일 감시는 워크스페이스 루트에만 걸려 있어서, 그대로 두면 에이전트가 고친 파일을 Git 확장이 모르고
+     * 변경 수·파일 목록 표시가 멈춘다. 등록된 작업 폴더 전부를 감시하면 홈·WSL 폴더 중 하나만 실패해도
+     * "Unable to watch for file changes" 경고가 뜨므로, 화면에 보이는 폴더만 감시한다.
+     * 보여 주는 폴더가 바뀌면 이전 감시를 풀고 새 폴더에 건다. 보지 않던 사이의 변경이 보이도록 새 폴더의 저장소를 한 번 다시 읽는다.
+     * 파일 구획을 숨기는 폴더(홈·파일 시스템 루트)와 폴더를 모를 때는 감시하지 않는다.
+     */
+    watchShownFolder() {
+        const key = this.workSidebar.filesFolder();
+        if (key !== (this.watchedFolder?.key ?? null)) {
+            this.watchedFolder?.watch.dispose();
+            // 내려받은 의존성 폴더는 뺀다.
+            this.watchedFolder = key ? { key, watch: this.files.watch(new URI(key), { recursive: true, excludes: ['**/node_modules/**', '**/.venv/**'] }) } : null;
+            if (key) this.refreshRepositoriesOf([new URI(key)]);
         }
     }
 
