@@ -38,4 +38,55 @@ function tabDockRef(
     return ref;
 }
 
-module.exports = { tabDropTarget, tabDockRef };
+/**
+ * 탭 줄 위에 놓을 때 끼워 넣을 자리. 가리킨 탭의 왼쪽 절반이면 그 탭 앞, 오른쪽 절반이면 뒤다.
+ * 첫 탭 앞·탭 사이 빈 곳·줄 끝은 오른쪽에서 가장 가까운 탭(없으면 마지막 탭)의 그쪽 가장자리로 본다. 탭이 없으면 null이다.
+ *
+ * @param tabs 줄에 보이는 차례대로의 `{ id, left, right }`.
+ * @param x 놓는 지점의 가로 좌표.
+ * @returns `{ mode, refId, edge }` — `edge`는 끼워 넣을 자리의 가로 좌표.
+ *
+ * | tabs | x | 결과 |
+ * |---|---|---|
+ * | a 0–100, b 100–200 | 30 | a 앞 (edge 0) |
+ * | a 0–100, b 100–200 | 160 | b 뒤 (edge 200) |
+ * | a 0–100, b 100–200 | 260 | b 뒤 (줄 끝) |
+ * | (없음) | 50 | null |
+ */
+function tabRowInsert(
+    tabs,
+    x,
+) {
+    let insert = null;
+    if (tabs.length) {
+        const hit = tabs.find(tab => x < tab.right) ?? tabs[tabs.length - 1];
+        const isBefore = x < (hit.left + hit.right) / 2;
+        insert = { mode: isBefore ? 'tab-before' : 'tab-after', refId: hit.id, edge: isBefore ? hit.left : hit.right };
+    }
+    return insert;
+}
+
+/**
+ * 끈 탭을 끼워 넣어도 칸 안 순서가 그대로인지. 끈 탭이 그 칸에 없으면(다른 칸으로 옮김) 늘 false다.
+ * 바뀌는 것이 없는 자리에는 미리보기·이동을 하지 않는다.
+ *
+ * | paneIds | id | mode | refId | 결과 |
+ * |---|---|---|---|---|
+ * | [a, b, c] | a | tab-before | b | true (a는 이미 b 앞) |
+ * | [a, b, c] | a | tab-after | a | true (자기 자신) |
+ * | [a, b, c] | c | tab-after | b | true |
+ * | [a, b, c] | a | tab-after | b | false |
+ * | [b, c] | a | tab-before | b | false (다른 칸) |
+ */
+function isSameTabPlace(
+    paneIds,
+    id,
+    mode,
+    refId,
+) {
+    const from = paneIds.indexOf(id);
+    const at = paneIds.indexOf(refId);
+    return from >= 0 && at >= 0 && (refId === id || (mode === 'tab-before' ? at === from + 1 : at === from - 1));
+}
+
+module.exports = { tabDropTarget, tabDockRef, tabRowInsert, isSameTabPlace };

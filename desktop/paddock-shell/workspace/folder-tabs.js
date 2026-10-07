@@ -5,7 +5,7 @@ const { WebviewWidget } = require('@theia/plugin-ext/lib/main/browser/webview/we
 const model = require('../work-model');
 const tabOverflow = require('../tab-overflow');
 const { paneColumns, groupTabsByColumn, columnSpans } = require('../pane-columns');
-const { tabDropTarget, tabDockRef } = require('../tab-drop');
+const { tabDropTarget, tabDockRef, tabRowInsert, isSameTabPlace } = require('../tab-drop');
 const wsl = require('../wsl-terminals');
 const { distributionOf, withDistribution, environmentLabel } = require('../terminal-environment');
 const { element, codicon, button } = require('./shared');
@@ -48,25 +48,54 @@ class FolderTabs {
      * 위젯이 보조 창 소속으로 남으므로, 되돌리기는 보조 창을 닫는 정식 경로에만 맡긴다.
      */
     tabDockTarget(id, x, y) {
-        const bars = this.workspace.shell.getWidgetById(id)?.secondaryWindow ? [] : this.workspace.shell.mainPanel.tabBars();
+        const isDetached = Boolean(this.workspace.shell.getWidgetById(id)?.secondaryWindow);
+        // 탭 줄 위면 가리킨 탭 앞뒤에 끼워 넣는다. 아니면 칸 본문의 가장자리(나누기)·가운데(그 칸으로 옮기기)다.
+        let dock = isDetached ? null : this.tabRowTarget(id, x, y);
+        const bars = isDetached || dock ? [] : this.workspace.shell.mainPanel.tabBars();
         for (const bar of bars) {
             const current = bar.currentTitle?.owner;
-            if (current?.isVisible) {
+            if (!dock && current?.isVisible) {
                 const target = tabDropTarget(current.node.getBoundingClientRect(), x, y);
                 // 자기 칸 가운데처럼 놓아도 바뀌는 것이 없으면 기준 탭이 없어 미리보기·이동을 건너뛴다.
                 const refId = target ? tabDockRef(target.mode, bar.titles.map(title => title.owner.id), current.id, id) : null;
                 const ref = refId && bar.titles.find(title => title.owner.id === refId)?.owner;
-                if (target && ref) return { ...target, ref };
+                if (target && ref) dock = { ...target, ref };
             }
         }
-        return null;
+        return dock;
+    }
+
+    /**
+     * 위쪽 탭 줄에 놓을 때의 대상: 가리킨 탭이 든 칸에서 그 탭 앞이나 뒤. 다른 칸의 탭이면 그 칸으로 옮기고, 같은 칸이면 순서를 바꾼다.
+     * 칸을 나눈 동안은 칸마다 따로 그린 탭 묶음 중 가리킨 묶음 안에서 고른다. 다른 창에 분리된 탭은 기준으로 삼지 않는다.
+     * 탭 줄 밖이거나 놓아도 순서가 그대로면 null이다. 미리보기 상자는 끼워 넣을 자리의 세로선이다.
+     */
+    tabRowTarget(id, x, y) {
+        const shell = this.workspace.shell;
+        const strip = shell.folderBar.node.querySelector('.folder-tabs');
+        const mainBars = new Set(shell.mainPanel.tabBars());
+        const isInside = rect => x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom;
+        const list = strip && this.scrollContainers(strip).find(container => isInside(container.getBoundingClientRect()));
+        const tabs = list ? [...list.querySelectorAll('[role="tab"][data-widget-id]')]
+            .filter(tab => {
+                const widget = shell.getWidgetById(tab.dataset.widgetId);
+                return widget && !widget.secondaryWindow && mainBars.has(shell.getTabBarFor(widget));
+            })
+            .map(tab => ({ id: tab.dataset.widgetId, rect: (tab.closest('.tab') ?? tab).getBoundingClientRect() })) : [];
+        const insert = tabRowInsert(tabs.map(tab => ({ id: tab.id, left: tab.rect.left, right: tab.rect.right })), x);
+        const ref = insert && shell.getWidgetById(insert.refId);
+        const paneIds = ref ? shell.getTabBarFor(ref).titles.map(title => title.owner.id) : [];
+        const tabRect = insert && tabs.find(tab => tab.id === insert.refId).rect;
+        return ref && !isSameTabPlace(paneIds, id, insert.mode, insert.refId)
+            ? { mode: insert.mode, ref, isInsert: true, rect: { left: insert.edge - 1, top: tabRect.top, width: 2, height: tabRect.height } }
+            : null;
     }
 
     previewTabDock(id, x, y) {
         const target = this.tabDockTarget(id, x, y);
         this.workspace.tabDockPreview?.remove();
         if (target) {
-            this.workspace.tabDockPreview = element('div', 'paddock-tab-dock-preview');
+            this.workspace.tabDockPreview = element('div', target.isInsert ? 'paddock-tab-dock-preview is-insert' : 'paddock-tab-dock-preview');
             for (const [key, value] of Object.entries(target.rect)) this.workspace.tabDockPreview.style[key] = `${value}px`;
             document.body.append(this.workspace.tabDockPreview);
         }

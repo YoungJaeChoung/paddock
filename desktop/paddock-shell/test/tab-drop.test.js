@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { tabDropTarget, tabDockRef } = require('../tab-drop');
+const { tabDropTarget, tabDockRef, tabRowInsert, isSameTabPlace } = require('../tab-drop');
 
 test('WD01: pane edges split in the intended direction and center merges tabs', () => {
     const rect = { left: 200, top: 50, width: 800, height: 400 };
@@ -30,4 +30,23 @@ test('WD04: an edge split from the tab own pane keeps another tab as the referen
     assert.equal(tabDockRef('split-bottom', ['a', 'b'], 'b', 'a'), 'b');
     assert.equal(tabDockRef('split-left', ['a'], 'a', 'a'), null);
     assert.equal(tabDockRef('split-top', ['c'], 'c', 'a'), 'c');
+});
+
+test('WD05: dropping on a tab row inserts before the left half and after the right half of the pointed tab', () => {
+    const tabs = [{ id: 'a', left: 0, right: 100 }, { id: 'b', left: 100, right: 200 }];
+    assert.deepEqual(tabRowInsert(tabs, 30), { mode: 'tab-before', refId: 'a', edge: 0 });
+    assert.deepEqual(tabRowInsert(tabs, 70), { mode: 'tab-after', refId: 'a', edge: 100 });
+    assert.deepEqual(tabRowInsert(tabs, 160), { mode: 'tab-after', refId: 'b', edge: 200 });
+    // 줄 끝의 빈 곳은 마지막 탭 뒤다.
+    assert.deepEqual(tabRowInsert(tabs, 260), { mode: 'tab-after', refId: 'b', edge: 200 });
+    assert.equal(tabRowInsert([], 50), null);
+});
+
+test('WD06: inserting where the tab already sits in its own pane changes nothing, moving to another pane always does', () => {
+    assert.equal(isSameTabPlace(['a', 'b', 'c'], 'a', 'tab-before', 'b'), true);
+    assert.equal(isSameTabPlace(['a', 'b', 'c'], 'a', 'tab-after', 'a'), true);
+    assert.equal(isSameTabPlace(['a', 'b', 'c'], 'c', 'tab-after', 'b'), true);
+    assert.equal(isSameTabPlace(['a', 'b', 'c'], 'a', 'tab-after', 'b'), false);
+    assert.equal(isSameTabPlace(['a', 'b', 'c'], 'c', 'tab-before', 'a'), false);
+    assert.equal(isSameTabPlace(['b', 'c'], 'a', 'tab-before', 'b'), false);
 });
