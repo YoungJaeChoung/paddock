@@ -16,6 +16,8 @@ const { KeyboardLayoutService } = require('@theia/core/lib/browser/keyboard/keyb
 const { PaddockKeyboardLayoutService } = require('./keyboard-layout');
 const { TerminalCopyOnSelectionHandler } = require('@theia/terminal/lib/browser/terminal-copy-on-selection-handler');
 const { withQueuedCopy } = require('./terminal-copy');
+const { LocalFileLinkProvider } = require('@theia/terminal/lib/browser/terminal-file-link-provider');
+const { withoutBarePathLinks } = require('./terminal-links');
 require('./controls.css');
 
 // Paddock 설정. 설정 화면(Preferences)에서 "paddock"로 찾을 수 있다.
@@ -66,6 +68,8 @@ exports.default = new ContainerModule((bind, unbind, isBound, rebind, unbindAsyn
     // 터미널 선택 복사: 끌어 고르는 동안의 클립보드 쓰기 순서를 보장한다(terminal-copy.js).
     // Theia 터미널 모듈이 이 모듈보다 뒤에 처리기를 묶으므로 rebind할 대상이 아직 없다. 만들어지는 순간 감싼다.
     onActivation(TerminalCopyOnSelectionHandler, (context, handler) => withQueuedCopy(handler));
+    // 터미널 파일 경로 링크: 문장 끝 마침표 같은 `.`·`..`·`~` 하나를 경로 링크로 보지 않는다(terminal-links.js). 위와 같은 까닭으로 만들어지는 순간 감싼다.
+    onActivation(LocalFileLinkProvider, (context, provider) => withoutBarePathLinks(provider));
     bind(PaddockWorkspace).toDynamicValue(({ container }) => new PaddockWorkspace(container)).inSingletonScope();
     bind(FrontendApplicationContribution).toService(PaddockWorkspace);
     bind(CommandContribution).toService(PaddockWorkspace);

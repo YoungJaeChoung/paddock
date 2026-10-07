@@ -89,9 +89,11 @@ class PaddockTerminal extends TerminalWidgetImpl {
             const dimensions = this.fitAddon.proposeDimensions();
             if (dimensions && Number.isInteger(dimensions.cols) && Number.isInteger(dimensions.rows)
                 && dimensions.cols > 0 && dimensions.rows > 1) {
-                // Keep Theia's bottom margin and the last valid process size until
-                // the destination window supplies usable font and layout metrics.
-                this.term.resize(dimensions.cols, dimensions.rows - 1);
+                // Keep the last valid process size until the destination window supplies usable font and layout metrics.
+                // Theia subtracts one row as a bottom margin because its padding sits on the container, which the fit
+                // calculation does not subtract. Paddock puts the padding on the xterm element (style.css), so the
+                // proposed rows already fit and the bottom margin equals the top padding.
+                this.term.resize(dimensions.cols, dimensions.rows);
                 this.resizeTerminalProcess();
             }
         }

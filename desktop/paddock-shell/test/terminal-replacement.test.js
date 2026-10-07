@@ -490,7 +490,7 @@ test('이동 중 측정할 수 없는 터미널 크기는 이전 크기를 유�
     assert.equal(processResizes, 0);
     dimensions = { cols: 120, rows: 40 };
     terminal.doResizeTerminal();
-    assert.deepEqual(resized, [[120, 39]]);
+    assert.deepEqual(resized, [[120, 40]]);
     assert.equal(processResizes, 1);
     terminal.isDisposed = true;
     terminal.doResizeTerminal();
