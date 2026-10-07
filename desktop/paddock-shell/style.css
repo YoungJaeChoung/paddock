@@ -300,6 +300,15 @@ body .theia-button.secondary:hover { background: var(--theia-button-secondaryHov
 .paddock-shell .paddock-workspace-split > .lm-SplitPanel-handle:hover,
 .paddock-shell .paddock-workspace-split.lm-mod-dragging > .lm-SplitPanel-handle { background: var(--p-accent); }
 
+/* 본문 칸 사이 경계선(세로선·가로선). 보이는 선은 1px이고 잡는 영역(::after)은 선 양옆 4px씩이다.
+   터미널 글자 층(xterm)이 손잡이와 같은 쌓임 순서에 있어 잡는 영역을 덮으므로 손잡이를 칸 내용 위로 올린다.
+   Lumino가 손잡이에 인라인으로 거는 contain: strict는 상자 밖으로 넓힌 잡는 영역을 잘라 1px만 남기므로 푼다. 마우스를 올리면 가운데 2px만 강조색. */
+.paddock-shell #theia-main-content-panel .lm-DockPanel-handle { z-index: 10; contain: none !important; }
+.paddock-shell #theia-main-content-panel .lm-DockPanel-handle[data-orientation="horizontal"]::after { min-width: 8px; left: -4px; }
+.paddock-shell #theia-main-content-panel .lm-DockPanel-handle[data-orientation="vertical"]::after { min-height: 8px; top: -4px; }
+.paddock-shell #theia-main-content-panel .lm-DockPanel-handle[data-orientation="horizontal"]:is(:hover, :active)::after { background: linear-gradient(to right, transparent 3px, var(--p-accent) 3px 5px, transparent 5px); }
+.paddock-shell #theia-main-content-panel .lm-DockPanel-handle[data-orientation="vertical"]:is(:hover, :active)::after { background: linear-gradient(to bottom, transparent 3px, var(--p-accent) 3px 5px, transparent 5px); }
+
 /* 탭이 바로 위에 있는 칸(한 칸, 또는 열에 혼자 있는 칸)은 이름과 닫기가 위쪽 탭 줄에 있어 칸 위 줄을 1px 선으로 접고 입력 위치만 표시한다. 위아래로 쌓인 칸만 이름 줄이 펼쳐진다. */
 .paddock-shell #theia-main-content-panel .lm-TabBar.is-compact-pane { min-height: 1px; max-height: 1px; border-bottom: 0; }
 .paddock-shell .is-compact-pane .path-bar.is-active { background: transparent; box-shadow: inset 0 -1px var(--p-tab-active-border); }
