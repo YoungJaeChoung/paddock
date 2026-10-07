@@ -101,6 +101,19 @@ class PaddockTerminal extends TerminalWidgetImpl {
         return super.copyOnSelection && this.term.hasSelection();
     }
 
+    /**
+     * 마우스 버튼을 누른 채(끌어 고르는 중)에는 링크 상자("Follow link")를 띄우지 않는다.
+     * Theia는 경로·주소 위에 포인터가 머물면 버튼 상태와 무관하게 상자를 띄워, 글자를 끌어 고르는 동안 선택 위에 상자가 뜬다.
+     */
+    showLinkHover(
+        invokeAction,
+        x,
+        y,
+        message,
+    ) {
+        if (!this.isPointerPressed) super.showLinkHover(invokeAction, x, y, message);
+    }
+
     /** Keeps the last account label when the launch entry was renamed and then removed. */
     storeState() {
         const state = super.storeState();
@@ -421,6 +434,23 @@ class PaddockTerminal extends TerminalWidgetImpl {
                 this.node.removeEventListener('paste', onPaste, true);
                 this.node.removeEventListener('dragover', allowFileDrop, true);
                 this.node.removeEventListener('drop', onDrop, true);
+            },
+        });
+        // 끌어 고르는 동안(버튼을 누른 채)은 링크 상자를 띄우지 않는다(showLinkHover). 누르는 순간 떠 있던 상자도 숨긴다.
+        // 뗌은 터미널 밖에서 끝날 수 있어 창 전체에서 듣는다.
+        const press = () => {
+            this.isPointerPressed = true;
+            this.hideLinkHover();
+        };
+        const release = () => { this.isPointerPressed = false; };
+        this.node.addEventListener('pointerdown', press, true);
+        window.addEventListener('pointerup', release, true);
+        window.addEventListener('pointercancel', release, true);
+        this.toDispose.push({
+            dispose: () => {
+                this.node.removeEventListener('pointerdown', press, true);
+                window.removeEventListener('pointerup', release, true);
+                window.removeEventListener('pointercancel', release, true);
             },
         });
         // 많은 터미널을 열면 브라우저가 오래된 그래픽 자원을 회수할 수 있다.

@@ -559,7 +559,8 @@ class PaddockWorkspace {
                     this.folderTabs.updateTabOverflow(strip);
                 });
             }
-            strip.addEventListener('scroll', () => this.folderTabs.updateTabOverflow(strip), { passive: true });
+            // 칸을 나눈 동안은 줄 안의 열 묶음 목록이 스크롤된다. scroll은 전파되지 않으므로 캡처 단계에서 자손의 스크롤도 받는다.
+            strip.addEventListener('scroll', () => this.folderTabs.updateTabOverflow(strip), { passive: true, capture: true });
             strip.addEventListener('keydown', event => tabOverflow.moveTabFocus(strip, event));
             // 창·사이드바 폭이 바뀌면 잘린 탭과 넘김 버튼을 맞춘다. 사용자가 다른 탭을 찾는 스크롤 위치는 유지한다.
             new ResizeObserver(() => this.folderTabs.updateTabOverflow(strip)).observe(strip);

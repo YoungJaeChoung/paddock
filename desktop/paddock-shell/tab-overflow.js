@@ -14,7 +14,12 @@ function replaceTabs(
     const focusedControl = focused?.classList.contains('tab-close') ? '.tab-close' : '[role="tab"]';
     const selectedId = strip.querySelector('[aria-selected="true"]')?.dataset.widgetId;
     const scrollLeft = strip.scrollLeft;
+    // 칸을 나눈 동안은 열 묶음의 목록(.folder-tab-list)이 스크롤되므로 묶음 차례대로 그 위치도 되살린다.
+    const listScrolls = [...strip.querySelectorAll('.folder-tab-list')].map(list => list.scrollLeft);
     strip.replaceChildren(contents);
+    [...strip.querySelectorAll('.folder-tab-list')].forEach((list, index) => {
+        if (listScrolls[index]) list.scrollLeft = listScrolls[index];
+    });
     const tabs = [...strip.querySelectorAll('[role="tab"]')];
     const selected = tabs.find(tab => tab.getAttribute('aria-selected') === 'true');
     const restored = tabs.find(tab => tab.dataset.widgetId === focusedId);

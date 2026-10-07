@@ -24,7 +24,7 @@ module.exports = {
         <button type="button" class="tabs-scroll" data-direction="-1" aria-label="Show earlier tabs" title="Show earlier tabs" hidden><span class="codicon codicon-chevron-left"></span></button>
         <div class="folder-tabs" role="tablist" aria-label="Internal terminals and files"></div>
         <button type="button" class="tabs-scroll" data-direction="1" aria-label="Show later tabs" title="Show later tabs" hidden><span class="codicon codicon-chevron-right"></span></button>
-        <div class="tab-actions">
+        <div class="tab-actions folder-add-actions">
             <button type="button" class="folder-tab-add" aria-label="New terminal here" aria-haspopup="menu" title="New terminal or agent account here"><span class="codicon codicon-add"></span></button>
         </div>
         <div class="folder-bar-space"></div>

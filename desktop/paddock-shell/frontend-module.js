@@ -14,6 +14,8 @@ const { PaddockBinaryNoticeOpener } = require('./binary-notice');
 const { OpenHandler } = require('@theia/core/lib/browser/opener-service');
 const { KeyboardLayoutService } = require('@theia/core/lib/browser/keyboard/keyboard-layout-service');
 const { PaddockKeyboardLayoutService } = require('./keyboard-layout');
+const { TerminalCopyOnSelectionHandler } = require('@theia/terminal/lib/browser/terminal-copy-on-selection-handler');
+const { withQueuedCopy } = require('./terminal-copy');
 require('./controls.css');
 
 // Paddock 설정. 설정 화면(Preferences)에서 "paddock"로 찾을 수 있다.
@@ -56,11 +58,14 @@ const PaddockPreferenceSchema = {
 require('./style.css');
 require('./usage-panel.css');
 
-exports.default = new ContainerModule((bind, unbind, isBound, rebind) => {
+exports.default = new ContainerModule((bind, unbind, isBound, rebind, unbindAsync, onActivation) => {
     rebind(ApplicationShell).to(PaddockShell).inSingletonScope();
     rebind(AboutDialog).to(PaddockAboutDialog).inSingletonScope();
     // 한글 입력 중에도 Cmd·Ctrl 단축키가 키 자리대로 듣게 한다.
     rebind(KeyboardLayoutService).to(PaddockKeyboardLayoutService).inSingletonScope();
+    // 터미널 선택 복사: 끌어 고르는 동안의 클립보드 쓰기 순서를 보장한다(terminal-copy.js).
+    // Theia 터미널 모듈이 이 모듈보다 뒤에 처리기를 묶으므로 rebind할 대상이 아직 없다. 만들어지는 순간 감싼다.
+    onActivation(TerminalCopyOnSelectionHandler, (context, handler) => withQueuedCopy(handler));
     bind(PaddockWorkspace).toDynamicValue(({ container }) => new PaddockWorkspace(container)).inSingletonScope();
     bind(FrontendApplicationContribution).toService(PaddockWorkspace);
     bind(CommandContribution).toService(PaddockWorkspace);

@@ -4,6 +4,7 @@ const { ShellTerminalProfile } = require('@theia/terminal/lib/browser/shell-term
 const { WebviewWidget } = require('@theia/plugin-ext/lib/main/browser/webview/webview');
 const model = require('../work-model');
 const tabOverflow = require('../tab-overflow');
+const { paneColumns, groupTabsByColumn, columnSpans } = require('../pane-columns');
 const { tabDropTarget, tabDockRef } = require('../tab-drop');
 const wsl = require('../wsl-terminals');
 const { distributionOf, withDistribution, environmentLabel } = require('../terminal-environment');
@@ -11,12 +12,34 @@ const { element, codicon, button } = require('./shared');
 
 /**
  * 본문 위 내부 터미널·파일 탭 줄을 그리고, 탭을 끌어 칸·다른 창으로 옮기기와 셸 메뉴를 맡는다.
+ *
+ * 칸을 나누면 탭은 그 화면이 든 칸 바로 위에 놓인다: 왼쪽이 같은 칸들을 한 열로 묶고, 열마다 묶음을 칸의 가로 구간에 둔다.
+ * 탭이 아래 줄로 내려가면 위쪽 줄이 빈 줄처럼 보이므로 탭은 위쪽 줄에 남기고 가로 위치만 칸에 맞춘다.
  */
 class FolderTabs {
     constructor(
         workspace,
     ) {
         this.workspace = workspace;
+        // 칸 크기 변화(경계 끌기·창 크기·칸 추가 뒤 배치)를 듣고 열 묶음 위치를 다시 맞춘다. 칸 목록이 바뀔 때마다 대상을 새로 잡는다.
+        this.paneObserver = null;
+        this.isLayingOut = false;
+    }
+
+    /** 본문 칸마다 그 칸 탭 줄의 화면 위치. 아직 배치되지 않아 폭이 0인 칸은 뺀다(왼쪽 0으로 잘못 묶이지 않게). */
+    paneRects() {
+        return [...this.workspace.shell.mainPanel.tabBars()]
+            .map(bar => ({ key: bar, rect: bar.node.getBoundingClientRect() }))
+            .filter(({ rect }) => rect.width > 0)
+            .map(({ key, rect }) => ({ key, left: rect.left, top: rect.top }));
+    }
+
+    /** 탭이 실제로 스크롤되는 상자들: 열 묶음이 있으면 묶음마다의 목록, 없으면 줄 자체. */
+    scrollContainers(
+        strip,
+    ) {
+        const lists = [...strip.querySelectorAll('.folder-tab-list')];
+        return lists.length ? lists : [strip];
     }
 
     /**
@@ -68,18 +91,105 @@ class FolderTabs {
         this.updateTabOverflow(strip);
     }
 
-    /** 잘린 탭을 경계로 맞추되 활성 탭을 보이는 범위에 유지한다. */
+    /** 잘린 탭을 경계로 맞추되 활성 탭을 보이는 범위에 유지한다. 열 묶음이면 묶음마다 맞춘다. */
     alignTabsToEdge(
         strip,
     ) {
-        tabOverflow.alignTabsToEdge(strip);
+        for (const container of this.scrollContainers(strip)) tabOverflow.alignTabsToEdge(container);
     }
 
-    /** 스크롤 위치를 바꾸지 않고 잘림·넘김 버튼·숨은 탭의 점을 갱신한다. */
+    /** 스크롤 위치를 바꾸지 않고 잘림·넘김 버튼·숨은 탭의 점을 갱신한다. 열 묶음이면 묶음마다 갱신한다. */
     updateTabOverflow(
         strip,
     ) {
-        tabOverflow.updateTabOverflow(strip);
+        const containers = this.scrollContainers(strip);
+        for (const container of containers) tabOverflow.updateTabOverflow(container);
+        // 열 묶음일 때 줄 자체는 스크롤하지 않는다. 한 칸이던 때의 넘김 버튼·가장자리 흐림이 남지 않게 지운다.
+        if (containers[0] !== strip) {
+            strip.classList.remove('is-overflowing', 'is-scrolled');
+            for (const scroller of strip.parentElement.querySelectorAll(':scope > .tabs-scroll')) scroller.hidden = true;
+        }
+    }
+
+    /**
+     * 탭을 본문 칸 위치에 맞춰 늘어놓는다.
+     *
+     * 한 칸이면 탭을 줄에 바로 두고 ＋를 줄 뒤(› 넘김 버튼 뒤)에 둔다. 칸이 둘 이상이면 왼쪽이 같은 칸들을 한 열로 묶어
+     * 열마다 묶음(.folder-tab-group)을 만들고, 각 탭을 그 화면이 든 칸의 열에 넣는다. 위아래로 쌓인 칸의 탭은 같은 묶음에 위 칸부터,
+     * 칸이 없는 탭(다른 창에 분리된 탭)은 마지막 묶음 뒤에 든다. ＋는 마지막 묶음의 탭 뒤에 둔다.
+     * 묶음의 가로 위치·폭은 지금 칸 위치로 먼저 정하고, 칸 크기가 바뀌면 layoutTabGroups가 다시 맞춘다.
+     */
+    arrangeTabs(
+        bar,
+        tabs,
+    ) {
+        const contents = document.createDocumentFragment();
+        const strip = bar.node.querySelector('.folder-tabs');
+        const addActions = bar.node.querySelector('.folder-add-actions');
+        const columns = paneColumns(this.paneRects());
+        const isSplit = columns.length > 1;
+        bar.node.classList.toggle('is-split', isSplit);
+        if (isSplit) {
+            const shell = this.workspace.shell;
+            const paneOf = id => {
+                const widget = shell.getWidgetById(id);
+                return widget && !widget.secondaryWindow ? shell.getTabBarFor(widget) ?? null : null;
+            };
+            const tabsById = new Map(tabs.map(tab => [tab.querySelector('[role="tab"]').dataset.widgetId, tab]));
+            const groups = groupTabsByColumn([...tabsById.keys()], paneOf, columns);
+            const stripRect = strip.getBoundingClientRect();
+            const spans = columnSpans(columns, stripRect.left, stripRect.width);
+            groups.forEach((ids, index) => {
+                const group = element('div', 'folder-tab-group');
+                group.style.left = `${spans[index].left}px`;
+                group.style.width = `${spans[index].width}px`;
+                const list = element('div', 'folder-tab-list');
+                list.append(...ids.map(id => tabsById.get(id)));
+                group.append(list);
+                if (index === groups.length - 1) group.append(addActions);
+                contents.append(group);
+            });
+        } else {
+            // 이전 그리기에서 ＋가 묶음 안에 있었으면 줄을 비우기 전에 원래 자리로 되돌린다(함께 지워지지 않게).
+            bar.node.querySelector('.tabs-scroll[data-direction="1"]').after(addActions);
+            contents.append(...tabs);
+        }
+        return contents;
+    }
+
+    /**
+     * 열 묶음의 가로 위치·폭을 칸의 실제 위치로 맞춘다. 칸 경계를 끌거나 창 폭이 바뀌어도 탭이 자기 칸 위에 머문다.
+     * 열 수가 그려 둔 묶음 수와 다르면(칸이 막 생기거나 사라져 그릴 때는 자리를 못 잡았던 때) 줄을 다시 그린다.
+     */
+    layoutTabGroups() {
+        const strip = this.workspace.shell.folderBar.node.querySelector('.folder-tabs');
+        const groups = [...strip.querySelectorAll(':scope > .folder-tab-group')];
+        const columns = paneColumns(this.paneRects());
+        if ((columns.length > 1 ? columns.length : 0) !== groups.length) {
+            if (!this.isLayingOut) {
+                this.isLayingOut = true;
+                try {
+                    this.renderFolderTabs();
+                } finally {
+                    this.isLayingOut = false;
+                }
+            }
+        } else if (groups.length) {
+            const stripRect = strip.getBoundingClientRect();
+            columnSpans(columns, stripRect.left, stripRect.width).forEach((span, index) => {
+                groups[index].style.left = `${span.left}px`;
+                groups[index].style.width = `${span.width}px`;
+            });
+            this.updateTabOverflow(strip);
+        }
+    }
+
+    /** 본문 칸이 둘 이상이면 칸 탭 줄의 크기 변화를 듣는다. 관찰을 시작하는 순간에도 한 번 불려 막 생긴 칸의 자리를 잡는다. */
+    observePanes() {
+        this.paneObserver ??= new ResizeObserver(() => this.layoutTabGroups());
+        this.paneObserver.disconnect();
+        const bars = [...this.workspace.shell.mainPanel.tabBars()];
+        if (bars.length > 1) for (const bar of bars) this.paneObserver.observe(bar.node);
     }
 
     /**
@@ -101,7 +211,8 @@ class FolderTabs {
         this.workspace.selectRepositoryOf(key);
         const root = key ? null : this.workspace.shownTopTerminal();
         const strip = bar.node.querySelector('.folder-tabs');
-        const contents = document.createDocumentFragment();
+        // 탭을 먼저 모은 뒤 칸 위치에 맞춰 늘어놓는다(arrangeTabs).
+        const tabs = [];
         // 나누기 버튼은 새 터미널을 넣을 묶음이 정해질 때(작업 폴더·Unassigned 묶음·파일만 남은 묶음)만 보인다.
         // 작업 폴더면 그 폴더에, Unassigned 묶음이면 그 묶음의 내부 터미널로 연다. 단축키·탭 끌기 분할은 묶음이 없어도 새 터미널을 연다.
         bar.node.querySelector('.folder-bar-actions').hidden = !(key || root || this.workspace.isFileOnlyGroup(this.workspace.currentWidget()));
@@ -117,7 +228,7 @@ class FolderTabs {
             for (const row of model.terminalRows(this.workspace.state, key)) {
                 const terminal = this.workspace.shell.getWidgetById(row.id);
                 const isActive = terminal === current;
-                // 탭 줄과 본문 칸의 위치는 일치하지 않는다. 다른 칸에 보이는 터미널은 도움말로 알리고 선택 표시는 현재 탭에만 둔다.
+                // 칸을 나누면 탭은 그 화면이 든 칸 위에 놓인다(arrangeTabs). 선택 표시는 현재 탭에만 두고, 다른 칸에 보이는 터미널은 도움말로도 알린다.
                 const isShown = !isActive && Boolean(terminal?.isVisible);
                 const tab = element('div', `tab${isActive ? ' is-active' : ''}${this.workspace.doneIds.has(row.id) ? ' is-done' : ''}`);
                 const label = `${row.name}${row.suffix}`;
@@ -131,7 +242,7 @@ class FolderTabs {
                 close.setAttribute('aria-label', `Close ${label}`);
                 tab.append(select, close);
                 this.workspace.workSidebar.attachTerminalMenu(tab, row.id);
-                contents.append(tab);
+                tabs.push(tab);
             }
             const branch = this.workspace.branchOf(key);
             bar.node.querySelector('.folder-bar-branch').hidden = !branch;
@@ -156,7 +267,7 @@ class FolderTabs {
                         close.setAttribute('aria-label', `Close ${label}`);
                         tab.append(select, close);
                         this.workspace.workSidebar.attachTerminalMenu(tab, id);
-                        contents.append(tab);
+                        tabs.push(tab);
                     }
                 }
             }
@@ -201,7 +312,7 @@ class FolderTabs {
                     event.preventDefault();
                     this.openTabWindowMenu(widget.id, { x: event.clientX, y: event.clientY });
                 });
-                contents.append(tab);
+                tabs.push(tab);
             }
         }
         const source = this.workspace.markdownPreview.markdownSourceWidget();
@@ -214,8 +325,10 @@ class FolderTabs {
                 action.setAttribute('aria-pressed', String(action.dataset.markdownView === mode));
             }
         }
+        const contents = this.arrangeTabs(bar, tabs);
         if (tabOverflow.replaceTabs(strip, contents)) this.keepActiveTabVisible(strip);
         else this.updateTabOverflow(strip);
+        this.observePanes();
     }
 
     /**
