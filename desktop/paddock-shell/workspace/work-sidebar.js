@@ -391,22 +391,37 @@ class WorkSidebar {
      * 첫 항목(Terminal)에 초점을 두어 ＋ 뒤 Enter 한 번이면 예전 ＋처럼 일반 터미널이 열린다.
      * 계정 목록은 메뉴를 띄운 뒤 채운다. 읽지 못하면 안내 문구와 Manage accounts…만 남는다.
      * 등록 계정이 없다고 이미 알면 메뉴 없이 일반 터미널을 바로 연다(`openNewTerminalMenu`).
+     * `pane`(칸을 나눈 동안 묶음별 ＋)이 있으면 고른 터미널을 그 칸에 연다. 칸의 보이는 탭을 먼저 현재 화면으로 만들어 폴더·묶음 판정도 그 칸을 따른다.
      */
     openNewTerminalMenu(
         anchor,
         folderKey,
+        pane,
     ) {
         // 등록 계정이 없다고 이미 알면 메뉴의 고를 항목이 Terminal 하나뿐이므로 바로 연다. 계정 진입은 오른쪽 위 Accounts에 남는다.
         if (this.workspace.n_knownAccounts === 0) {
-            this.workspace.run(() => folderKey ? this.workspace.newWorkTerminal({ folderKey }) : this.workspace.newTerminalFromFolderBar());
+            this.workspace.run(this.inPane(pane, () => folderKey ? this.workspace.newWorkTerminal({ folderKey }) : this.workspace.newTerminalFromFolderBar()));
         } else {
-            this.showNewTerminalMenu(anchor, folderKey);
+            this.showNewTerminalMenu(anchor, folderKey, pane);
         }
+    }
+
+    /** `action`을 `pane`의 보이는 탭을 현재 화면으로 만든 뒤 실행하는 동작으로 감싼다. `pane`이 없으면 `action` 그대로다. */
+    inPane(
+        pane,
+        action,
+    ) {
+        const widget = pane?.currentTitle?.owner;
+        return async () => {
+            if (widget && !widget.isDisposed && widget !== this.workspace.currentWidget()) await this.workspace.activate(widget.id);
+            return action();
+        };
     }
 
     showNewTerminalMenu(
         anchor,
         folderKey,
+        pane,
     ) {
         const menu = element('div', 'paddock-menu');
         menu.setAttribute('popover', '');
@@ -415,7 +430,7 @@ class WorkSidebar {
         const addItem = (icon, label, meta, action) => {
             const item = button([codicon(icon), element('span', 'menu-item-label', label), element('span', 'menu-item-meta', meta)], 'menu-item', () => {
                 menu.hidePopover();
-                this.workspace.run(action);
+                this.workspace.run(this.inPane(pane, action));
             });
             item.setAttribute('role', 'menuitem');
             menu.append(item);

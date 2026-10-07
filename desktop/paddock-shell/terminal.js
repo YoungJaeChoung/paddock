@@ -18,6 +18,7 @@ const { FileUri } = require('@theia/core/lib/common/file-uri');
 const URI = require('@theia/core/lib/common/uri').default;
 const { isWslShell } = require('./wsl-terminals');
 const { PASTE_PLACE, pastePathText, imageExtension } = require('./paste-paths');
+const { osc52ClipboardText } = require('./terminal-copy');
 
 class TerminalReplacement {
     static TIMEOUT_MS = 20000;
@@ -414,6 +415,13 @@ class PaddockTerminal extends TerminalWidgetImpl {
         this.term.options.allowProposedApi = allowProposedApi;
         // ⚠️처럼 원래 한 칸인 기호에 이모지 표시 문자를 붙인 경우는 이 기준으로도 한 칸이라, 출력을 넘기기 전에 빈칸을 채워 두 칸으로 맞춘다.
         this.fixEmojiWidth = createEmojiWidthFixer();
+        // 프로그램의 클립보드 쓰기 요청(OSC 52)을 받아 선택 복사와 같은 대기열로 쓴다. Claude Code는 화면 안에서 끌어 고른 글자를 이렇게 보낸다.
+        // 처리기가 없으면 요청이 버려지고, 함께 시도하는 운영체제 복사 명령마저 실패하면 붙여 넣을 때 예전 글자가 나온다.
+        this.toDispose.push(this.term.parser.registerOscHandler(52, data => {
+            const text = osc52ClipboardText(data);
+            if (text !== null) this.copyOnSelectionHandler.copy(text);
+            return true;
+        }));
         // 터미널은 붙여 넣은 글자만 받는다. 탐색기에서 복사하거나 끌어다 놓은 파일, 캡처한 이미지는 파일 경로로 바꿔 넣는다.
         // Claude Code·Codex는 입력에 들어온 이미지 경로를 첨부 이미지로 읽는다. 터미널 그리기 모듈보다 먼저 받으려고 캡처 단계에서 듣는다.
         const insertFiles = (event, transfer) => this.insertFiles(event, transfer);

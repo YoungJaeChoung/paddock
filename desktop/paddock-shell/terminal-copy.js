@@ -21,4 +21,38 @@ function withQueuedCopy(
     return handler;
 }
 
-module.exports = { withQueuedCopy };
+/**
+ * 터미널 프로그램이 보낸 클립보드 쓰기 요청(OSC 52: `ESC ] 52 ; 대상 ; base64 글자 BEL`)의 본문에서 복사할 글자를 꺼낸다.
+ *
+ * Claude Code는 화면 안에서 끌어 고른 글자를 이 요청으로 보낸다. 마우스를 직접 받는 프로그램이라 터미널 자체의 선택 복사는 일어나지 않고,
+ * 함께 시도하는 운영체제 복사 명령(WSL의 powershell.exe)이 실패하면 클립보드에 예전 글자가 남는다.
+ * `data`는 `52;` 뒤의 본문이다(`대상;base64`). 대상(c·p·s 등)은 하나의 클립보드로 합친다.
+ * 클립보드 읽기 요청(`?`)·빈 본문·형식이 틀린 본문·UTF-8이 아닌 내용이면 null이다. 읽기 요청에는 응답하지 않는다 — 프로그램이 클립보드를 엿보지 못하게 한다.
+ *
+ * Examples:
+ *   data                     → 결과
+ *   'c;aGVsbG8='             → 'hello'
+ *   ';7ZWc6riA'              → '한글'
+ *   'c;?'                    → null
+ *   'c'                      → null
+ *   'c;'                     → null
+ *   'c;!!!'                  → null
+ */
+function osc52ClipboardText(
+    data,
+) {
+    let text = null;
+    const separator = data.indexOf(';');
+    const payload = separator >= 0 ? data.slice(separator + 1) : '';
+    if (/^[A-Za-z0-9+/]+={0,2}$/.test(payload)) {
+        try {
+            // 화면 쪽 번들에는 Node의 Buffer가 없어 브라우저 함수(atob)로 바이트를 되살린다.
+            text = new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(atob(payload), char => char.charCodeAt(0)));
+        } catch {
+            text = null;
+        }
+    }
+    return text;
+}
+
+module.exports = { withQueuedCopy, osc52ClipboardText };

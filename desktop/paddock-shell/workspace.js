@@ -70,6 +70,9 @@ const FALLBACK_PROFILES = ['Git Bash', 'PowerShell'];
 // 크기 변경 뒤 Git Bash에 빈 키(NUL)를 보내기까지 기다리는 시간. 콘솔이 크기 변경을 셸에 알릴 시간을 둔다(absorbResizeKeyLoss).
 const RESIZE_KEY_GUARD_MS = 200;
 
+// 파일 감시가 걸리지 않는 WSL 폴더를 보는 동안 Git 상태·파일 목록을 다시 읽는 간격(watchShownFolder).
+const WSL_FOLDER_REREAD_MS = 5000;
+
 /**
  * 사이드바(Work·Source control·Extensions), Unassigned 작업 목록, 내부 터미널·파일 탭 줄, 본문 경로 줄, 상태 줄을 Theia 서비스와 잇는다.
  *
@@ -490,7 +493,7 @@ class PaddockWorkspace {
         window.addEventListener('resize', updateMaximizeButton);
         updateMaximizeButton();
         this.watchDisplayScale();
-        this.shell.folderBar.node.querySelector('.folder-tab-add').addEventListener('click', (event) => this.workSidebar.openNewTerminalMenu(event.currentTarget));
+        this.shell.folderBar.node.querySelector(':scope > .folder-add-actions > .folder-tab-add').addEventListener('click', (event) => this.workSidebar.openNewTerminalMenu(event.currentTarget));
         const accountPicker = this.shell.folderBar.node.querySelector('.account-picker');
         const accountMenu = this.shell.folderBar.node.querySelector('#account-menu');
         accountMenu.addEventListener('beforetoggle', event => {
@@ -1624,15 +1627,44 @@ class PaddockWorkspace {
      * "Unable to watch for file changes" 경고가 뜨므로, 화면에 보이는 폴더만 감시한다.
      * 보여 주는 폴더가 바뀌면 이전 감시를 풀고 새 폴더에 건다. 보지 않던 사이의 변경이 보이도록 새 폴더의 저장소를 한 번 다시 읽는다.
      * 파일 구획을 숨기는 폴더(홈·파일 시스템 루트)와 폴더를 모를 때는 감시하지 않는다.
+     * WSL 폴더(\\wsl.localhost\…)는 Windows의 파일 감시가 걸리지 않아 감시를 걸면 실패하고 같은 경고만 뜬다.
+     * 그 폴더는 감시 대신 창이 보이는 동안 몇 초마다 다시 읽는다(`rereadShownFolder`).
      */
     watchShownFolder() {
         const key = this.workSidebar.filesFolder();
         if (key !== (this.watchedFolder?.key ?? null)) {
             this.watchedFolder?.watch.dispose();
-            // 내려받은 의존성 폴더는 뺀다.
-            this.watchedFolder = key ? { key, watch: this.files.watch(new URI(key), { recursive: true, excludes: ['**/node_modules/**', '**/.venv/**'] }) } : null;
-            if (key) this.refreshRepositoriesOf([new URI(key)]);
+            this.watchedFolder = null;
+            if (key) {
+                const uri = new URI(key);
+                let watch;
+                if (['wsl.localhost', 'wsl$'].includes(uri.authority.toLowerCase())) {
+                    const timer = setInterval(() => {
+                        if (!document.hidden) this.rereadShownFolder(uri);
+                    }, WSL_FOLDER_REREAD_MS);
+                    watch = { dispose: () => clearInterval(timer) };
+                } else {
+                    // 내려받은 의존성 폴더는 뺀다.
+                    watch = this.files.watch(uri, { recursive: true, excludes: ['**/node_modules/**', '**/.venv/**'] });
+                }
+                this.watchedFolder = { key, watch };
+                this.refreshRepositoriesOf([uri]);
+            }
         }
+    }
+
+    /**
+     * 감시할 수 없는 폴더를 파일 변경 알림을 받은 것처럼 다시 읽는다: 그 폴더 저장소의 Git 상태와, 그 폴더 안의 펼친 파일 목록.
+     */
+    rereadShownFolder(
+        uri,
+    ) {
+        this.refreshRepositoriesOf([uri]);
+        this.n_directoryRevision += 1;
+        for (const key of this.directoryEntries.keys()) {
+            if (uri.isEqualOrParent(new URI(key))) this.directoryEntries.delete(key);
+        }
+        this.refreshSoon();
     }
 
     async closeWidget(

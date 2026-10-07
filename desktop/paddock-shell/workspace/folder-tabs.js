@@ -145,7 +145,7 @@ class FolderTabs {
      *
      * 한 칸이면 탭을 줄에 바로 두고 ＋를 줄 뒤(› 넘김 버튼 뒤)에 둔다. 칸이 둘 이상이면 왼쪽이 같은 칸들을 한 열로 묶어
      * 열마다 묶음(.folder-tab-group)을 만들고, 각 탭을 그 화면이 든 칸의 열에 넣는다. 위아래로 쌓인 칸의 탭은 같은 묶음에 위 칸부터,
-     * 칸이 없는 탭(다른 창에 분리된 탭)은 마지막 묶음 뒤에 든다. ＋는 마지막 묶음의 탭 뒤에 둔다.
+     * 칸이 없는 탭(다른 창에 분리된 탭)은 마지막 묶음 뒤에 든다. ＋는 묶음마다 탭 뒤에 두고, 누르면 그 열의 칸에 새 터미널을 연다.
      * 묶음의 가로 위치·폭은 지금 칸 위치로 먼저 정하고, 칸 크기가 바뀌면 layoutTabGroups가 다시 맞춘다.
      */
     arrangeTabs(
@@ -174,16 +174,33 @@ class FolderTabs {
                 group.style.width = `${spans[index].width}px`;
                 const list = element('div', 'folder-tab-list');
                 list.append(...ids.map(id => tabsById.get(id)));
-                group.append(list);
-                if (index === groups.length - 1) group.append(addActions);
+                group.append(list, this.paneAddActions(addActions, columns[index].keys));
                 contents.append(group);
             });
         } else {
-            // 이전 그리기에서 ＋가 묶음 안에 있었으면 줄을 비우기 전에 원래 자리로 되돌린다(함께 지워지지 않게).
-            bar.node.querySelector('.tabs-scroll[data-direction="1"]').after(addActions);
             contents.append(...tabs);
         }
+        // 한 칸일 때만 줄의 ＋를 쓴다. 나눈 동안은 묶음마다 복제한 ＋가 그 자리를 맡는다.
+        addActions.hidden = isSplit;
         return contents;
+    }
+
+    /**
+     * 열 묶음 뒤에 둘 ＋. 줄의 ＋(`addActions`)를 복제해 이름·말풍선을 같게 두고, 누르면 이 열의 칸에 새 터미널을 연다.
+     * `panes`는 열의 칸(탭 줄)들이다. 위아래로 쌓인 열이면 현재 탭이 든 칸, 없으면 맨 위 칸이 대상이다.
+     */
+    paneAddActions(
+        addActions,
+        panes,
+    ) {
+        const actions = addActions.cloneNode(true);
+        actions.hidden = false;
+        actions.querySelector('.folder-tab-add').addEventListener('click', event => {
+            const currentPane = this.workspace.shell.getTabBarFor(this.workspace.currentWidget()) ?? null;
+            const pane = panes.includes(currentPane) ? currentPane : panes[0];
+            this.workspace.workSidebar.openNewTerminalMenu(event.currentTarget, undefined, pane);
+        });
+        return actions;
     }
 
     /**
@@ -245,7 +262,7 @@ class FolderTabs {
         // 나누기 버튼은 새 터미널을 넣을 묶음이 정해질 때(작업 폴더·Unassigned 묶음·파일만 남은 묶음)만 보인다.
         // 작업 폴더면 그 폴더에, Unassigned 묶음이면 그 묶음의 내부 터미널로 연다. 단축키·탭 끌기 분할은 묶음이 없어도 새 터미널을 연다.
         bar.node.querySelector('.folder-bar-actions').hidden = !(key || root || this.workspace.isFileOnlyGroup(this.workspace.currentWidget()));
-        const add = bar.node.querySelector('.folder-tab-add');
+        const add = bar.node.querySelector(':scope > .folder-add-actions > .folder-tab-add');
         // 어느 폴더에서 열리는지를 이름에 쓴다. 위쪽 묶음에서는 지금 보는 터미널의 폴더에서 열린다.
         const innerCwd = root ? this.workspace.cwdCache.get(this.workspace.currentWidget()?.id) : this.workspace.isFileOnlyGroup(this.workspace.currentWidget()) ? this.workspace.currentWidget().getResourceUri?.()?.parent?.toString() : null;
         add.title = key ? `New terminal in ${this.workspace.displayPath(key)}` : `New terminal in ${innerCwd ? this.workspace.displayPath(innerCwd) : 'this terminal\'s folder'}`;

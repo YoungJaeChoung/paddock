@@ -144,7 +144,7 @@ function fixture() {
             else if (name.endsWith('/inversify')) result = { injectable: () => () => {}, inject: () => () => {}, decorate: () => {} };
             else if (name === 'xterm-addon-unicode11') result = { Unicode11Addon: class {} };
             else if (name === './emoji-width') result = require('../emoji-width');
-            else if (name === './wsl-terminals' || name === './paste-paths') result = require(`.${name}`);
+            else if (name === './wsl-terminals' || name === './paste-paths' || name === './terminal-copy') result = require(`.${name}`);
             else if (/(file-service|env-variables|message-service|buffer|file-uri|common\/uri)$/.test(name)) result = { default: class {}, FileService: {}, EnvVariablesServer: {}, MessageService: {}, BinaryBuffer: {}, FileUri: {} };
             else throw new Error(`Unexpected dependency: ${name}`);
             return result;
