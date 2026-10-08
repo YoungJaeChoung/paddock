@@ -9,6 +9,7 @@ const { PreferenceContribution } = require('@theia/core/lib/common/preferences/p
 const { PaddockShell } = require('./shell');
 const { PaddockAboutDialog } = require('./about-dialog');
 const { PaddockWorkspace } = require('./workspace');
+const { PaddockExtensionOpen } = require('./extension-open');
 const { PaddockPdfOpener } = require('./pdf-viewer');
 const { PaddockBinaryNoticeOpener } = require('./binary-notice');
 const { OpenHandler } = require('@theia/core/lib/browser/opener-service');
@@ -85,6 +86,8 @@ exports.default = new ContainerModule((bind, unbind, isBound, rebind, unbindAsyn
     bind(FrontendApplicationContribution).toService(PaddockWorkspace);
     bind(CommandContribution).toService(PaddockWorkspace);
     bind(KeybindingContribution).toService(PaddockWorkspace);
+    // 확장이 알림 버튼에서 부르는 VS Code의 `extension.open`(확장 페이지 열기·업데이트)을 제공한다.
+    bind(CommandContribution).toDynamicValue(({ container }) => new PaddockExtensionOpen(container)).inSingletonScope();
     bind(OpenHandler).toDynamicValue(({ container }) => new PaddockPdfOpener(container)).inSingletonScope();
     bind(OpenHandler).toDynamicValue(({ container }) => new PaddockBinaryNoticeOpener(container)).inSingletonScope();
     bind(PreferenceContribution).toConstantValue({ schema: PaddockPreferenceSchema });
