@@ -3,6 +3,13 @@ const { BrowserBridge } = require('./account-browser');
 
 class AccountLaunch {
     static PROVIDERS = { claude: 'Claude', codex: 'Codex' };
+    // Permission modes for agents Paddock starts in account terminals (`paddock.agents.permissions`).
+    // `allowSkip` lets Claude switch to bypass mode inside the session; Codex already changes approvals with /approvals, so it adds nothing.
+    static PERMISSION_FLAGS = {
+        ask: { claude: [], codex: [] },
+        allowSkip: { claude: ['--allow-dangerously-skip-permissions'], codex: [] },
+        skip: { claude: ['--dangerously-skip-permissions'], codex: ['--dangerously-bypass-approvals-and-sandbox'] },
+    };
     // These selectors can bypass the CLI login in the chosen configuration directory.
     // Only their names are used; no credential value is inspected or put in a command.
     static AUTH_ENV = [
@@ -88,11 +95,12 @@ function accountTerminalOptions(
     prepared,
     { cwd, isWindows, wslEnv = '' },
 ) {
-    const { profile, configDir, browserDirectory, resume } = prepared;
+    const { profile, configDir, browserDirectory, resume, permissions = 'ask' } = prepared;
     if (!Object.hasOwn(AccountLaunch.PROVIDERS, profile.provider)) throw new Error('Choose a Claude or Codex account.');
     if (typeof configDir !== 'string' || !configDir || /[\u0000-\u001f\u007f]/.test(configDir)) throw new Error('The account configuration path is invalid.');
     if (browserDirectory !== undefined && (typeof browserDirectory !== 'string' || !browserDirectory.startsWith('/') || /[\u0000-\u001f\u007f]/.test(browserDirectory))) throw new Error('The account browser path is invalid.');
-    const cliArguments = [];
+    if (!Object.hasOwn(AccountLaunch.PERMISSION_FLAGS, permissions)) throw new Error('Choose ask, allowSkip, or skip for agent permissions.');
+    const cliArguments = [...AccountLaunch.PERMISSION_FLAGS[permissions][profile.provider]];
     if (resume) {
         if (profile.provider !== 'claude' || resume.provider !== profile.provider || resume.runtime !== profile.runtime
             || (profile.runtime === 'wsl' && resume.wslDistribution?.toLowerCase() !== profile.wslDistribution.toLowerCase())) throw new Error('The conversation belongs to another CLI or environment.');
@@ -108,7 +116,7 @@ function accountTerminalOptions(
     env.ENV = null;
     const options = {
         cwd, title: `${AccountLaunch.PROVIDERS[profile.provider]} · ${profile.label}`,
-        paddockAccount: { ...profile }, env,
+        paddockAccount: { ...profile }, paddockPermissions: permissions, env,
         ...(browserDirectory ? { paddockBrowserDirectory: browserDirectory } : {}),
         ...(resume ? { paddockResume: { ...resume } } : {}),
     };
@@ -135,7 +143,8 @@ function refreshAccountResume(
 ) {
     const profile = options.paddockAccount;
     const variable = profile?.provider === 'claude' ? 'CLAUDE_CONFIG_DIR' : 'CODEX_HOME';
-    const prepared = { profile, configDir: options.env?.[variable], browserDirectory: options.paddockBrowserDirectory, ...(resume ? { resume } : {}) };
+    // A restored terminal keeps the permission mode it was opened with, even if the preference changed since.
+    const prepared = { profile, configDir: options.env?.[variable], browserDirectory: options.paddockBrowserDirectory, permissions: options.paddockPermissions ?? 'ask', ...(resume ? { resume } : {}) };
     const cwd = profile?.runtime === 'wsl' ? options.shellArgs?.[3] : options.cwd;
     const refreshed = accountTerminalOptions(prepared, { cwd, isWindows: /^[a-z]:[\\/]/i.test(options.shellPath || ''), wslEnv: options.env?.WSLENV || '' });
     return { ...options, ...refreshed, cwd: options.cwd, env: { ...options.env, ...refreshed.env }, paddockResume: resume ? { ...resume } : undefined };

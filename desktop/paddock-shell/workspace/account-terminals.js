@@ -125,7 +125,8 @@ class AccountTerminals {
         } else if (isWindows && ['wsl.localhost', 'wsl$'].includes(uri.authority.toLowerCase())) {
             throw new Error('Choose a WSL account for this Linux folder, or open a Windows folder first.');
         }
-        const options = accountTerminalOptions(prepared, { cwd: launchCwd, isWindows, wslEnv: this.workspace.windowsWslEnv });
+        const permissions = this.workspace.preferences.get('paddock.agents.permissions', 'ask');
+        const options = accountTerminalOptions({ ...prepared, permissions }, { cwd: launchCwd, isWindows, wslEnv: this.workspace.windowsWslEnv });
         const shellFile = await this.workspace.files.resolve(URI.fromFilePath(options.shellPath)).catch(() => undefined);
         if (!shellFile?.isFile) throw new Error('The account shell is unavailable. Install Bash, PowerShell, or WSL for the selected environment and try again.');
         options.cwd = cwd;
@@ -260,7 +261,8 @@ class AccountTerminals {
             if (!directory?.isDirectory) throw new Error('The current folder is unavailable. Restore it before switching accounts.');
             const isWindows = OS.backend.type() === OS.Type.Windows;
             const launchCwd = prepared.profile.runtime === 'wsl' ? prepared.resume.cwd : cwd;
-            const options = accountTerminalOptions(prepared, { cwd: launchCwd, isWindows, wslEnv: this.workspace.windowsWslEnv });
+            const permissions = this.workspace.preferences.get('paddock.agents.permissions', 'ask');
+            const options = accountTerminalOptions({ ...prepared, permissions }, { cwd: launchCwd, isWindows, wslEnv: this.workspace.windowsWslEnv });
             const shellFile = await this.workspace.files.resolve(URI.fromFilePath(options.shellPath)).catch(() => undefined);
             if (!shellFile?.isFile) throw new Error('The account shell is unavailable. Restore it before switching accounts.');
             options.cwd = cwd;

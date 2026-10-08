@@ -28,6 +28,17 @@ const PaddockPreferenceSchema = {
             default: true,
             description: 'Play a sound when an AI agent (Claude, Codex, …) finishes in a terminal you are not looking at.',
         },
+        'paddock.agents.permissions': {
+            type: 'string',
+            enum: ['ask', 'allowSkip', 'skip'],
+            enumDescriptions: [
+                'Ask before each tool use, as the CLI does by default.',
+                'Start asking, but let Claude switch to skipping permission prompts inside the session (Shift+Tab). Codex is unchanged; use /approvals there.',
+                'Skip all permission prompts. Claude runs with --dangerously-skip-permissions and Codex with --dangerously-bypass-approvals-and-sandbox, so agents can change or delete files and run commands without asking. Use only in folders you can restore.',
+            ],
+            default: 'ask',
+            description: 'Permission prompts for Claude and Codex that Paddock starts from Accounts. Applies to terminals opened after the change; agents you start by typing claude or codex follow their own settings.',
+        },
         'paddock.interfaceFontFamily': {
             type: 'string',
             default: '',

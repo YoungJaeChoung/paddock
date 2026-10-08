@@ -147,3 +147,20 @@ test('C-ACCOUNT-RESUME-L02 refreshed restoration uses the latest conversation an
     assert.equal(cleared.shellArgs.at(-1).includes('--resume'), false);
     assert.equal(cleared.env.CLAUDE_CONFIG_DIR, original.env.CLAUDE_CONFIG_DIR);
 });
+
+test('L09 permission modes add each CLI\'s own flag, default to asking, survive a resume refresh, and reject unknown modes', () => {
+    const claude = preparedAccount('claude', 'native', '/tmp/claude-account');
+    const codex = preparedAccount('codex', 'native', '/tmp/codex-account');
+    const launch = (prepared, permissions) => accountTerminalOptions({ ...prepared, ...(permissions ? { permissions } : {}) }, { cwd: '/tmp/work', isWindows: false });
+    assert.ok(!launch(claude).shellArgs.at(-1).includes('dangerously'));
+    assert.equal(launch(claude).paddockPermissions, 'ask');
+    assert.ok(launch(claude, 'allowSkip').shellArgs.at(-1).includes("'--allow-dangerously-skip-permissions'"));
+    assert.ok(!launch(codex, 'allowSkip').shellArgs.at(-1).includes('dangerously'));
+    assert.ok(launch(claude, 'skip').shellArgs.at(-1).includes("'--dangerously-skip-permissions'"));
+    assert.ok(launch(codex, 'skip').shellArgs.at(-1).includes("'--dangerously-bypass-approvals-and-sandbox'"));
+    const resume = { provider: 'claude', sessionId: '00000000-0000-4000-8000-000000000012', runtime: 'native', transcriptPath: '/tmp/claude-account/session.jsonl' };
+    const refreshed = refreshAccountResume(launch(claude, 'skip'), resume);
+    assert.ok(refreshed.shellArgs.at(-1).includes("'--dangerously-skip-permissions'"));
+    assert.ok(refreshed.shellArgs.at(-1).includes('--resume'));
+    assert.throws(() => launch(claude, 'always'), /agent permissions/);
+});
