@@ -4,8 +4,8 @@ const { ShellTerminalProfile } = require('@theia/terminal/lib/browser/shell-term
 const { WebviewWidget } = require('@theia/plugin-ext/lib/main/browser/webview/webview');
 const model = require('../work-model');
 const tabOverflow = require('../tab-overflow');
-const { paneColumns, groupTabsByColumn, columnSpans } = require('../pane-columns');
-const { tabDropTarget, tabDockRef, tabRowInsert, isSameTabPlace } = require('../tab-drop');
+const { paneColumns, groupTabsByColumn, columnSpans, orderTabsByPane } = require('../pane-columns');
+const { tabDropTarget, tabDockRef, tabRowInsert, isSameTabPlace, tabMoveIndex } = require('../tab-drop');
 const wsl = require('../wsl-terminals');
 const { distributionOf, withDistribution, environmentLabel } = require('../terminal-environment');
 const { element, codicon, button } = require('./shared');
@@ -105,7 +105,11 @@ class FolderTabs {
         const target = this.tabDockTarget(id, x, y);
         const widget = this.workspace.shell.getWidgetById(id);
         if (target && widget) {
-            this.workspace.shell.addWidget(widget, { area: 'main', mode: target.mode, ref: target.ref });
+            // 같은 칸 안 순서 바꾸기는 최종 번호를 직접 정해 옮긴다. Lumino에 맡기면 오른쪽으로 옮길 때 한 칸 더 뒤에 앉는다(tabMoveIndex).
+            const bar = this.workspace.shell.getTabBarFor(target.ref);
+            const index = target.isInsert && bar ? tabMoveIndex(bar.titles.map(title => title.owner.id), id, target.mode, target.ref.id) : null;
+            if (index !== null) bar.insertTab(index, widget.title);
+            else this.workspace.shell.addWidget(widget, { area: 'main', mode: target.mode, ref: target.ref });
             await this.workspace.activate(id);
             await this.workspace.refresh();
         }
@@ -147,6 +151,7 @@ class FolderTabs {
      * 열마다 묶음(.folder-tab-group)을 만들고, 각 탭을 그 화면이 든 칸의 열에 넣는다. 위아래로 쌓인 칸의 탭은 같은 묶음에 위 칸부터,
      * 칸이 없는 탭(다른 창에 분리된 탭)은 마지막 묶음 뒤에 든다. ＋는 묶음마다 탭 뒤에 두고, 누르면 그 열의 칸에 새 터미널을 연다.
      * 묶음의 가로 위치·폭은 지금 칸 위치로 먼저 정하고, 칸 크기가 바뀌면 layoutTabGroups가 다시 맞춘다.
+     * 어느 경우든 탭 차례는 칸에 놓인 실제 차례(orderTabsByPane)라, 끌어서 바꾼 순서가 줄에 그대로 보인다.
      */
     arrangeTabs(
         bar,
@@ -158,14 +163,21 @@ class FolderTabs {
         const columns = paneColumns(this.paneRects());
         const isSplit = columns.length > 1;
         bar.node.classList.toggle('is-split', isSplit);
+        const shell = this.workspace.shell;
+        const paneOf = id => {
+            const widget = shell.getWidgetById(id);
+            return widget && !widget.secondaryWindow ? shell.getTabBarFor(widget) ?? null : null;
+        };
+        // 탭은 칸에 실제로 놓인 차례로 그린다. 그래야 탭을 끌어 칸 안 순서를 바꾸면 위쪽 줄에도 그대로 보인다.
+        const panes = columns.flatMap(column => column.keys);
+        const tabsById = new Map(tabs.map(tab => [tab.querySelector('[role="tab"]').dataset.widgetId, tab]));
+        const ids = orderTabsByPane([...tabsById.keys()], id => {
+            const pane = paneOf(id);
+            const at = pane ? panes.indexOf(pane) : -1;
+            return at >= 0 ? { pane: at, index: pane.titles.findIndex(title => title.owner.id === id) } : null;
+        });
         if (isSplit) {
-            const shell = this.workspace.shell;
-            const paneOf = id => {
-                const widget = shell.getWidgetById(id);
-                return widget && !widget.secondaryWindow ? shell.getTabBarFor(widget) ?? null : null;
-            };
-            const tabsById = new Map(tabs.map(tab => [tab.querySelector('[role="tab"]').dataset.widgetId, tab]));
-            const groups = groupTabsByColumn([...tabsById.keys()], paneOf, columns);
+            const groups = groupTabsByColumn(ids, paneOf, columns);
             const stripRect = strip.getBoundingClientRect();
             const spans = columnSpans(columns, stripRect.left, stripRect.width);
             groups.forEach((ids, index) => {
@@ -178,7 +190,7 @@ class FolderTabs {
                 contents.append(group);
             });
         } else {
-            contents.append(...tabs);
+            contents.append(...ids.map(id => tabsById.get(id)));
         }
         // 한 칸일 때만 줄의 ＋를 쓴다. 나눈 동안은 묶음마다 복제한 ＋가 그 자리를 맡는다.
         addActions.hidden = isSplit;

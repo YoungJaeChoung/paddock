@@ -81,4 +81,30 @@ function columnSpans(
     });
 }
 
-module.exports = { paneColumns, groupTabsByColumn, columnSpans };
+/**
+ * 탭을 본문 칸에 실제로 놓인 차례로 늘어놓는다. 앞 칸의 탭이 먼저, 같은 칸 안에서는 칸의 탭 순서를 따른다.
+ *
+ * 위쪽 탭 줄은 끌어서 바꾼 칸 안 순서를 그대로 보여야 한다. `place(id)`는 `{ pane, index }`(칸 차례·칸 안 번호)이고,
+ * 칸이 없는 탭(다른 창에 분리된 탭)은 null이다. 칸이 없는 탭은 맨 뒤에 원래 순서대로 남는다.
+ *
+ * Examples:
+ *   ids          place                                   → result
+ *   [a, b, c]    a→{0,1}, b→{0,0}, c→{0,2}               → [b, a, c]
+ *   [a, b, c]    a→{1,0}, b→{0,1}, c→{0,0}               → [c, b, a]
+ *   [w, a, b]    w→null, a→{0,1}, b→{0,0}                → [b, a, w]
+ */
+function orderTabsByPane(
+    ids,
+    place,
+) {
+    const rank = id => {
+        const at = place(id);
+        return at ? [at.pane, at.index] : [Infinity, 0];
+    };
+    return ids
+        .map((id, order) => ({ id, order, rank: rank(id) }))
+        .sort((first, second) => first.rank[0] - second.rank[0] || first.rank[1] - second.rank[1] || first.order - second.order)
+        .map(({ id }) => id);
+}
+
+module.exports = { paneColumns, groupTabsByColumn, columnSpans, orderTabsByPane };

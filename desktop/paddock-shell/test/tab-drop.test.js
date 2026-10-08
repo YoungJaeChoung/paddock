@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { tabDropTarget, tabDockRef, tabRowInsert, isSameTabPlace } = require('../tab-drop');
+const { tabDropTarget, tabDockRef, tabRowInsert, isSameTabPlace, tabMoveIndex } = require('../tab-drop');
 
 test('WD01: pane edges split in the intended direction and center merges tabs', () => {
     const rect = { left: 200, top: 50, width: 800, height: 400 };
@@ -49,4 +49,18 @@ test('WD06: inserting where the tab already sits in its own pane changes nothing
     assert.equal(isSameTabPlace(['a', 'b', 'c'], 'a', 'tab-after', 'b'), false);
     assert.equal(isSameTabPlace(['a', 'b', 'c'], 'c', 'tab-before', 'a'), false);
     assert.equal(isSameTabPlace(['b', 'c'], 'a', 'tab-before', 'b'), false);
+});
+
+test('WD07: moving a tab within its own pane lands exactly at the marked place in both directions', () => {
+    const move = (ids, id, mode, refId) => {
+        const order = ids.filter(item => item !== id);
+        order.splice(tabMoveIndex(ids, id, mode, refId), 0, id);
+        return order.join('');
+    };
+    assert.equal(move(['a', 'b', 'c'], 'a', 'tab-before', 'c'), 'bac');
+    assert.equal(move(['a', 'b', 'c'], 'a', 'tab-after', 'b'), 'bac');
+    assert.equal(move(['a', 'b', 'c'], 'a', 'tab-after', 'c'), 'bca');
+    assert.equal(move(['a', 'b', 'c'], 'c', 'tab-before', 'a'), 'cab');
+    assert.equal(move(['a', 'b', 'c', 'd'], 'd', 'tab-after', 'a'), 'adbc');
+    assert.equal(tabMoveIndex(['b', 'c'], 'a', 'tab-before', 'b'), null);
 });

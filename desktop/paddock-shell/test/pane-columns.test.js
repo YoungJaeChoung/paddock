@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { paneColumns, groupTabsByColumn, columnSpans } = require('../pane-columns');
+const { paneColumns, groupTabsByColumn, columnSpans, orderTabsByPane } = require('../pane-columns');
 
 test('PC01: side-by-side panes form separate columns ordered from the left', () => {
     const columns = paneColumns([{ key: 'b', left: 500, top: 0 }, { key: 'a', left: 0, top: 0 }]);
@@ -36,4 +36,11 @@ test('PC06: each column spans to the next column and the last reaches the strip 
     assert.deepEqual(columnSpans([{ left: 0, keys: ['a'] }], 30, 900), [{ left: 0, width: 900 }]);
     // 줄보다 오른쪽에서 시작하는 열(오른쪽 버튼에 가린 열)은 폭 0으로 남고 음수가 되지 않는다.
     assert.deepEqual(columnSpans([{ left: 0, keys: ['a'] }, { left: 1000, keys: ['b'] }], 30, 900), [{ left: 0, width: 900 }, { left: 900, width: 0 }]);
+});
+
+test('tabs follow the order they sit in their panes, with paneless tabs last', () => {
+    const places = { a: { pane: 0, index: 1 }, b: { pane: 0, index: 0 }, c: { pane: 0, index: 2 }, d: { pane: 1, index: 0 }, w: null };
+    assert.deepEqual(orderTabsByPane(['a', 'b', 'c'], id => places[id]), ['b', 'a', 'c']);
+    assert.deepEqual(orderTabsByPane(['d', 'a', 'b'], id => places[id]), ['b', 'a', 'd']);
+    assert.deepEqual(orderTabsByPane(['w', 'a', 'b'], id => places[id]), ['b', 'a', 'w']);
 });

@@ -89,4 +89,29 @@ function isSameTabPlace(
     return from >= 0 && at >= 0 && (refId === id || (mode === 'tab-before' ? at === from + 1 : at === from - 1));
 }
 
-module.exports = { tabDropTarget, tabDockRef, tabRowInsert, isSameTabPlace };
+/**
+ * 같은 칸 안에서 끈 탭이 옮겨 가 앉을 번호. 끈 탭이 그 칸에 없으면(다른 칸으로 옮김) null이다.
+ *
+ * Lumino의 탭 끼워 넣기(`tab-before`/`tab-after`)는 기준 탭의 원래 번호에 끈 탭을 옮겨 놓는데, 옮기는 동안 끈 탭이 빠지면서
+ * 오른쪽 탭들이 한 칸씩 당겨진다. 그래서 오른쪽으로 옮길 때 한 칸 더 뒤에 앉는다. 이 함수는 빠진 뒤의 번호를 돌려준다.
+ *
+ * | paneIds | id | mode | refId | 결과 |
+ * |---|---|---|---|---|
+ * | [a, b, c] | a | tab-before | c | 1 (b, a, c) |
+ * | [a, b, c] | a | tab-after | b | 1 (b, a, c) |
+ * | [a, b, c] | a | tab-after | c | 2 (b, c, a) |
+ * | [a, b, c] | c | tab-before | a | 0 (c, a, b) |
+ * | [b, c] | a | tab-before | b | null (다른 칸) |
+ */
+function tabMoveIndex(
+    paneIds,
+    id,
+    mode,
+    refId,
+) {
+    const from = paneIds.indexOf(id);
+    const slot = paneIds.indexOf(refId) + (mode === 'tab-after' ? 1 : 0);
+    return from >= 0 && paneIds.includes(refId) ? slot - (from < slot ? 1 : 0) : null;
+}
+
+module.exports = { tabDropTarget, tabDockRef, tabRowInsert, isSameTabPlace, tabMoveIndex };
