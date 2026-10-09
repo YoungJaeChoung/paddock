@@ -1,6 +1,7 @@
 {
   "name": "paddock",
   "version": "0.1.0",
+  "license": "MIT",
   "private": true,
   "scripts": {
     "setup": "npm --prefix desktop install && npm --prefix desktop run download:plugins && npm --prefix desktop run rebuild",
