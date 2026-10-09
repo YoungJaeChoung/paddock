@@ -1,5 +1,6 @@
 const { MessageService } = require('@theia/core/lib/common/message-service');
 const { URI } = require('@theia/core');
+const { FileUri } = require('@theia/core/lib/common/file-uri');
 const { OS } = require('@theia/core/lib/common/os');
 const { Widget } = require('@lumino/widgets');
 const { ApplicationShell } = require('@theia/core/lib/browser/shell/application-shell');
@@ -527,7 +528,7 @@ class PaddockWorkspace {
         this.shell.folderBar.node.querySelector('.folder-bar-branch').addEventListener('click', () => this.run(async () => {
             const root = this.repositoryOf(this.shownFolder())?.provider.rootUri;
             await this.plugins.willStart;
-            await this.commands.executeCommand('git.checkout', ...(root ? [new URI(root).path.fsPath()] : []));
+            await this.commands.executeCommand('git.checkout', ...(root ? [FileUri.fsPath(root)] : []));
         }));
         const nativeTabId = target => {
             const tab = target.closest('.lm-TabBar-tab');
@@ -1591,11 +1592,13 @@ class PaddockWorkspace {
                 // 저장소 안에 다른 저장소가 있으면 더 깊은(경로가 긴) 쪽이 그 파일의 저장소다.
                 .filter(item => item.provider.rootUri && new URI(item.provider.rootUri).isEqualOrParent(resource))
                 .sort((left, right) => right.provider.rootUri.length - left.provider.rootUri.length)[0];
-            const root = repository ? new URI(repository.provider.rootUri).path.fsPath() : null;
+            const root = repository ? FileUri.fsPath(repository.provider.rootUri) : null;
             if (root && !this.pendingRepositoryRefresh.has(root)) {
                 this.pendingRepositoryRefresh.set(root, setTimeout(() => {
                     this.pendingRepositoryRefresh.delete(root);
                     // 경로가 열린 저장소에 속하므로 Git 확장이 저장소 고르기 창을 띄우지 않는다.
+                    // 경로는 주소의 호스트까지 담아 바꾼다. 경로 부분만 쓰면 WSL 폴더(\\wsl.localhost\…)가 \<배포판>\…로 바뀌어
+                    // Git 확장이 저장소를 못 찾고, 5초마다 다시 읽을 때마다 "Choose a repository" 창이 뜬다.
                     this.commands.executeCommand('git.refresh', root).catch(() => undefined);
                 }, 500));
             }
@@ -1606,7 +1609,7 @@ class PaddockWorkspace {
         key,
     ) {
         // Git 확장은 워크스페이스 루트만 찾으므로 작업 폴더의 저장소를 직접 알려 준다. 저장소가 아니면 조용히 넘긴다.
-        const path = new URI(key).path.fsPath();
+        const path = FileUri.fsPath(key);
         this.plugins.willStart.then(() => this.commands.executeCommand('git.openRepository', path)).catch(() => undefined);
         // 작업 폴더 바로 아래에 따로 clone한 저장소도 연다(VS Code의 기본 탐색 깊이 1과 같다).
         // 바깥 저장소가 그 폴더를 무시하면, 열지 않은 저장소의 변경은 파일 목록 표시와 Git 보기 어디에도 나타나지 않는다.
@@ -1615,7 +1618,7 @@ class PaddockWorkspace {
             const nested = await Promise.all(children.map(child => this.files.exists(child.resource.resolve('.git')).then(isRepository => (isRepository ? child : null))));
             await this.plugins.willStart;
             for (const child of nested.filter(Boolean)) {
-                await this.commands.executeCommand('git.openRepository', child.resource.path.fsPath()).catch(() => undefined);
+                await this.commands.executeCommand('git.openRepository', FileUri.fsPath(child.resource)).catch(() => undefined);
             }
         }).catch(() => undefined);
     }
