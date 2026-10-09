@@ -4,7 +4,7 @@ Running Claude Code or Codex in several repos at once means tabbing through term
 
 ![Paddock with three repos: shop-api and docs-site show green dots because their agents stopped (Quiet), web-app's agent is still printing (Output), and the file it just created, Cart.tsx, is open beside the terminal](docs/screenshot.png)
 
-[Download](#download) · [How it works](#how-it-works) · [Privacy](#privacy-and-platforms) · [한국어](README.ko.md)
+[Download](#download) · [How it works](#how-it-works) · [Privacy](#privacy-and-platforms)
 
 ## How it works
 
@@ -75,4 +75,4 @@ Installers are built on their own system because the terminal's native modules a
 
 The **Package** GitHub Actions workflow builds all three installers. A `package/…` branch attaches them to the run as artifacts; `make release` tags `v<version>` from `desktop/package.json` and publishes them to a GitHub Release. Installed builds and development runs share `~/.paddock/extensions` and `~/.paddock/config`.
 
-Product code lives in `desktop/`. A detailed guide to every feature is in [README.ko.md](README.ko.md) (Korean).
+Product code lives in `desktop/`.
