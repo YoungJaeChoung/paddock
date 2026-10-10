@@ -455,8 +455,10 @@ class WorkSidebar {
         });
         document.body.append(menu);
         // ＋ 바로 아래에 열고, 창 오른쪽·아래 끝을 넘으면 안쪽으로 당긴다. 계정이 채워져 높이가 바뀌면 다시 맞춘다.
+        // 칸을 나눈 동안의 ＋는 탭 줄을 다시 그릴 때마다 새로 만들어져 계정을 읽는 사이 화면에서 떨어질 수 있다.
+        // 떨어진 버튼의 좌표는 (0, 0)이라, 메뉴를 열 때의 ＋ 위치를 기억해 다시 맞출 때도 그것을 쓴다.
+        const bounds = anchor.getBoundingClientRect();
         const place = () => {
-            const bounds = anchor.getBoundingClientRect();
             const size = menu.getBoundingClientRect();
             menu.style.left = `${Math.max(4, Math.min(bounds.left, window.innerWidth - size.width - 4))}px`;
             menu.style.top = `${Math.max(4, Math.min(bounds.bottom + 4, window.innerHeight - size.height - 4))}px`;
