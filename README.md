@@ -11,8 +11,16 @@ Run agents in several repos and you only learn one has finished when you tab thr
 ## Why Paddock
 
 - **Every repo's agents in one list, and a sound when one stops.** When an agent you aren't watching stops, a sound plays and a green dot marks its repo and terminal, so none sits idle unnoticed. Open a terminal in Paddock, `cd` into a repo and run `claude` or `codex` as usual; the repo joins the sidebar with its agent terminals. ([How it decides](docs/settings.md#stop-alerts): the output goes quiet, so a silent build step counts too.)
+
+  ![Paddock's sidebar: shop-api's Claude and docs-site's Codex have stopped and show green dots; web-app's Claude is still working](docs/stopped-agents.png)
+
 - **Open the files they changed.** Changed files are marked M or U in the file tree and open beside the terminal, so you check the work and type the next instruction without leaving the window.
+
+  ![Changed files marked M and U in the file tree, with Cart.tsx open beside the agent's terminal](docs/files-changed.png)
+
 - **Several accounts in one place.** Keep several Claude and Codex accounts, each signed in through its own CLI. Each account's 5-hour and weekly usage, as its CLI reports it, shows in the status bar once an agent on it has replied; when one runs low, start the next agent from another.
+
+  ![The status bar shows each Claude and Codex account's 5-hour and weekly usage; the Accounts menu opens an agent on another account](docs/accounts-usage.png)
 
 Nothing to set up: your CLIs, logins and skills stay as they are. No worktrees, no wrapper.
 

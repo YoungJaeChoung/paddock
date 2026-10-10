@@ -54,13 +54,11 @@ jobs:
         with:
           path: installers
           merge-multiple: true
-      # 서명이 없는 설치 파일을 받은 사람이 Release 페이지의 값과 대조할 수 있게 SHA-256 목록을 함께 올린다.
-      - run: cd installers && sha256sum * > SHA256SUMS.txt
       - if: startsWith(github.ref, 'refs/tags/v')
         run: gh release create "$GITHUB_REF_NAME" installers/* --repo "$GITHUB_REPOSITORY" --title "Paddock $GITHUB_REF_NAME" --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
-      # main에서 직접 실행했을 때: 새 태그를 만들지 않고 최신 릴리스의 파일(설치 파일·SHA256SUMS.txt)만 바꿔 latest/download 주소가 새 빌드를 준다.
+      # main에서 직접 실행했을 때: 새 태그를 만들지 않고 최신 릴리스의 설치 파일만 바꿔 latest/download 주소가 새 빌드를 준다.
       - if: github.event_name == 'workflow_dispatch'
         run: |
           tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
