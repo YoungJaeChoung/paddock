@@ -32,7 +32,7 @@ Keep several Claude and Codex accounts, each signed in through its own CLI. **Ea
 
 Nothing to set up: your CLIs, logins and skills stay as they are. No worktrees, no wrapper.
 
-**Compared with tmux:** Paddock alerts out of the box and lists every repo's agents without scripts or key bindings. tmux keeps agents running after you close it, while Paddock's agents stop when you quit (resume with `claude --resume` or `codex resume`).
+**vs. tmux:** Paddock alerts without scripts or key bindings; tmux keeps agents running after you close it, Paddock's stop when you quit (resume with `claude --resume` or `codex resume`).
 
 **Private:** no telemetry. The app only sends the extension searches you type to [Open VSX](https://open-vsx.org), and never reads or stores your credentials; agents are the official CLIs, signed in by you.
 
