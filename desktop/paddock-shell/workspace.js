@@ -38,7 +38,7 @@ const { distributionOf, withDistribution, environmentLabel } = require('./termin
 const cwdReport = require('./cwd-report');
 const { UsagePanel } = require('./usage-panel');
 const agentAccount = require('./agent-account');
-const { STORAGE, STATUS_ITEMS, MARKDOWN_PREVIEW, element, button } = require('./workspace/shared');
+const { STORAGE, STATUS_ITEMS, MARKDOWN_PREVIEW, element, button, attachMenuKeys } = require('./workspace/shared');
 const { RootSwitcher } = require('./workspace/root-switcher');
 const { AgentActivity } = require('./workspace/agent-activity');
 const { AccountTerminals } = require('./workspace/account-terminals');
@@ -505,20 +505,9 @@ class PaddockWorkspace {
                 this.run(() => this.accountTerminals.renderAccountMenu());
             }
         });
-        accountMenu.addEventListener('keydown', event => {
-            const items = [...accountMenu.querySelectorAll('[role="menuitem"]:not(:disabled)')];
-            const index = items.indexOf(document.activeElement);
-            let next;
-            if (event.key === 'ArrowDown') next = (index + 1) % items.length;
-            else if (event.key === 'ArrowUp') next = (index - 1 + items.length) % items.length;
-            else if (event.key === 'Home') next = 0;
-            else if (event.key === 'End') next = items.length - 1;
-            else if (event.key === 'Escape') {
-                accountMenu.hidePopover();
-                accountPicker.focus();
-            }
-            if (next !== undefined) items[next]?.focus();
-            if (next !== undefined || event.key === 'Escape') event.preventDefault();
+        attachMenuKeys(accountMenu, () => {
+            accountMenu.hidePopover();
+            accountPicker.focus();
         });
         this.shell.folderBar.node.querySelector('.markdown-view-actions').addEventListener('click', (event) => {
             const target = event.target.closest('[data-markdown-view]');
@@ -585,22 +574,9 @@ class PaddockWorkspace {
             picker.setAttribute('aria-expanded', String(event.newState === 'open'));
             if (event.newState === 'open') menu.querySelector('button')?.focus({ preventScroll: true });
         });
-        menu.addEventListener('keydown', event => {
-            const items = [...menu.querySelectorAll('[role="menuitem"]:not(:disabled)')];
-            const index = items.indexOf(document.activeElement);
-            let next;
-            if (event.key === 'ArrowDown') next = (index + 1) % items.length;
-            else if (event.key === 'ArrowUp') next = (index - 1 + items.length) % items.length;
-            else if (event.key === 'Home') next = 0;
-            else if (event.key === 'End') next = items.length - 1;
-            else if (event.key === 'Escape') {
-                menu.hidePopover();
-                picker.focus({ preventScroll: true });
-            }
-            if (next !== undefined) {
-                event.preventDefault();
-                items[next]?.focus({ preventScroll: true });
-            }
+        attachMenuKeys(menu, () => {
+            menu.hidePopover();
+            picker.focus({ preventScroll: true });
         });
         const quickSettings = sidebar.querySelector('#quick-settings');
         quickSettings.addEventListener('beforetoggle', (event) => {

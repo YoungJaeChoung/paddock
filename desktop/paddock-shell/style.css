@@ -107,10 +107,8 @@ body {
 /* 탭은 줄이지 않는다 — 이름이 잘리면 "terminal 2"와 "terminal 11"이 모두 "termi…"가 되어 구분이 사라진다. 넘치면 스크롤·가장자리 흐림·활성 탭 따라가기로 처리한다. */
 .paddock-shell .folder-bar .tab { flex: 0 0 150px; height: 26px; }
 .paddock-shell .window-drag-space { flex: 1 0 72px; height: 100%; }
-.paddock-shell #shell-menu { position: fixed; inset: 28px auto auto 0; margin: 0; min-width: 220px; max-width: calc(100vw - 16px); max-height: calc(100vh - 120px); overflow-y: auto; padding: 6px; border: 1px solid var(--p-popup-border); border-radius: 8px; background: var(--p-popup-bg); color: var(--p-fg); box-shadow: 0 12px 35px var(--theia-widget-shadow, #0007); -webkit-app-region: no-drag; }
-.paddock-shell .shell-menu-state { padding: 9px 12px; color: var(--p-fg-muted); font-size: 12px; }
-.paddock-shell .shell-option { display: block; width: 100%; padding: 9px 12px; font-size: 14px; color: var(--p-fg-strong); border: 0; border-radius: 4px; background: transparent; color: inherit; text-align: left; }
-.paddock-shell .shell-option:hover, .paddock-shell .shell-option:focus-visible { background: var(--p-selected-bg); }
+/* 고정 팝오버(환경·계정 메뉴)의 크기 규칙. 모양·항목은 .paddock-menu가 맡는다. */
+.paddock-shell #shell-menu { min-width: 220px; max-width: calc(100vw - 16px); max-height: calc(100vh - 120px); overflow-y: auto; -webkit-app-region: no-drag; }
 
 /* 사이드바 위 가로 보기 줄(Cursor와 같은 자리). 세로 레일과 달리 폭을 쓰지 않는다. */
 .paddock-shell .view-bar { display: flex; flex: none; align-items: center; gap: 4px; height: 36px; padding: 0 8px; border-bottom: 1px solid var(--p-border-subtle); }
@@ -197,7 +195,12 @@ body {
 /* 폴더 메뉴. 빼기는 붉은 글자와 결과 안내로 알린다. */
 .paddock-menu { position: fixed; inset: auto; margin: 0; min-width: 236px; padding: 6px; border: 1px solid var(--p-popup-border); border-radius: 8px; background: var(--p-popup-bg); color: var(--p-fg); box-shadow: 0 14px 40px var(--theia-widget-shadow, #000b); font: 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 .paddock-menu .menu-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 12px; color: var(--p-fg-strong); border: 0; border-radius: 4px; background: transparent; color: inherit; text-align: left; }
-.paddock-menu .menu-item:hover { background: var(--p-selected-bg); }
+.paddock-menu .menu-item:hover, .paddock-menu .menu-item:focus-visible { background: var(--p-selected-bg); }
+.paddock-menu .menu-item:disabled { color: var(--p-fg-muted); cursor: default; }
+.paddock-menu .menu-item:disabled:hover { background: transparent; }
+/* 환경 메뉴: 체크는 기본 환경 표시다. */
+.paddock-menu .menu-item .codicon-check { color: var(--p-accent); }
+.paddock-menu .menu-item-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .paddock-menu .menu-item.is-danger { color: var(--p-danger); }
 .paddock-menu .menu-item-label { flex: 1; }
 .paddock-menu .menu-item-meta { color: var(--p-fg-muted); font-size: 12px; }
@@ -384,11 +387,6 @@ body .theia-button.secondary:hover { background: var(--theia-button-secondaryHov
 /* 파괴적 확인 창의 확인 버튼 */
 .lm-Widget.dialogOverlay.is-destructive .theia-button.main { background: var(--p-danger-bg); color: var(--p-danger-fg); }
 .lm-Widget.dialogOverlay.is-destructive .theia-button.main:hover { background: var(--p-danger-bg-hover); }
-/* 셸 메뉴: 체크·이름·기본 표시를 한 줄 규칙으로 */
-.paddock-shell .shell-option { display: flex; align-items: center; gap: 8px; }
-.paddock-shell .shell-option-name { flex: 1; }
-.paddock-shell .shell-option-meta { color: var(--p-fg-muted); font-size: 12px; }
-.paddock-shell .shell-option .codicon-check { color: var(--p-accent); }
 /* 명령 팔레트 단축키 표기: Monaco가 색을 요소에 직접 넣으므로 !important로 덮는다 */
 .quick-input-widget .monaco-keybinding-key { color: var(--p-fg-strong) !important; background-color: var(--p-border-subtle) !important; border-color: var(--p-popup-border) !important; border-bottom-color: var(--p-popup-border) !important; }
 /* 상태 줄 왼쪽: 원격 표시 다음에 셸 종류·저장 상태 */
@@ -426,13 +424,9 @@ body .theia-button.secondary:hover { background: var(--theia-button-secondaryHov
 .account-picker:hover { background: var(--p-hover); color: var(--p-fg); }
 .account-picker:focus-visible { outline: 1px solid var(--p-accent); outline-offset: -1px; }
 .account-picker-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#account-menu { box-sizing: border-box; width: 284px; max-height: min(420px, 70vh); overflow-y: auto; margin: 0; padding: 6px; color: var(--p-fg); background: var(--p-popup-bg); border: 1px solid var(--p-border); border-radius: 6px; box-shadow: 0 8px 24px #0005; }
-#account-menu .shell-option { width: 100%; min-height: 32px; }
-#account-menu .shell-option-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#account-menu .shell-option:disabled { color: var(--p-fg-muted); cursor: default; }
-#account-menu .shell-option:disabled:hover { background: transparent; }
+/* 계정 메뉴 크기. 모양·항목은 .paddock-menu가 맡는다. */
+#account-menu { box-sizing: border-box; width: 284px; max-height: min(420px, 70vh); overflow-y: auto; }
 .account-menu-new { margin-top: 6px; border-top: 1px solid var(--p-border) !important; }
-.account-menu-hint { margin: 5px 8px 8px; color: var(--p-fg-muted); font-size: 11px; line-height: 1.5; }
 .account-menu-manage { margin-top: 6px; border-top: 1px solid var(--p-border) !important; }
 .ai-usage[hidden] { display: none; }
 .paddock-tab-drag {

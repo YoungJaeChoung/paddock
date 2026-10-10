@@ -6,7 +6,7 @@ const wsl = require('../wsl-terminals');
 const { AccountDialog } = require('../account-dialog');
 const { retryAccountStorage } = require('../account-access-dialog');
 const { AccountLaunch, accountTerminalOptions, refreshAccountResume } = require('../account-launch');
-const { element, button } = require('./shared');
+const { element, menuItem } = require('./shared');
 
 /**
  * 등록 계정(Claude·Codex)으로 새 터미널을 열거나, 쉬고 있는 터미널을 다른 계정으로 바꿔 시작한다.
@@ -323,7 +323,7 @@ class AccountTerminals {
     ) {
         const menu = this.workspace.shell.folderBar.node.querySelector('#account-menu');
         const terminal = this.workspace.currentWidget();
-        menu.replaceChildren(element('p', 'account-menu-hint', 'Loading accounts…'));
+        menu.replaceChildren(element('p', 'menu-note', 'Loading accounts…'));
         try {
             const profiles = await this.updateAccountLabels();
             const source = this.workspace.agentActivity.accountSessionRequest(terminal);
@@ -334,13 +334,23 @@ class AccountTerminals {
                 && (source.runtime !== 'wsl' || !source.wslDistribution || profile.wslDistribution?.toLowerCase() === source.wslDistribution.toLowerCase())) : profiles;
             // 고를 계정이 없으면 "이어갈 계정"을 말하는 안내가 항목(새 대화·계정 관리)과 어긋나므로 없다는 사실을 적는다.
             const hint = choices.length === 0 ? 'No accounts added yet' : continueConversation ? 'Continue this conversation with' : startHere ? 'Start in this terminal' : 'Open a new terminal';
-            menu.replaceChildren(element('p', 'account-menu-hint', hint));
+            menu.replaceChildren(element('p', 'menu-note', hint));
+            // 새 터미널을 여는 메뉴에서는 ＋ 메뉴처럼 계정 없는 일반 터미널도 고를 수 있다. 이어가기·이 탭에서 시작에서는 계정을 고르는 메뉴다.
+            if (!continueConversation && !startHere) {
+                const plain = menuItem({ icon: 'terminal', label: 'Terminal', meta: '' }, () => {
+                    menu.hidePopover();
+                    this.workspace.run(() => this.workspace.newTerminalFromFolderBar());
+                });
+                plain.title = 'New terminal without an account';
+                menu.append(plain);
+            }
             for (const profile of choices) {
                 const isCurrent = continueConversation && profile.id === source.accountId;
-                const item = button([
-                    element('span', 'shell-option-name', `${AccountLaunch.PROVIDERS[profile.provider]} · ${profile.label}`),
-                    element('span', 'shell-option-meta', isCurrent ? 'Current' : profile.runtime === 'wsl' ? 'WSL' : ''),
-                ], 'shell-option', () => {
+                const item = menuItem({
+                    icon: 'account',
+                    label: `${AccountLaunch.PROVIDERS[profile.provider]} · ${profile.label}`,
+                    meta: isCurrent ? 'Current' : profile.runtime === 'wsl' ? 'WSL' : '',
+                }, () => {
                     menu.hidePopover();
                     this.workspace.run(() => continueConversation ? this.switchTerminalAccount(profile.id, terminal)
                         : startHere ? this.startAccountHere(profile.id, terminal) : this.openAccount(profile.id));
@@ -348,24 +358,21 @@ class AccountTerminals {
                 const action = continueConversation ? 'Continue with' : startHere ? 'Start in this terminal with' : 'New conversation with';
                 item.title = `${action} ${AccountLaunch.PROVIDERS[profile.provider]} · ${profile.label}`;
                 item.disabled = isCurrent || Boolean(terminal?.paddockAccountSwitching);
-                item.setAttribute('role', 'menuitem');
                 menu.append(item);
             }
             if (continueConversation || startHere) {
-                const create = button(continueConversation ? 'New conversation…' : 'New terminal…', 'shell-option account-menu-new', () => {
+                const create = menuItem({ icon: 'add', label: continueConversation ? 'New conversation…' : 'New terminal…', className: 'account-menu-new' }, () => {
                     this.workspace.run(() => this.renderAccountMenu({ openInNewTerminal: true }));
                 });
-                create.setAttribute('role', 'menuitem');
                 menu.append(create);
             }
         } catch {
-            menu.replaceChildren(element('p', 'account-menu-hint', 'Accounts could not be loaded. Open Manage accounts to retry.'));
+            menu.replaceChildren(element('p', 'menu-note', 'Accounts could not be loaded. Open Manage accounts to retry.'));
         }
-        const manage = button('Manage accounts…', 'shell-option account-menu-manage', () => {
+        const manage = menuItem({ icon: 'settings-gear', label: 'Manage accounts…', className: 'account-menu-manage' }, () => {
             menu.hidePopover();
             this.workspace.run(() => this.manageAccounts());
         });
-        manage.setAttribute('role', 'menuitem');
         menu.append(manage);
         if (menu.matches(':popover-open')) menu.querySelector('button:not(:disabled)')?.focus({ preventScroll: true });
     }

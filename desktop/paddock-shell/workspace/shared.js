@@ -58,5 +58,87 @@ function button(
     return node;
 }
 
+/**
+ * 메뉴 항목 버튼 하나를 만든다. 모든 메뉴(＋·계정·환경·우클릭)가 같은 모양과 role을 쓰게 하는 유일한 자리다.
+ * `icon`·`meta`가 없으면 그 칸을 만들지 않는다. `meta`가 빈 문자열이면 칸은 있되 CSS가 숨긴다.
+ */
+function menuItem(
+    { icon, label, meta, className = '' },
+    action,
+) {
+    const children = [];
+    if (icon) children.push(codicon(icon));
+    children.push(element('span', 'menu-item-label', label));
+    if (meta !== undefined) children.push(element('span', 'menu-item-meta', meta));
+    const item = button(children, `menu-item ${className}`.trim(), action);
+    item.setAttribute('role', 'menuitem');
+    return item;
+}
 
-module.exports = { STORAGE, STATUS_ITEMS, MARKDOWN_PREVIEW, element, codicon, button };
+/** 메뉴를 창 안쪽으로 당긴다. 크기는 실제로 그려진 뒤에만 알 수 있어 `showPopover` 뒤에 부른다. */
+function clampToWindow(
+    menu,
+    left,
+    top,
+) {
+    const size = menu.getBoundingClientRect();
+    menu.style.left = `${Math.max(4, Math.min(left, window.innerWidth - size.width - 4))}px`;
+    menu.style.top = `${Math.max(4, Math.min(top, window.innerHeight - size.height - 4))}px`;
+}
+
+/** 동적으로 만든 메뉴 상자를 만든다. 닫히면 스스로 DOM에서 빠진다. */
+function createPopupMenu(
+    ariaLabel,
+) {
+    const menu = element('div', 'paddock-menu');
+    menu.setAttribute('popover', '');
+    menu.setAttribute('role', 'menu');
+    if (ariaLabel) menu.setAttribute('aria-label', ariaLabel);
+    menu.addEventListener('toggle', (event) => {
+        if (event.newState === 'closed') menu.remove();
+    });
+    return menu;
+}
+
+/** `createPopupMenu`로 만든 메뉴를 (left, top)에 열고 창 안쪽으로 당긴다. */
+function showPopupMenuAt(
+    menu,
+    left,
+    top,
+) {
+    document.body.append(menu);
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+    menu.showPopover();
+    clampToWindow(menu, left, top);
+}
+
+/**
+ * 메뉴 안에서 ↑↓·Home·End로 항목 사이를 옮긴다. 쓸 수 없는(disabled) 항목은 건너뛴다.
+ * `onEscape`가 있으면 Esc를 가로채 그 동작을 부르고, 없으면 팝오버의 기본 닫기에 맡긴다.
+ */
+function attachMenuKeys(
+    menu,
+    onEscape,
+) {
+    menu.addEventListener('keydown', (event) => {
+        const items = [...menu.querySelectorAll('[role="menuitem"]:not(:disabled)')];
+        const index = items.indexOf(document.activeElement);
+        let next;
+        if (items.length) {
+            if (event.key === 'ArrowDown') next = (index + 1) % items.length;
+            else if (event.key === 'ArrowUp') next = (index - 1 + items.length) % items.length;
+            else if (event.key === 'Home') next = 0;
+            else if (event.key === 'End') next = items.length - 1;
+        }
+        if (next !== undefined) {
+            items[next].focus({ preventScroll: true });
+            event.preventDefault();
+        } else if (event.key === 'Escape' && onEscape) {
+            onEscape();
+            event.preventDefault();
+        }
+    });
+}
+
+module.exports = { STORAGE, STATUS_ITEMS, MARKDOWN_PREVIEW, element, codicon, button, menuItem, clampToWindow, createPopupMenu, showPopupMenuAt, attachMenuKeys };

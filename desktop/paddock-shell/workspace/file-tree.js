@@ -5,7 +5,7 @@ const { ConfirmDialog, SingleTextInputDialog } = require('@theia/core/lib/browse
 const model = require('../work-model');
 const { fileMarks, colorVariable } = require('../file-marks');
 const { validateEntryName } = require('../entry-name');
-const { element, codicon, button } = require('./shared');
+const { element, codicon, button, menuItem, createPopupMenu, showPopupMenuAt } = require('./shared');
 
 /**
  * 사이드바 파일 목록: 폴더 내용을 읽어 파일 행을 만들고 Git 변경 표시와 파일 메뉴를 붙인다.
@@ -251,9 +251,7 @@ class FileTree {
         point,
         isDirectory = false,
     ) {
-        const menu = element('div', 'paddock-menu');
-        menu.setAttribute('popover', '');
-        menu.setAttribute('role', 'menu');
+        const menu = createPopupMenu();
         const systemName = OS.backend.type() === OS.Type.Windows ? 'File Explorer' : OS.backend.type() === OS.Type.OSX ? 'Finder' : 'File Manager';
         const reveal = ['folder-opened', `Reveal in ${systemName}`, () => this.revealInSystem(uri)];
         const items = isDirectory ? [
@@ -272,23 +270,12 @@ class FileTree {
             reveal,
         ];
         for (const [icon, label, action] of items) {
-            const item = button([codicon(icon), element('span', '', label)], 'menu-item', () => {
+            menu.append(menuItem({ icon, label }, () => {
                 menu.hidePopover();
                 this.workspace.run(action);
-            });
-            item.setAttribute('role', 'menuitem');
-            menu.append(item);
+            }));
         }
-        menu.addEventListener('toggle', (event) => {
-            if (event.newState === 'closed') menu.remove();
-        });
-        document.body.append(menu);
-        menu.style.left = `${point.x}px`;
-        menu.style.top = `${point.y}px`;
-        menu.showPopover();
-        const size = menu.getBoundingClientRect();
-        menu.style.left = `${Math.max(4, Math.min(point.x, window.innerWidth - size.width - 4))}px`;
-        menu.style.top = `${Math.max(4, Math.min(point.y, window.innerHeight - size.height - 4))}px`;
+        showPopupMenuAt(menu, point.x, point.y);
     }
 
     /** Theia의 편집기 선택 목록에서 고른 화면을 터미널 옆 파일 칸에 둔다. */

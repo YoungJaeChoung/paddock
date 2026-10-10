@@ -6,7 +6,7 @@ const agent = require('../agent-model');
 const wsl = require('../wsl-terminals');
 const { fileMarks, colorVariable } = require('../file-marks');
 const { AccountLaunch, accountTerminalOptions, refreshAccountResume } = require('../account-launch');
-const { element, codicon, button } = require('./shared');
+const { element, codicon, button, menuItem, clampToWindow, createPopupMenu, showPopupMenuAt, attachMenuKeys } = require('./shared');
 
 // Theia 보기 컨테이너 id. 사이드바 보기 줄의 Source control·Extensions가 이 보기를 품는다.
 const VIEW_CONTAINER = {
@@ -348,9 +348,7 @@ class WorkSidebar {
         anchor,
         point = null,
     ) {
-        const menu = element('div', 'paddock-menu');
-        menu.setAttribute('popover', '');
-        menu.setAttribute('role', 'menu');
+        const menu = createPopupMenu();
         const n_terminals = model.terminalsOf(this.workspace.state, key).length;
         const n_remote = [...this.remoteWorkRows.keys()].filter(id => model.folderOf(this.workspace.displayWorkState, id) === key).length;
         const items = [
@@ -360,29 +358,16 @@ class WorkSidebar {
         ];
         if (!n_remote) items.push(['close', 'Remove from list', () => this.workspace.removeFolder(key), true]);
         for (const [icon, label, action, danger] of items) {
-            const item = button([codicon(icon), element('span', '', label)], `menu-item${danger ? ' is-danger' : ''}`, () => {
+            menu.append(menuItem({ icon, label, className: danger ? 'is-danger' : '' }, () => {
                 menu.hidePopover();
                 this.workspace.run(action);
-            });
-            item.setAttribute('role', 'menuitem');
-            menu.append(item);
+            }));
         }
         menu.append(element('p', 'menu-note', n_remote ? `${n_remote} terminal${n_remote === 1 ? '' : 's'} open in another window` : `Closes ${n_terminals} terminal${n_terminals === 1 ? '' : 's'} · folder is kept`));
-        menu.addEventListener('toggle', (event) => {
-            if (event.newState === 'closed') menu.remove();
-        });
-        document.body.append(menu);
         // ⋯ 버튼은 마우스를 올렸을 때만 보이므로 위치는 폴더 행 전체를 기준으로 잡는다. 우클릭이면 누른 자리에 연다.
         const bounds = (anchor.closest('.work-row') || anchor).getBoundingClientRect();
-        const left = point ? point.x : bounds.right + 4;
-        const top = point ? point.y : bounds.top;
-        menu.style.left = `${left}px`;
-        menu.style.top = `${top}px`;
-        menu.showPopover();
-        // 창 오른쪽·아래 끝을 넘으면 안쪽으로 당긴다.
-        const size = menu.getBoundingClientRect();
-        menu.style.left = `${Math.max(4, Math.min(left, window.innerWidth - size.width - 4))}px`;
-        menu.style.top = `${Math.max(4, Math.min(top, window.innerHeight - size.height - 4))}px`;
+        // 창 오른쪽·아래 끝을 넘으면 안쪽으로 당겨진다.
+        showPopupMenuAt(menu, point ? point.x : bounds.right + 4, point ? point.y : bounds.top);
     }
 
     /**
@@ -423,46 +408,25 @@ class WorkSidebar {
         folderKey,
         pane,
     ) {
-        const menu = element('div', 'paddock-menu');
-        menu.setAttribute('popover', '');
-        menu.setAttribute('role', 'menu');
-        menu.setAttribute('aria-label', folderKey ? `New terminal in ${this.workspace.folderName(folderKey)}` : 'New terminal here');
+        const menu = createPopupMenu(folderKey ? `New terminal in ${this.workspace.folderName(folderKey)}` : 'New terminal here');
         const addItem = (icon, label, meta, action) => {
-            const item = button([codicon(icon), element('span', 'menu-item-label', label), element('span', 'menu-item-meta', meta)], 'menu-item', () => {
+            const item = menuItem({ icon, label, meta }, () => {
                 menu.hidePopover();
                 this.workspace.run(this.inPane(pane, action));
             });
-            item.setAttribute('role', 'menuitem');
             menu.append(item);
             return item;
         };
         const terminalItem = addItem('terminal', 'Terminal', '', () => folderKey ? this.workspace.newWorkTerminal({ folderKey }) : this.workspace.newTerminalFromFolderBar());
         const hint = element('p', 'menu-note', 'Loading accounts…');
         menu.append(hint);
-        menu.addEventListener('toggle', (event) => {
-            if (event.newState === 'closed') menu.remove();
-        });
-        menu.addEventListener('keydown', (event) => {
-            const items = [...menu.querySelectorAll('[role="menuitem"]')];
-            const index = items.indexOf(document.activeElement);
-            let next;
-            if (event.key === 'ArrowDown') next = (index + 1) % items.length;
-            else if (event.key === 'ArrowUp') next = (index - 1 + items.length) % items.length;
-            if (next !== undefined) {
-                items[next].focus();
-                event.preventDefault();
-            }
-        });
+        attachMenuKeys(menu);
         document.body.append(menu);
         // ＋ 바로 아래에 열고, 창 오른쪽·아래 끝을 넘으면 안쪽으로 당긴다. 계정이 채워져 높이가 바뀌면 다시 맞춘다.
         // 칸을 나눈 동안의 ＋는 탭 줄을 다시 그릴 때마다 새로 만들어져 계정을 읽는 사이 화면에서 떨어질 수 있다.
         // 떨어진 버튼의 좌표는 (0, 0)이라, 메뉴를 열 때의 ＋ 위치를 기억해 다시 맞출 때도 그것을 쓴다.
         const bounds = anchor.getBoundingClientRect();
-        const place = () => {
-            const size = menu.getBoundingClientRect();
-            menu.style.left = `${Math.max(4, Math.min(bounds.left, window.innerWidth - size.width - 4))}px`;
-            menu.style.top = `${Math.max(4, Math.min(bounds.bottom + 4, window.innerHeight - size.height - 4))}px`;
-        };
+        const place = () => clampToWindow(menu, bounds.left, bounds.bottom + 4);
         menu.showPopover();
         place();
         terminalItem.focus({ preventScroll: true });
@@ -503,9 +467,7 @@ class WorkSidebar {
         id,
         point,
     ) {
-        const menu = element('div', 'paddock-menu');
-        menu.setAttribute('popover', '');
-        menu.setAttribute('role', 'menu');
+        const menu = createPopupMenu();
         const items = [
             ['edit', 'Rename terminal', () => this.workspace.renameTerminal(id), false],
             ['split-horizontal', 'Show to the Side', () => this.workspace.folderTabs.showBeside(id), false],
@@ -513,23 +475,12 @@ class WorkSidebar {
             ['close', 'Close terminal', () => this.workspace.closeWidget(this.workspace.shell.getWidgetById(id)), true],
         ];
         for (const [icon, label, action, danger] of items) {
-            const item = button([codicon(icon), element('span', '', label)], `menu-item${danger ? ' is-danger' : ''}`, () => {
+            menu.append(menuItem({ icon, label, className: danger ? 'is-danger' : '' }, () => {
                 menu.hidePopover();
                 this.workspace.run(action);
-            });
-            item.setAttribute('role', 'menuitem');
-            menu.append(item);
+            }));
         }
-        menu.addEventListener('toggle', (event) => {
-            if (event.newState === 'closed') menu.remove();
-        });
-        document.body.append(menu);
-        menu.style.left = `${point.x}px`;
-        menu.style.top = `${point.y}px`;
-        menu.showPopover();
-        const size = menu.getBoundingClientRect();
-        menu.style.left = `${Math.max(4, Math.min(point.x, window.innerWidth - size.width - 4))}px`;
-        menu.style.top = `${Math.max(4, Math.min(point.y, window.innerHeight - size.height - 4))}px`;
+        showPopupMenuAt(menu, point.x, point.y);
     }
 }
 

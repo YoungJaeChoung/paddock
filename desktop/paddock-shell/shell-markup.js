@@ -29,7 +29,7 @@ module.exports = {
         </div>
         <div class="folder-bar-space"></div>
         <button type="button" class="account-picker" popovertarget="account-menu" aria-haspopup="menu" title="Open a new terminal with a Claude or Codex account"><span class="codicon codicon-account"></span><span class="account-picker-label">Accounts</span><span class="codicon codicon-chevron-down"></span></button>
-        <div id="account-menu" popover role="menu" aria-label="Agent accounts"></div>
+        <div id="account-menu" class="paddock-menu" popover role="menu" aria-label="Agent accounts"></div>
         <div class="markdown-view-actions" role="group" aria-label="Markdown view" hidden>
             <button type="button" data-markdown-view="file" aria-pressed="true">File</button>
             <button type="button" data-markdown-view="preview" aria-pressed="false">Preview</button>
@@ -60,7 +60,7 @@ module.exports = {
             </div>
             <div class="work-content"></div>
         </div>
-        <div id="shell-menu" popover role="menu" aria-label="Environment for a new terminal"></div>
+        <div id="shell-menu" class="paddock-menu" popover role="menu" aria-label="Environment for a new terminal"></div>
         <div class="view-host" data-host="scm" hidden></div>
         <div class="view-host" data-host="extensions" hidden></div>
     </aside>`),

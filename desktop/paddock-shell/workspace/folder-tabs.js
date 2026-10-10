@@ -8,7 +8,7 @@ const { paneColumns, groupTabsByColumn, columnSpans, orderTabsByPane } = require
 const { tabDropTarget, tabDockRef, tabRowInsert, isSameTabPlace, tabMoveIndex } = require('../tab-drop');
 const wsl = require('../wsl-terminals');
 const { distributionOf, withDistribution, environmentLabel } = require('../terminal-environment');
-const { element, codicon, button } = require('./shared');
+const { element, codicon, button, menuItem, createPopupMenu, showPopupMenuAt } = require('./shared');
 
 /**
  * 본문 위 내부 터미널·파일 탭 줄을 그리고, 탭을 끌어 칸·다른 창으로 옮기기와 셸 메뉴를 맡는다.
@@ -433,23 +433,12 @@ class FolderTabs {
         id,
         point,
     ) {
-        const menu = element('div', 'paddock-menu');
-        menu.setAttribute('popover', '');
-        menu.setAttribute('role', 'menu');
-        const item = button([codicon('link-external'), element('span', '', 'Move to New Window')], 'menu-item', () => {
+        const menu = createPopupMenu();
+        menu.append(menuItem({ icon: 'link-external', label: 'Move to New Window' }, () => {
             menu.hidePopover();
             this.workspace.run(() => this.moveTabToWindow(id));
-        });
-        item.setAttribute('role', 'menuitem');
-        menu.append(item);
-        menu.addEventListener('toggle', event => { if (event.newState === 'closed') menu.remove(); });
-        document.body.append(menu);
-        menu.style.left = `${point.x}px`;
-        menu.style.top = `${point.y}px`;
-        menu.showPopover();
-        const size = menu.getBoundingClientRect();
-        menu.style.left = `${Math.max(4, Math.min(point.x, window.innerWidth - size.width - 4))}px`;
-        menu.style.top = `${Math.max(4, Math.min(point.y, window.innerHeight - size.height - 4))}px`;
+        }));
+        showPopupMenuAt(menu, point.x, point.y);
     }
 
     /**
@@ -458,24 +447,23 @@ class FolderTabs {
      */
     async renderShellMenu() {
         const menu = this.workspace.shell.sidebar.node.querySelector('#shell-menu');
-        menu.replaceChildren(element('div', 'shell-menu-state', 'Loading environments…'));
+        menu.replaceChildren(element('p', 'menu-note', 'Loading environments…'));
         const entries = await this.shellEntries();
         menu.replaceChildren();
         for (const { profile, shellPath, name, place, isDefault } of entries) {
             const label = isDefault ? `${name} (default)` : name;
             const meta = [place, isDefault ? 'default' : ''].filter(Boolean).join(' · ');
-            const item = button([codicon(isDefault ? 'check' : 'blank'), element('span', 'shell-option-name', name), element('span', 'shell-option-meta', meta)], 'shell-option', () => {
+            const item = menuItem({ icon: isDefault ? 'check' : 'blank', label: name, meta }, () => {
                 menu.hidePopover();
                 this.workspace.run(async () => {
                     this.workspace.workExpanded = true;
                     await this.workspace.newExtraTerminal({ profile });
                 });
             });
-            item.setAttribute('role', 'menuitem');
             item.title = shellPath || label;
             menu.append(item);
         }
-        if (!entries.length) menu.append(element('div', 'shell-menu-state', 'No environments available. Check the default shell in Quick settings.'));
+        if (!entries.length) menu.append(element('p', 'menu-note', 'No environments available. Check the default shell in Quick settings.'));
         if (menu.matches(':popover-open')) menu.querySelector('button')?.focus({ preventScroll: true });
     }
 
