@@ -149,7 +149,8 @@ class FolderTabs {
      *
      * 한 칸이면 탭을 줄에 바로 두고 ＋를 줄 뒤(› 넘김 버튼 뒤)에 둔다. 칸이 둘 이상이면 왼쪽이 같은 칸들을 한 열로 묶어
      * 열마다 묶음(.folder-tab-group)을 만들고, 각 탭을 그 화면이 든 칸의 열에 넣는다. 위아래로 쌓인 칸의 탭은 같은 묶음에 위 칸부터,
-     * 칸이 없는 탭(다른 창에 분리된 탭)은 마지막 묶음 뒤에 든다. ＋는 묶음마다 탭 뒤에 두고, 누르면 그 열의 칸에 새 터미널을 연다.
+     * 칸이 없는 탭(다른 창에 분리된 탭)은 마지막 묶음 뒤에 든다.
+     * 단 위아래로 쌓인 열의 둘째 칸부터의 탭은 위쪽 줄에 두지 않고 그 칸의 실제 탭 줄이 보인다. ＋는 묶음마다 탭 뒤에 두고, 누르면 그 열의 칸에 새 터미널을 연다.
      * 묶음의 가로 위치·폭은 지금 칸 위치로 먼저 정하고, 칸 크기가 바뀌면 layoutTabGroups가 다시 맞춘다.
      * 어느 경우든 탭 차례는 칸에 놓인 실제 차례(orderTabsByPane)라, 끌어서 바꾼 순서가 줄에 그대로 보인다.
      */
@@ -171,11 +172,13 @@ class FolderTabs {
         // 탭은 칸에 실제로 놓인 차례로 그린다. 그래야 탭을 끌어 칸 안 순서를 바꾸면 위쪽 줄에도 그대로 보인다.
         const panes = columns.flatMap(column => column.keys);
         const tabsById = new Map(tabs.map(tab => [tab.querySelector('[role="tab"]').dataset.widgetId, tab]));
+        // 위아래로 쌓인 열의 둘째 칸부터는 위쪽 줄에 탭을 두지 않는다. 그 칸이 자기 탭 줄을 칸 바로 위에 보인다(path-bar.js).
+        const lowerPanes = new Set(columns.flatMap(column => column.keys.slice(1)));
         const ids = orderTabsByPane([...tabsById.keys()], id => {
             const pane = paneOf(id);
             const at = pane ? panes.indexOf(pane) : -1;
             return at >= 0 ? { pane: at, index: pane.titles.findIndex(title => title.owner.id === id) } : null;
-        });
+        }).filter(id => !lowerPanes.has(paneOf(id)));
         if (isSplit) {
             const groups = groupTabsByColumn(ids, paneOf, columns);
             const stripRect = strip.getBoundingClientRect();

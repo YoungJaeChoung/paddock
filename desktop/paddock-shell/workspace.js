@@ -361,6 +361,12 @@ class PaddockWorkspace {
         // 첫 터미널은 onDidInitializeLayout이 기본 셸 프로필(없으면 대체 프로필)로 직접 연다.
         this.terminals.initializeLayout = async () => undefined;
         this.profiles = this.container.get(TerminalProfileService);
+        // Theia는 프로필이 하나 등록될 때마다 기본 셸 설정(WSL 등)을 적용하는데, 그 프로필이 아직 등록 전이면 오류를 던져 시작 로그에 ERROR가 남는다.
+        // 기본 프로필은 등록되는 순간 다시 적용되므로, 등록 전의 요청은 건너뛴다.
+        const setDefaultProfile = this.profiles.setDefaultProfile.bind(this.profiles);
+        this.profiles.setDefaultProfile = id => {
+            if (this.profiles.getProfile(id)) setDefaultProfile(id);
+        };
         this.commands = this.container.get(CommandRegistry);
         this.opener = this.container.get(OpenerService);
         this.openWith = this.container.get(OpenWithService);

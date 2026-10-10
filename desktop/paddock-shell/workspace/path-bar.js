@@ -22,6 +22,7 @@ class PathBar {
      * 그 화면이 든 칸의 가로 구간 위에 놓인다(folder-tabs.js의 arrangeTabs).
      * 분할 중 위쪽 줄에 없는 화면(작업 폴더 밖 파일·확장 페이지 등)이 든 칸만 실제 탭을 보여 칸 사이 드래그 이동과 합치기를 지원한다.
      * 이때 실제 탭 줄에는 위쪽 줄에 없는 화면의 탭만 남긴다(같은 터미널 탭이 두 줄에 나오지 않게).
+     * 위아래로 쌓인 열의 둘째 칸부터는 탭이 위쪽 줄에 없으므로 그 칸의 실제 탭 줄을 칸 바로 위에 보인다.
      * 위쪽 줄에 이미 있는 화면만 든 칸은, 열에 혼자 있으면 탭이 바로 위에 있어 이름 줄을 접고(같은 이름 두 번 금지),
      * 위아래로 쌓여 탭만으로 어느 칸인지 가려지지 않으면 칸 위에 이름 줄(이름·닫기)을 둔다. 한 칸에서는 이름 줄을 접고 공통 탭 줄만 쓰며,
      * 설정 화면 등에는 경로 줄을 둔다.
@@ -32,9 +33,12 @@ class PathBar {
         // 위쪽 줄은 이 함수보다 먼저 그려진다(작업 화면 갱신 순서). 그 탭이 가리키는 화면을 모은다.
         const listedIds = new Set([...this.workspace.shell.folderBar.node.querySelectorAll('.folder-tabs [data-widget-id]')].map(tab => tab.dataset.widgetId));
         // 열에 칸이 하나뿐이면 위쪽 줄의 탭이 그 칸 바로 위에 있다. 위아래로 쌓인 칸만 이름 줄로 구분한다.
-        const standsAlone = new Set(paneColumns(this.workspace.folderTabs.paneRects()).filter(column => column.keys.length === 1).map(column => column.keys[0]));
+        const columns = paneColumns(this.workspace.folderTabs.paneRects());
+        const standsAlone = new Set(columns.filter(column => column.keys.length === 1).map(column => column.keys[0]));
+        // 위아래로 쌓인 열의 둘째 칸부터는 탭이 위쪽 줄에 없다(folder-tabs.js의 arrangeTabs). 그 칸의 실제 탭 줄을 칸 위에 보인다.
+        const lowerPanes = new Set(columns.flatMap(column => column.keys.slice(1)));
         for (const tabBar of this.workspace.shell.mainPanel.tabBars()) {
-            const showsTabs = isSplit && tabBar.titles.some(title => !listedIds.has(title.owner.id));
+            const showsTabs = isSplit && (lowerPanes.has(tabBar) || tabBar.titles.some(title => !listedIds.has(title.owner.id)));
             tabBar.node.classList.toggle('shows-tabs', showsTabs);
             if (!this.namedTabRenderers.has(tabBar.renderer)) {
                 this.namedTabRenderers.add(tabBar.renderer);
