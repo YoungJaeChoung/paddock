@@ -1,6 +1,7 @@
 # macOS·Windows 설치 파일을 각 운영체제 실행기에서 만든다.
 # Actions 탭에서 직접 실행하거나, v로 시작하는 태그(v0.1.0 등)나 package/로 시작하는 브랜치를 올리면 실행된다.
-# 결과는 실행 화면의 Artifacts에 올라간다. 태그로 실행되면 같은 이름의 GitHub 릴리스에도 올린다.
+# 결과는 실행 화면의 Artifacts에 올라간다. 태그로 실행되면 같은 이름의 GitHub 릴리스를 새로 만들어 올리고,
+# main에서 직접 실행하면 최신 릴리스의 같은 이름 파일을 새 설치 파일로 바꾼다(버전 태그는 그대로).
 name: Package
 
 on:
@@ -43,7 +44,7 @@ jobs:
 
   # 최신 릴리스의 파일은 releases/latest/download/<파일 이름> 주소로 받을 수 있다.
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     needs: package
     runs-on: ubuntu-latest
     permissions:
@@ -55,6 +56,14 @@ jobs:
           merge-multiple: true
       # 서명이 없는 설치 파일을 받은 사람이 Release 페이지의 값과 대조할 수 있게 SHA-256 목록을 함께 올린다.
       - run: cd installers && sha256sum * > SHA256SUMS.txt
-      - run: gh release create "$GITHUB_REF_NAME" installers/* --repo "$GITHUB_REPOSITORY" --title "Paddock $GITHUB_REF_NAME" --generate-notes
+      - if: startsWith(github.ref, 'refs/tags/v')
+        run: gh release create "$GITHUB_REF_NAME" installers/* --repo "$GITHUB_REPOSITORY" --title "Paddock $GITHUB_REF_NAME" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+      # main에서 직접 실행했을 때: 새 태그를 만들지 않고 최신 릴리스의 파일(설치 파일·SHA256SUMS.txt)만 바꿔 latest/download 주소가 새 빌드를 준다.
+      - if: github.event_name == 'workflow_dispatch'
+        run: |
+          tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          gh release upload "$tag" installers/* --repo "$GITHUB_REPOSITORY" --clobber
         env:
           GH_TOKEN: ${{ github.token }}
