@@ -34,7 +34,7 @@ No project setup: sign in to `claude` or `codex` as you already do and run it in
 
 **vs. tmux:** Paddock alerts without scripts or key bindings; tmux keeps agents running after you close it, Paddock's stop when you quit (resume with `claude --resume` or `codex resume`).
 
-**Private:** Paddock collects nothing: no telemetry, no account, no server of its own, so your code and conversations are never used to train an AI. The app only sends the extension searches you type to [Open VSX](https://open-vsx.org), and never stores or sends your credentials; to tell accounts apart it only reads the account id from each CLI's own login file. Agents are the official CLIs, signed in by you; what they send follows Claude's or Codex's own terms.
+**Private:** Paddock collects nothing: no telemetry, no account, no server of its own, so your code and conversations are never used to train an AI. Its only outside connections are [Open VSX](https://open-vsx.org), to look up extensions, and Google, to download a spell-check dictionary; neither is sent your code, terminals or conversations. It never stores or sends your credentials; to tell accounts apart it only reads the account id from each CLI's own login file. Agents are the official CLIs, signed in by you; what they send follows Claude's or Codex's own terms.
 
 ## Install
 
