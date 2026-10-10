@@ -303,3 +303,25 @@ test('C-work-F15.2: 마우스 이벤트가 아닌 인자(위젯·없음·요소 
     assert.equal(model.pointerTargetOf({ clientX: 10, target: { nodeType: 3 } }), null);
     assert.equal(model.pointerTargetOf('terminal:new'), null);
 });
+
+test('C-work-mem.1: Windows와 WSL 중 사용률이 높은 쪽과 그 출처를 돌려준다', () => {
+    assert.deepEqual(model.tightestMemory({ windows: { total: 32, free: 16 }, wsl: { total: 26, available: 2 } }), { percent: 92, source: 'wsl' });
+    assert.deepEqual(model.tightestMemory({ windows: { total: 32, free: 2 }, wsl: { total: 26, available: 20 } }), { percent: 94, source: 'windows' });
+    assert.deepEqual(model.tightestMemory({ windows: { total: 32, free: 16 }, wsl: null }), { percent: 50, source: 'windows' });
+    assert.deepEqual(model.tightestMemory({ windows: { total: 0, free: 0 }, wsl: null }), { percent: null, source: 'windows' });
+});
+
+test('C-work-mem.2: 점검 안내는 실제로 읽은 값이 나쁠 때만 나온다', () => {
+    const GiB = 1024 ** 3;
+    // Windows에 8GiB 아래로 남기면 안내하고, 정확히 8GiB는 넘긴다.
+    assert.deepEqual(model.memoryAdvice({ windowsTotal: 32 * GiB, wslTotal: 26 * GiB, swapTotal: 16 * GiB }), ['wsl-share']);
+    assert.deepEqual(model.memoryAdvice({ windowsTotal: 32 * GiB, wslTotal: 24 * GiB, swapTotal: 16 * GiB }), []);
+    assert.deepEqual(model.memoryAdvice({ windowsTotal: 32 * GiB, wslTotal: 20 * GiB, swapTotal: 0 }), ['no-swap']);
+    assert.deepEqual(model.memoryAdvice({ windowsTotal: 32 * GiB, wslTotal: undefined, swapTotal: undefined }), []);
+});
+
+test('C-work-mem.3: 가장 큰 터미널을 고르고 비었으면 null이다', () => {
+    assert.deepEqual(model.heaviestTerminal({ t1: 10, t2: 30, t3: 20 }), { id: 't2', bytes: 30 });
+    assert.equal(model.heaviestTerminal({}), null);
+    assert.equal(model.heaviestTerminal({ t1: 0 }), null);
+});

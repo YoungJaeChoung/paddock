@@ -1,6 +1,7 @@
 const { Saveable } = require('@theia/core/lib/browser/saveable');
 const { getCurrentPort } = require('@theia/core/lib/electron-browser/messaging/electron-local-ws-connection-source');
 const { STATUS_ITEMS, element, button } = require('./shared');
+const model = require('../work-model');
 
 // 상태 줄 게이지 묶음의 출처 표지. 막대 색이 사용량 수준을 뜻하므로 출처는 색이 아니라 표지 모양·이름으로 가른다.
 // Memory는 표지 없이 이름만 둔다 — 출처가 하나라 가를 대상이 없고, 이름이 이미 출처를 말한다.
@@ -13,11 +14,22 @@ const SOURCE_MARKS = {
  * 상태 줄 오른쪽의 원격 연결 표시, Memory 게이지, Claude·Codex 사용량 묶음을 그린다.
  */
 class StatusBar {
+    // 메모리 안내 코드(백엔드 memoryAdvice)별로 사용자가 고칠 곳. 값은 이 PC의 .wslconfig [wsl2] 항목이다.
+    // 이 만큼 이상 swap을 쓰면 느려진 이유로 알린다.
+    static SWAP_NOTICE_BYTES = 512 * 1024 ** 2;
+
+    static MEMORY_ADVICE = {
+        'wsl-share': 'WSL leaves Windows under 8 GB; lower memory= in .wslconfig so Windows keeps room.',
+        'no-swap': 'WSL has no swap; set swap= in .wslconfig so a spike slows things down instead of killing processes.',
+    };
+
     constructor(
         workspace,
     ) {
         this.workspace = workspace;
         this.remote = { alive: false };
+        // 90%를 넘어 경고를 이미 띄웠는지. 80% 아래로 내려가면 다시 false가 된다.
+        this.isMemoryWarned = false;
     }
 
     renderStatus() {
@@ -86,13 +98,59 @@ class StatusBar {
         }
         if (isOn) {
             try {
-                const { percent } = await this.workspace.fetchJson('/paddock/memory');
-                if (percent !== null) {
-                    this.fillMeter(host.querySelector('[data-meter="memory"]'), percent, `System memory in use: ${percent}%. Hide it in Quick settings.`);
+                const report = await this.workspace.fetchJson('/paddock/memory');
+                if (report.percent !== null) {
+                    const details = this.memoryDetails(report);
+                    this.fillMeter(host.querySelector('[data-meter="memory"]'), report.percent, `${details.summary} Hide it in Quick settings.`);
+                    this.warnMemory(report.percent, details.warning);
                 }
             } catch {
                 // 요청이 실패하면 마지막 값을 그대로 둔다. 처음부터 실패면 "—"가 남는다.
             }
+        }
+    }
+
+    /**
+     * Memory 게이지 제목과 경고 문장. 어느 쪽(Windows·WSL)이 빡빡한지, 가장 큰 WSL 터미널, WSL이 swap을 쓰는 양, 고칠 설정 문제를 덧붙인다.
+     * 가장 큰 터미널은 어느 쪽이 빡빡하든 보인다. Windows가 먼저 차는 설정에서도 WSL 안 어느 터미널이 큰지가 사용자가 바로 줄일 수 있는 정보다.
+     * 터미널 이름은 이 창의 터미널과 id가 맞을 때만 쓰고, 셸이 닫힌 뒤 남은 프로세스·다른 창의 터미널은 그렇게 적는다.
+     */
+    memoryDetails(
+        report,
+    ) {
+        const scope = report.source === 'wsl' ? 'WSL memory' : 'System memory';
+        const heaviest = model.heaviestTerminal(report.terminals);
+        let owner = '';
+        if (heaviest) {
+            const terminal = this.workspace.terminals.all.find(item => item.id === heaviest.id);
+            if (terminal) owner = this.workspace.terminalDisplayName(terminal);
+            else if ((report.detached || []).includes(heaviest.id)) owner = 'leftover processes of a closed terminal';
+            else owner = 'a terminal in another window';
+        }
+        const largest = heaviest ? ` Largest WSL terminal: ${owner} (${(heaviest.bytes / 1024 ** 3).toFixed(1)} GB).` : '';
+        const swapUsed = report.wsl?.swapUsed || 0;
+        const swapping = swapUsed >= StatusBar.SWAP_NOTICE_BYTES ? ` WSL is swapping ${(swapUsed / 1024 ** 3).toFixed(1)} GB, which slows everything.` : '';
+        const advice = (report.advice || []).map(code => StatusBar.MEMORY_ADVICE[code]).filter(Boolean).join(' ');
+        const rest = `${largest}${swapping}${advice ? ` ${advice}` : ''}`;
+        return {
+            summary: `${scope} in use: ${report.percent}%.${rest}`,
+            warning: `${scope} is ${report.percent}% full, and agents may be cut off if it runs out.${rest}`,
+        };
+    }
+
+    /**
+     * 사용률이 처음 90%를 넘을 때 경고를 한 번 띄운다. 80% 아래로 내려가야 다시 무장하므로 경계에서 오르내려도 반복하지 않는다.
+     * 알림은 알릴 뿐이고 에이전트나 명령을 멈추지 않는다.
+     */
+    warnMemory(
+        percent,
+        message,
+    ) {
+        if (percent >= model.MemoryGuard.WARN_PERCENT && !this.isMemoryWarned) {
+            this.isMemoryWarned = true;
+            void this.workspace.messages.warn(message);
+        } else if (percent < model.MemoryGuard.REARM_PERCENT) {
+            this.isMemoryWarned = false;
         }
     }
 

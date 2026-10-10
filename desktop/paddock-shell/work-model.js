@@ -487,6 +487,75 @@ function memoryPercent(
     return total > 0 ? Math.round(((total - free) / total) * 100) : null;
 }
 
+/** 메모리 경고 기준. 퍼센트는 사용률이고, 여유 바이트는 WSL 상한을 빼고도 Windows에 남아야 하는 최소 메모리다(Windows와 앱 자신이 쓰는 몫). */
+class MemoryGuard {
+    static WARN_PERCENT = 90;
+    static REARM_PERCENT = 80;
+    static MIN_WINDOWS_HEADROOM_BYTES = 8 * 1024 ** 3;
+    static WSL_FRESH_MS = 10000;
+}
+
+/**
+ * Windows와 WSL 중 더 빡빡한 쪽의 사용률과 그 출처를 돌려준다.
+ *
+ * WSL은 자기 가상 머신 안에서 먼저 바닥나므로 Windows 전체 사용률만으로는 그 위기를 못 본다.
+ * 반대로 Windows가 먼저 바닥나는 경우도 있어 둘 중 높은 쪽을 쓴다. WSL 값이 없으면(WSL을 쓰지 않거나 읽지 못함) Windows 값이다.
+ * `total`·`free` 바이트가 아닌 값이 주어지면 그쪽 사용률은 `null`이고, 둘 다 `null`이면 `{ percent: null, source: 'windows' }`다.
+ *
+ * Examples
+ * --------
+ * | windows(total, free) | wsl(total, available) | 결과                               |
+ * | -------------------- | --------------------- | ---------------------------------- |
+ * | 32, 16               | 26, 2                 | `{ percent: 92, source: 'wsl' }`   |
+ * | 32, 2                | 26, 20                | `{ percent: 94, source: 'windows' }` |
+ * | 32, 16               | null                  | `{ percent: 50, source: 'windows' }` |
+ */
+function tightestMemory({
+    windows,
+    wsl,
+}) {
+    const windowsPercent = memoryPercent(windows?.total, windows?.free);
+    const wslPercent = wsl ? memoryPercent(wsl.total, wsl.available) : null;
+    const isWslTighter = wslPercent !== null && (windowsPercent === null || wslPercent > windowsPercent);
+    return { percent: isWslTighter ? wslPercent : windowsPercent, source: isWslTighter ? 'wsl' : 'windows' };
+}
+
+/**
+ * 메모리가 바닥나기 전에 사용자가 고칠 수 있는 설정 문제의 코드 목록. 값은 모두 실제로 읽은 바이트다.
+ * - `wsl-share`: WSL 상한을 빼고 Windows에 남는 메모리가 8GiB보다 적다.
+ * - `no-swap`: WSL에 swap이 없어 메모리가 넘치면 느려지는 대신 프로세스가 바로 죽는다.
+ * 읽지 못한 값(null·undefined)은 문제로 세지 않는다.
+ *
+ * Examples
+ * --------
+ * | windowsTotal | wslTotal | swapTotal | 결과                      |
+ * | ------------ | -------- | --------- | ------------------------- |
+ * | 32GiB        | 26GiB    | 16GiB     | `['wsl-share']`           |
+ * | 32GiB        | 20GiB    | 0         | `['no-swap']`             |
+ * | 32GiB        | null     | null      | `[]`                      |
+ */
+function memoryAdvice({
+    windowsTotal,
+    wslTotal,
+    swapTotal,
+}) {
+    const advice = [];
+    if (windowsTotal > 0 && wslTotal > 0 && windowsTotal - wslTotal < MemoryGuard.MIN_WINDOWS_HEADROOM_BYTES) advice.push('wsl-share');
+    if (wslTotal > 0 && swapTotal === 0) advice.push('no-swap');
+    return advice;
+}
+
+/** 터미널 id별 메모리(바이트)에서 가장 큰 항목 `{ id, bytes }`. 비었거나 모두 0이면 `null`. */
+function heaviestTerminal(
+    terminals,
+) {
+    let heaviest = null;
+    for (const [id, bytes] of Object.entries(terminals || {})) {
+        if (Number.isFinite(bytes) && bytes > 0 && (!heaviest || bytes > heaviest.bytes)) heaviest = { id, bytes };
+    }
+    return heaviest;
+}
+
 /**
  * macOS에서 앱이 실제로 차지한 메모리(바이트). `vm_stat` 출력을 받아 활성 상태 보기의 "사용된 메모리"와 같은 값을 돌려준다.
  * macOS는 남는 메모리를 파일 캐시로 채워 두므로 `os.freemem()`(완전히 빈 페이지)으로 재면 늘 100% 가까이 보인다.
@@ -540,5 +609,9 @@ module.exports = {
     serialize,
     restore,
     memoryPercent,
+    MemoryGuard,
+    tightestMemory,
+    memoryAdvice,
+    heaviestTerminal,
     macUsedMemory,
 };

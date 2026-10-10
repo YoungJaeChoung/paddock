@@ -37,3 +37,28 @@ test('C-wsl.forward: WSL 터미널은 사용자 WSLENV를 지키며 표지와 CO
     assert.equal(wsl.forwardedWslEnv('USERPROFILE/p'), 'USERPROFILE/p:PADDOCK_TERMINAL:COLORTERM');
     assert.equal(wsl.forwardedWslEnv('COLORTERM/u:PADDOCK_TERMINAL'), 'COLORTERM/u:PADDOCK_TERMINAL');
 });
+
+test('C-wsl.mem.1: 메모리 줄은 터미널별 고유 RSS를 더하고 터미널 목록(parse)에는 섞이지 않는다', () => {
+    const output = [
+        '#memory\t100\t40\t10\t4',
+        '#rss\tt1\t3',
+        '#rss\tt1\t2',
+        '#rss\tt2\t1',
+        't1\t\tbash\x1f\t\t',
+    ].join('\n');
+    assert.deepEqual(wsl.parseMemory(output), { total: 102400, available: 40960, swap: 10240, swapUsed: 6144, terminals: { t1: 5 * 4096, t2: 4096 } });
+    assert.deepEqual(Object.keys(wsl.parse(output)), ['t1']);
+});
+
+test('C-wsl.mem.2: 메모리 줄이 없거나 깨졌으면 null이다', () => {
+    assert.equal(wsl.parseMemory(''), null);
+    assert.equal(wsl.parseMemory('t1\t\tbash\n'), null);
+    assert.equal(wsl.parseMemory('#memory\t\t\t\t\n'), null);
+    assert.equal(wsl.parseMemory('#memory\t100\t40\t0\n'), null);
+});
+
+test('C-wsl.mem.3: 스크립트는 meminfo와 표지 프로세스의 statm을 내장 명령만으로 읽는다', () => {
+    assert.match(wsl.script(), /\/proc\/meminfo/);
+    assert.match(wsl.script(), /\/proc\/\$p\/statm/);
+    assert.doesNotMatch(wsl.script(), /getconf/);
+});

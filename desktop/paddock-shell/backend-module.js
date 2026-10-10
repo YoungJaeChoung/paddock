@@ -15,7 +15,7 @@ const { CodexUsage } = require('./codex-usage');
 const { AccountSessions } = require('./account-session');
 const { readJson, usageError } = require('./usage-files');
 const { applyStatusLine, settingsTarget } = require('./claude-usage-settings');
-const { memoryPercent, macUsedMemory } = require('./work-model');
+const { memoryPercent, macUsedMemory, MemoryGuard, tightestMemory, memoryAdvice } = require('./work-model');
 const usage = require('./usage-model');
 const agent = require('./agent-model');
 const { WorkPresenceRegistry } = require('./work-presence');
@@ -256,7 +256,11 @@ const windowsProcessList = new WindowsProcessList();
 const accountSessions = new AccountSessions({ accounts, readWslInfo, readWindowsProcesses: () => windowsProcessList.read() });
 
 /**
- * `GET /paddock/memory` → `{ percent, total, free }`.
+ * `GET /paddock/memory` → `{ percent, total, free, source, wsl, terminals, detached, advice }`.
+ *   total·free는 이 컴퓨터(Windows) 전체이고, percent는 Windows와 WSL 중 더 높은 쪽의 사용률, source는 그쪽('windows'|'wsl')이다.
+ *   wsl은 최근 10초 안에 wsl-terminals 스캔이 읽은 WSL 가상 머신의 `{ total, free, percent, swapUsed }`(없으면 null)이고,
+ *   terminals는 WSL 터미널 id별 고유 상주 메모리(바이트), detached는 그중 셸이 이미 닫혀 남은 프로세스만 있는 id 목록이다.
+ *   advice는 사용자가 고칠 설정 문제 코드(`wsl-share`·`no-swap`) 목록이다.
  * `GET /paddock/usage[?accountId=…|?provider=claude|codex]` → `{ claude: { state, windows, updatedAt }, codex: { windows, updatedAt } }`.
  * accountId가 있으면 등록된 그 계정만 읽고, 다른 도구의 값은 빈 목록이다. 생략하면 기본 CLI 환경을 읽는다.
  * 기본 Claude의 로그인이 등록 계정과 같으면 `claude.account`에 그 계정의 `{ id, label }`을 붙인다. 다르거나 확인할 수 없으면 빠진다.
@@ -281,6 +285,8 @@ class PaddockStatusRoutes {
     constructor() {
         this.workPresence = new WorkPresenceRegistry();
         this.windowsProcesses = windowsProcessList;
+        // 마지막 WSL 스캔이 읽은 `{ total, available, swap, terminals, at }`. 아직 읽은 적 없으면 null.
+        this.wslMemory = null;
         this.liveCodexUsage = new CodexUsage();
         this.accountUsage = new AccountUsage({
             accounts, readWslInfo, liveCodexUsage: this.liveCodexUsage,
@@ -310,7 +316,16 @@ class PaddockStatusRoutes {
             // Linux(MemAvailable)·Windows(사용 가능 메모리)의 os.freemem()은 캐시를 이미 가용으로 센다. macOS만 캐시를 뺀 사용량을 따로 읽는다.
             const used = process.platform === 'darwin' ? await readMacUsedMemory() : null;
             const free = used === null ? os.freemem() : Math.max(0, total - used);
-            response.json({ percent: memoryPercent(total, free), total, free });
+            // WSL 값은 wsl-terminals 스캔이 최근에 읽어 온 것만 쓴다. 이 라우트가 wsl.exe를 따로 띄우지 않는다.
+            const wslMemory = this.wslMemory && Date.now() - this.wslMemory.at <= MemoryGuard.WSL_FRESH_MS ? this.wslMemory : null;
+            const { percent, source } = tightestMemory({ windows: { total, free }, wsl: wslMemory });
+            response.json({
+                percent, total, free, source,
+                wsl: wslMemory && { total: wslMemory.total, free: wslMemory.available, percent: memoryPercent(wslMemory.total, wslMemory.available), swapUsed: wslMemory.swapUsed },
+                terminals: wslMemory ? wslMemory.terminals : {},
+                detached: wslMemory ? wslMemory.detached : [],
+                advice: memoryAdvice({ windowsTotal: total, wslTotal: wslMemory?.total, swapTotal: wslMemory?.swap }),
+            });
         });
         app.get('/paddock/foreground', async (request, response) => {
             const names = {};
@@ -342,8 +357,13 @@ class PaddockStatusRoutes {
             } else {
                 // WSL이 꺼져 있으면 켜는 데 몇 초 걸린다. 늦으면 이번 주기는 비우고 다음 주기에 다시 읽는다.
                 execFile('wsl.exe', ['-e', 'sh', '-c', wsl.script()], { encoding: 'utf8', timeout: 5000, windowsHide: true }, async (error, stdout) => {
+                    // 같은 스캔이 WSL 메모리도 읽어 온다. 읽지 못하면 지난 값을 두고, 오래되면 /paddock/memory가 버린다.
+                    const listed = wsl.parse(error ? '' : stdout);
+                    const memory = error ? null : wsl.parseMemory(stdout);
+                    // 셸 줄이 없는 터미널 id는 셸이 닫혔는데 표지를 물려받은 프로세스(에뮬레이터·개발 서버 등)만 남은 것이다.
+                    if (memory) this.wslMemory = { ...memory, detached: Object.keys(memory.terminals).filter(id => !(id in listed)), at: Date.now() };
                     const terminals = {};
-                    const parsed = Object.entries(wsl.parse(error ? '' : stdout));
+                    const parsed = Object.entries(listed);
                     const profiles = parsed.length ? await accounts.list().catch(() => null) : null;
                     for (const [id, { cwd, argv, env, distribution }] of parsed) {
                         const program = argv.length ? agent.programName(argv) : null;

@@ -52,6 +52,7 @@ const { StatusBar } = require('./workspace/status-bar');
 
 // 터미널 현재 폴더·실행 중 프로그램·메모리처럼 이벤트가 없는 값을 다시 읽는 간격(ms).
 const REFRESH_INTERVAL = 2000;
+const TICK_STUCK_MS = 30000;
 
 // 본문 나누기·탭 이동·사이드바 명령. 새 터미널·터미널 분할·사이드바 단축키는 VS Code와 같다.
 const PADDOCK_COMMANDS = {
@@ -720,7 +721,18 @@ class PaddockWorkspace {
         this.layoutReady = true;
         void this.accountTerminals.updateAccountLabels().catch(() => {});
         this.statusBar.refreshRemote();
-        setInterval(() => this.run(() => this.agentActivity.tick()), REFRESH_INTERVAL);
+        // 앞선 주기가 끝나기 전에는 다음을 시작하지 않는다. WSL이 느릴 때 wsl.exe 읽기가 겹쳐 쌓이면 더 느려진다.
+        // 응답이 영영 오지 않아 멈춘 채로 남지 않도록 30초가 지난 주기는 끝난 것으로 보고 다시 시작한다.
+        let tickStartedAt = 0;
+        setInterval(() => {
+            if (tickStartedAt === 0 || Date.now() - tickStartedAt > TICK_STUCK_MS) {
+                const startedAt = Date.now();
+                tickStartedAt = startedAt;
+                void this.run(() => this.agentActivity.tick()).finally(() => {
+                    if (tickStartedAt === startedAt) tickStartedAt = 0;
+                });
+            }
+        }, REFRESH_INTERVAL);
         void this.refreshWorkPresence();
         await this.refresh();
     }
