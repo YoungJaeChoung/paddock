@@ -6,9 +6,11 @@ Run agents in several repos and you only learn one has finished when you tab thr
 
 **[Download for macOS or Windows](#install)** · Free app, MIT license
 
-![One window: repos and agents on the left, the agent's terminal in the middle, the file it just wrote on the right, and each account's usage at the bottom](docs/screenshot.png)
+<video src="docs/paddock-demo.mp4" poster="docs/screenshot.png" controls playsinline width="100%">
+  <a href="docs/paddock-demo.mp4"><img src="docs/screenshot.png" alt="One window: repos and agents on the left, the agent's terminal in the middle, the file it just wrote on the right, and each account's usage at the bottom"></a>
+</video>
 
-*Screenshots show example projects and sample usage numbers.*
+*The demo and screenshots show example projects, sample usage numbers and scripted agents. The demo's alert sound and music were added in editing.*
 
 ## Why Paddock
 
