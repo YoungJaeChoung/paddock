@@ -8,11 +8,13 @@ Run agents in several repos and you only learn one has finished when you tab thr
 
 ![One window: repos and agents on the left, the agent's terminal in the middle, the file it just wrote on the right, and each account's usage at the bottom](docs/screenshot.png)
 
+*Screenshots show example projects and sample usage numbers.*
+
 ## Why Paddock
 
 ### Every agent in one list, with a sound when one stops
 
-When an agent you aren't watching stops, **a sound plays and a green dot marks its repo and terminal**, so none sits idle unnoticed. Open a terminal in Paddock, `cd` into a repo and run `claude` or `codex` as usual; the repo joins the sidebar with its agent terminals. ([How it decides](docs/settings.md#stop-alerts): the output goes quiet, so a silent build step counts too.)
+When an agent you aren't watching stops, **a sound plays and a green dot marks its repo and terminal**. Run `claude` or `codex` in a Paddock terminal as usual and its repo joins the sidebar. ([How a stop is detected](docs/settings.md#stop-alerts): the output goes quiet, so a silent build counts too.)
 
 ![Paddock's sidebar: shop-api's Claude and docs-site's Codex have stopped and show green dots; web-app's Claude is still working](docs/stopped-agents.png)
 
@@ -30,7 +32,9 @@ Keep several Claude and Codex accounts, each signed in through its own CLI. **Ea
 
 ![The status bar shows each Claude and Codex account's 5-hour and weekly usage](docs/accounts-usage.png)
 
-No project setup: sign in to `claude` or `codex` as you already do and run it in a Paddock terminal. Your logins and skills stay as they are. No worktrees.
+No project setup: your logins and skills stay as they are.
+
+**vs. other tools:** no worktrees to manage, Claude Code and Codex side by side, macOS and Windows alike.
 
 **vs. tmux:** Paddock alerts without scripts or key bindings; tmux keeps agents running after you close it, Paddock's stop when you quit (resume with `claude --resume` or `codex resume`).
 
