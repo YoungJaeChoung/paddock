@@ -46,7 +46,7 @@ Nothing to set up: your CLIs, logins and skills stay as they are. No worktrees, 
 
 Linux: no installer yet; [build from source](docs/building.md).
 
-The installers are built by the public [Package workflow](https://github.com/YoungJaeChoung/paddock/actions/workflows/package.yml) but aren't code-signed yet. Compare the file with the SHA-256 shown for it on the [release page](https://github.com/YoungJaeChoung/paddock/releases/latest) (`shasum -a 256 <file>` on macOS, `Get-FileHash <file>` on Windows), then:
+The installers are built by the public [Package workflow](https://github.com/YoungJaeChoung/paddock/actions/workflows/package.yml) but aren't code-signed yet, so your system warns on first run:
 
 - **macOS 15 or later:** open the app once, then choose **Open Anyway** in System Settings → Privacy & Security. Earlier macOS: Control-click the app and choose **Open**.
 - **Windows:** in SmartScreen, choose **More info → Run anyway**.
