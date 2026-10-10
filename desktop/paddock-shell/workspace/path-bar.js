@@ -23,18 +23,17 @@ class PathBar {
      * 분할 중 위쪽 줄에 없는 화면(작업 폴더 밖 파일·확장 페이지 등)이 든 칸만 실제 탭을 보여 칸 사이 드래그 이동과 합치기를 지원한다.
      * 이때 실제 탭 줄에는 위쪽 줄에 없는 화면의 탭만 남긴다(같은 터미널 탭이 두 줄에 나오지 않게).
      * 위아래로 쌓인 열의 둘째 칸부터는 탭이 위쪽 줄에 없으므로 그 칸의 실제 탭 줄을 칸 바로 위에 보인다.
-     * 위쪽 줄에 이미 있는 화면만 든 칸은, 열에 혼자 있으면 탭이 바로 위에 있어 이름 줄을 접고(같은 이름 두 번 금지),
-     * 위아래로 쌓여 탭만으로 어느 칸인지 가려지지 않으면 칸 위에 이름 줄(이름·닫기)을 둔다. 한 칸에서는 이름 줄을 접고 공통 탭 줄만 쓰며,
-     * 설정 화면 등에는 경로 줄을 둔다.
+     * 위쪽 줄에 이미 있는 화면만 든 열의 맨 위 칸은 탭이 바로 위에 있어 이름 줄을 접는다(같은 이름 두 번 금지).
+     * 한 칸에서도 이름 줄을 접고 공통 탭 줄만 쓰며, 설정 화면 등에는 경로 줄을 둔다.
      */
     renderPathBars() {
         let isResized = false;
         const isSplit = [...this.workspace.shell.mainPanel.tabBars()].length > 1;
         // 위쪽 줄은 이 함수보다 먼저 그려진다(작업 화면 갱신 순서). 그 탭이 가리키는 화면을 모은다.
         const listedIds = new Set([...this.workspace.shell.folderBar.node.querySelectorAll('.folder-tabs [data-widget-id]')].map(tab => tab.dataset.widgetId));
-        // 열에 칸이 하나뿐이면 위쪽 줄의 탭이 그 칸 바로 위에 있다. 위아래로 쌓인 칸만 이름 줄로 구분한다.
+        // 열의 맨 위 칸은 위쪽 줄의 탭이 바로 위에 있다. 둘째 칸부터는 위쪽 줄에 탭이 없어 자기 탭 줄을 둔다.
         const columns = paneColumns(this.workspace.folderTabs.paneRects());
-        const standsAlone = new Set(columns.filter(column => column.keys.length === 1).map(column => column.keys[0]));
+        const topPanes = new Set(columns.map(column => column.keys[0]));
         // 위아래로 쌓인 열의 둘째 칸부터는 탭이 위쪽 줄에 없다(folder-tabs.js의 arrangeTabs). 그 칸의 실제 탭 줄을 칸 위에 보인다.
         const lowerPanes = new Set(columns.flatMap(column => column.keys.slice(1)));
         for (const tabBar of this.workspace.shell.mainPanel.tabBars()) {
@@ -65,8 +64,8 @@ class PathBar {
                 tabBar.node.append(bar);
             }
             bar.replaceChildren();
-            // 한 칸이거나 열에 혼자 있는 칸은 위쪽 탭 줄의 탭이 이름을 맡으므로 줄을 1px로 접는다. 위아래로 쌓인 칸은 이름 줄을 두어 어느 탭이 어느 칸인지 읽히게 한다.
-            const hasTabAbove = !isSplit || (standsAlone.has(tabBar) && !showsTabs);
+            // 한 칸이거나 열의 맨 위 칸은 위쪽 탭 줄의 탭이 이름을 맡으므로 줄을 1px로 접는다. 아래 칸은 자기 실제 탭 줄이 이름을 맡는다.
+            const hasTabAbove = !isSplit || (topPanes.has(tabBar) && !showsTabs);
             const isCompactPane = hasTabAbove && (this.workspace.isTerminal(widget) || Boolean(widget?.getResourceUri?.()) || widget instanceof WebviewWidget && (this.workspace.webviewFolders.has(widget.id) || this.workspace.fileRoots.has(widget.id)));
             // 칸이 둘 이상이면 입력이 가지 않는 칸을 흐리게 해 지금 입력할 칸을 드러낸다.
             widget?.node.classList.toggle('is-inactive-pane', isSplit && widget !== this.workspace.currentWidget());
