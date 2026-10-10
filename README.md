@@ -30,11 +30,11 @@ Keep several Claude and Codex accounts, each signed in through its own CLI. **Ea
 
 ![The status bar shows each Claude and Codex account's 5-hour and weekly usage](docs/accounts-usage.png)
 
-Nothing to set up: your CLIs, logins and skills stay as they are. No worktrees, no wrapper.
+No project setup: sign in to `claude` or `codex` as you already do and run it in a Paddock terminal. Your logins and skills stay as they are. No worktrees.
 
 **vs. tmux:** Paddock alerts without scripts or key bindings; tmux keeps agents running after you close it, Paddock's stop when you quit (resume with `claude --resume` or `codex resume`).
 
-**Private:** no telemetry. The app only sends the extension searches you type to [Open VSX](https://open-vsx.org), and never reads or stores your credentials; agents are the official CLIs, signed in by you.
+**Private:** Paddock collects nothing: no telemetry, no account, no server of its own, so your code and conversations are never used to train an AI. The app only sends the extension searches you type to [Open VSX](https://open-vsx.org), and never stores or sends your credentials; to tell accounts apart it only reads the account id from each CLI's own login file. Agents are the official CLIs, signed in by you; what they send follows Claude's or Codex's own terms.
 
 ## Install
 
