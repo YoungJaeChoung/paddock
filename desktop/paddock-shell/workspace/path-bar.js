@@ -20,7 +20,8 @@ class PathBar {
      *
      * 칸을 나눠도 위쪽 공통 탭 줄은 그대로 둔다. 탭이 칸 위로 내려가면 위쪽 줄이 빈 줄처럼 보이기 때문이다. 대신 위쪽 줄의 탭은
      * 그 화면이 든 칸의 가로 구간 위에 놓인다(folder-tabs.js의 arrangeTabs).
-     * 분할 중 위쪽 줄에 없는 화면(작업 폴더 밖 파일 등)이 든 칸만 실제 탭을 보여 칸 사이 드래그 이동과 합치기를 지원한다.
+     * 분할 중 위쪽 줄에 없는 화면(작업 폴더 밖 파일·확장 페이지 등)이 든 칸만 실제 탭을 보여 칸 사이 드래그 이동과 합치기를 지원한다.
+     * 이때 실제 탭 줄에는 위쪽 줄에 없는 화면의 탭만 남긴다(같은 터미널 탭이 두 줄에 나오지 않게).
      * 위쪽 줄에 이미 있는 화면만 든 칸은, 열에 혼자 있으면 탭이 바로 위에 있어 이름 줄을 접고(같은 이름 두 번 금지),
      * 위아래로 쌓여 탭만으로 어느 칸인지 가려지지 않으면 칸 위에 이름 줄(이름·닫기)을 둔다. 한 칸에서는 이름 줄을 접고 공통 탭 줄만 쓰며,
      * 설정 화면 등에는 경로 줄을 둔다.
@@ -47,8 +48,10 @@ class PathBar {
             }
             tabBar.update();
             for (const title of tabBar.titles) {
-                const names = title.className.split(' ').filter(name => name && name !== 'has-unseen-activity');
+                const names = title.className.split(' ').filter(name => name && name !== 'has-unseen-activity' && name !== 'is-listed');
                 if (this.workspace.doneIds.has(title.owner.id)) names.push('has-unseen-activity');
+                // 위쪽 줄에 이미 있는 화면의 탭은 실제 탭 줄에서 숨겨(style.css) 같은 이름 탭이 두 줄에 나오지 않게 한다.
+                if (listedIds.has(title.owner.id)) names.push('is-listed');
                 title.className = names.join(' ');
             }
             const widget = tabBar.currentTitle?.owner;
