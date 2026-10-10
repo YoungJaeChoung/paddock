@@ -13,6 +13,7 @@ class PathBar {
     ) {
         this.workspace = workspace;
         this.namedTabRenderers = new WeakSet();
+        this.menuTabBars = new WeakSet();
     }
 
     /**
@@ -49,6 +50,23 @@ class PathBar {
                         : renderLabel(data, side);
                 };
             }
+            // 실제 탭 줄의 터미널 탭도 위쪽 줄의 탭처럼 더블클릭으로 이름을 바꾸고 우클릭 메뉴를 연다. 아래 칸 터미널의 탭은 위쪽 줄에 없다.
+            if (!this.menuTabBars.has(tabBar)) {
+                this.menuTabBars.add(tabBar);
+                const terminalIdOf = event => {
+                    const tab = event.target.closest?.('.lm-TabBar-tab');
+                    const owner = tab && tabBar.titles.find(title => tab.id === `shell-tab-${title.owner.id}`)?.owner;
+                    return owner && this.workspace.isTerminal(owner) ? owner.id : null;
+                };
+                tabBar.node.addEventListener('dblclick', event => {
+                    const id = terminalIdOf(event);
+                    if (id) this.workspace.run(() => this.workspace.renameTerminal(id));
+                });
+                tabBar.node.addEventListener('contextmenu', event => {
+                    const id = terminalIdOf(event);
+                    if (id) this.workspace.workSidebar.openTerminalMenuAt(event, id);
+                });
+            }
             tabBar.update();
             for (const title of tabBar.titles) {
                 const names = title.className.split(' ').filter(name => name && name !== 'has-unseen-activity' && name !== 'is-listed');
@@ -58,6 +76,8 @@ class PathBar {
                 title.className = names.join(' ');
             }
             const widget = tabBar.currentTitle?.owner;
+            tabBar.node.classList.toggle('has-terminal', this.workspace.isTerminal(widget));
+            this.renderPaneAdd(tabBar, lowerPanes.has(tabBar) && this.workspace.isTerminal(widget));
             let bar = tabBar.node.querySelector(':scope > .path-bar');
             if (!bar) {
                 bar = element('div', 'path-bar');
@@ -95,6 +115,32 @@ class PathBar {
         }
         // 화면 이름 줄(30px)과 얇은 구분선(1px)이 바뀌면 본문 칸 배치를 다시 잰다.
         if (isResized) this.workspace.shell.mainPanel.fit();
+    }
+
+    /**
+     * 위아래로 쌓인 칸의 둘째 칸부터, 그 칸의 마지막 탭 바로 옆에 새 터미널 ＋를 둔다(위쪽 줄의 ＋와 같은 모양·같은 메뉴).
+     * 위쪽 줄에는 맨 위 칸의 ＋만 있어, 아래 칸에서 새 터미널을 열 입구가 칸 안에 없어지기 때문이다. `isWanted`가 거짓이면 숨긴다.
+     */
+    renderPaneAdd(
+        tabBar,
+        isWanted,
+    ) {
+        let actions = tabBar.node.querySelector(':scope > .pane-add-actions');
+        if (isWanted && !actions) {
+            const source = this.workspace.shell.folderBar.node.querySelector('.folder-add-actions');
+            actions = this.workspace.folderTabs.paneAddActions(source, [tabBar]);
+            actions.classList.add('pane-add-actions');
+            tabBar.node.append(actions);
+        }
+        if (actions) {
+            actions.hidden = !isWanted;
+            // 탭 줄이 그려진 다음 프레임에 마지막 탭의 오른쪽 끝에 맞춘다.
+            requestAnimationFrame(() => {
+                const tabs = [...tabBar.node.querySelectorAll('.lm-TabBar-tab:not(.is-listed)')];
+                const last = tabs[tabs.length - 1];
+                if (last) actions.style.left = `${last.getBoundingClientRect().right - tabBar.node.getBoundingClientRect().left + 4}px`;
+            });
+        }
     }
 
     /**

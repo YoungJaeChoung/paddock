@@ -453,13 +453,22 @@ class WorkSidebar {
         node,
         id,
     ) {
-        node.addEventListener('contextmenu', (event) => {
-            event.preventDefault();
-            const point = { x: event.clientX, y: event.clientY };
-            const open = () => this.openTerminalMenu(id, point);
-            if (event.buttons & 2) window.addEventListener('pointerup', () => setTimeout(open), { once: true, capture: true });
-            else open();
-        });
+        node.addEventListener('contextmenu', (event) => this.openTerminalMenuAt(event, id));
+    }
+
+    /**
+     * 우클릭 이벤트가 난 자리에 터미널 메뉴를 연다. 누른 채인 우클릭은 버튼을 뗀 뒤에 열어 같은 우클릭의 mouseup이 메뉴를 바로 닫지 않게 한다.
+     * 실제 탭 줄의 탭처럼 터미널마다 노드를 따로 만들지 않는 곳에서도 쓴다.
+     */
+    openTerminalMenuAt(
+        event,
+        id,
+    ) {
+        event.preventDefault();
+        const point = { x: event.clientX, y: event.clientY };
+        const open = () => this.openTerminalMenu(id, point);
+        if (event.buttons & 2) window.addEventListener('pointerup', () => setTimeout(open), { once: true, capture: true });
+        else open();
     }
 
     /** 이름 바꾸기와 닫기를 작업 터미널의 우클릭 메뉴에 모은다. */
