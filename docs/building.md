@@ -19,7 +19,7 @@ Installers are built on their own system because the terminal's native modules a
 | macOS | `make package-mac` | `Paddock-mac-<arm64 or x64>.dmg` |
 | Windows | `make package-win` (or `npm run setup` then `npm run package:win`) | `Paddock-win-x64.exe` |
 
-The **Package** GitHub Actions workflow builds all three installers. A `package/…` branch attaches them to the run as artifacts; `make release` tags `v<version>` from `desktop/package.json` and publishes them to a GitHub Release. Installed builds and development runs share `~/.paddock/extensions` and `~/.paddock/config`.
+The **Package** GitHub Actions workflow builds all three installers. A `package/…` branch attaches them to the run as artifacts; `make release` raises the patch version in `package.json`, commits it, pushes `main` and the tag `v<version>`, and the workflow publishes the installers to a new GitHub Release (`make release BUMP=minor` for a minor version). Installed builds and development runs share `~/.paddock/extensions` and `~/.paddock/config`.
 
 The installers aren't code-signed. To check a download, compare its SHA-256 with the one the [release page](https://github.com/YoungJaeChoung/paddock/releases/latest) shows for that file (`shasum -a 256 <file>` on macOS, `Get-FileHash <file>` on Windows).
 
