@@ -24,7 +24,9 @@ Changed files are **marked M or U in the file tree and open beside the terminal*
 
 ### Several accounts in one place
 
-Keep several Claude and Codex accounts, each signed in through its own CLI. **Each account's 5-hour and weekly usage** shows in the status bar once an agent on it has replied, as its CLI reports it; when one runs low, start the next agent from another.
+Keep several Claude and Codex accounts, each signed in through its own CLI. **Each account's 5-hour and weekly usage** shows in the status bar once an agent on it has replied, as its CLI reports it; when one runs low, **pick another account in the Accounts menu** and its agent starts in the same folder.
+
+![The Accounts menu lists each Claude and Codex account; picking one starts its agent in the same folder](docs/accounts-switch.png)
 
 ![The status bar shows each Claude and Codex account's 5-hour and weekly usage; the Accounts menu opens an agent on another account](docs/accounts-usage.png)
 
