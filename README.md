@@ -28,7 +28,7 @@ Keep several Claude and Codex accounts, each signed in through its own CLI. **Ea
 
 ![The Accounts menu lists each Claude and Codex account; picking one starts its agent in the same folder](docs/accounts-switch.png)
 
-![The status bar shows each Claude and Codex account's 5-hour and weekly usage; the Accounts menu opens an agent on another account](docs/accounts-usage.png)
+![The status bar shows each Claude and Codex account's 5-hour and weekly usage](docs/accounts-usage.png)
 
 Nothing to set up: your CLIs, logins and skills stay as they are. No worktrees, no wrapper.
 
