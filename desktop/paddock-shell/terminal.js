@@ -19,6 +19,7 @@ const URI = require('@theia/core/lib/common/uri').default;
 const { isWslShell } = require('./wsl-terminals');
 const { PASTE_PLACE, pastePathText, imageExtension } = require('./paste-paths');
 const { osc52ClipboardText } = require('./terminal-copy');
+const { refreshGlyphs, synchronizeTextureAtlas } = require('./terminal-renderer');
 
 class TerminalReplacement {
     static TIMEOUT_MS = 20000;
@@ -405,6 +406,7 @@ class PaddockTerminal extends TerminalWidgetImpl {
 
     init() {
         super.init();
+        this.toDispose.push(synchronizeTextureAtlas(this.term));
         // 밝은 테마에서도 명령과 출력의 색을 읽을 수 있도록 배경과의 최소 명암비를 유지한다.
         this.term.options.minimumContrastRatio = 4.5;
         // 터미널의 기본 글자 폭 기준(Unicode 6)은 ✅·😀 같은 이모지를 한 칸으로 센다. Claude Code 같은 화면 프로그램은 두 칸으로 세고
@@ -506,13 +508,14 @@ class PaddockTerminal extends TerminalWidgetImpl {
      *
      * 그리기 모듈은 옵션이 하나라도 바뀌면 글자 저장소를 다시 연결하며 페이지 버전을 초기화해, 다음 그리기에서 모든 페이지를 다시 올린다.
      * 저장소 구성에 들어가지 않는 옵션을 잠깐 바꿨다 되돌려 그 경로만 빌린다. 저장소의 글자는 그대로라 다시 그리는 비용만 든다.
-     * 기본 그리기로 이미 돌아간 뒤에는 옵션 변경이 화면에 아무 영향도 주지 않는다.
+     * 다른 터미널이 공유 저장소를 비웠다면 글자 좌표도 낡아 있으므로, 위치 모델까지 다시 계산한다. 출력 버퍼는 건드리지 않는다.
+     * 기본 그리기로 이미 돌아간 뒤에도 현재 렌더러로 출력 버퍼를 다시 그린다.
      */
     reuploadGlyphTextures() {
         const duration = this.term.options.smoothScrollDuration || 0;
         this.term.options.smoothScrollDuration = duration + 1;
         this.term.options.smoothScrollDuration = duration;
-        this.term.refresh(0, this.term.rows - 1);
+        refreshGlyphs(this.term);
     }
 
     /** 붙여넣기·끌어다 놓기에 글자 없이 파일만 있으면 그 경로를 입력한다. 글자가 있으면 터미널의 기본 붙여넣기에 맡긴다. */

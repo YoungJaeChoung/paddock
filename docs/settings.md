@@ -4,10 +4,25 @@ Open settings with `Ctrl+,` (macOS `Cmd+,`) and search for `paddock`.
 
 - **Agent permission prompts** (`paddock.agents.permissions`): how Claude and Codex started from **Accounts** handle permission prompts. `ask` (default) asks before each tool use. `allowSkip` lets Claude switch to skipping prompts inside the session with Shift+Tab. `skip` starts Claude with `--dangerously-skip-permissions` and Codex with `--dangerously-bypass-approvals-and-sandbox`, so agents change files and run commands without asking — use it only in folders you can restore. Agents you start by typing `claude` or `codex` follow their own settings.
 - **Done sound** (`paddock.agentDoneSound`): turn the stop sound off.
+- **Memory notice** (`paddock.agents.memoryNotice`, off by default): tell Claude Code agents when memory is low. See [Memory](#memory).
 
 ## Accounts and usage
 
 Keep several Claude and Codex accounts, each signed in through its own CLI. After an account's first reply, its 5-hour and weekly usage shows in the status bar. The numbers are what each CLI reports — Claude Code through its status line, Codex through its own limit query — not read from your login. A new account starts a new conversation; go back to the old one with `claude --resume` or `codex resume` in its own terminal.
+
+## Memory
+
+The status bar's **Memory** gauge shows the fuller of Windows and WSL memory. The first time it passes 90% a warning names the terminal using the most (with a button to go to it); it re-arms after use falls below 80%. Paddock only warns: it never stops an agent or blocks a command. Hover the gauge to see the largest terminal and WSL's swap use. When WSL leaves Windows under 8 GB or has no swap, the hover text points at the `memory=` and `swap=` lines of `.wslconfig` to fix. Hide the gauge in Quick settings.
+
+### Telling agents when memory is low
+
+Turn on `paddock.agents.memoryNotice` and Paddock adds one `PreToolUse` hook to Claude Code's settings: the default `settings.json` and each Claude account Paddock manages. While available memory is below `paddock.agents.memoryNoticeMinimumMb` (default 4096), the hook adds one sentence to the agent's context asking it to postpone heavy work such as builds, test runners and browsers, or to tell you first. It never blocks a command or stops an agent.
+
+- **When it arrives:** with the result of a `Bash`, `Agent` or `Task` call, so it shapes the agent's next step, not the call that triggered it.
+- **Where it works:** WSL, Linux, and accounts that run in WSL. The hook reads `/proc/meminfo`, so macOS and Windows-native Claude are not covered.
+- **Your own hooks stay:** Paddock adds and removes only its own entry. The first time it changes a settings file it keeps the original next to it as `settings.json.paddock-backup`.
+- **Turning it off** removes the entry and quiets agents that are already running. Turning it on reaches agents started afterwards.
+- **Codex:** not covered yet.
 
 ## Stop alerts
 

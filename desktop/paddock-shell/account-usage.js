@@ -6,6 +6,7 @@ const { CodexUsage } = require('./codex-usage');
 const usage = require('./usage-model');
 const { assertPlainPath, usageError, readJson, codexUsage } = require('./usage-files');
 const { applyStatusLine, writeJson } = require('./claude-usage-settings');
+const { MemoryHook, setMemoryNotice } = require('./memory-hook-settings');
 
 /** Converts only Linux absolute paths on the selected distribution, keeping its home mapping intact. */
 function wslFileMapping(
@@ -343,6 +344,36 @@ class AccountUsage {
             const state = applyStatusLine({ settingsPath: scope.toLocal(scope.settingsPath), previousFile: scope.toLocal(previousFile), command, enabled, isAutomatic, toLocal: scope.toLocal, scoped: true });
             writeJson(scope.toLocal(stateFile), { claude: state });
             return { state };
+        });
+        this.pendingWrites = operation.catch(() => {});
+        return operation;
+    }
+    /**
+     * 등록 Claude 계정의 설정에 메모리 안내 훅을 켜거나 끈다.
+     * 훅 스크립트는 `sh`와 `/proc/meminfo`를 쓰므로 Linux 계정 폴더와 WSL 계정에서만 동작한다.
+     * Windows·macOS의 이 컴퓨터 계정은 `{ state: 'unsupported' }`를 돌려주고 파일을 건드리지 않는다.
+     */
+    async setMemoryNotice(
+        accountId,
+        { enabled, minimumMb, source },
+    ) {
+        const operation = this.pendingWrites.then(async () => {
+            const scope = await this.resolve(accountId);
+            if (scope.profile.provider !== 'claude') throw usageError('The memory notice requires a Claude account.', 400);
+            let result = { state: 'unsupported' };
+            if (scope.profile.runtime === 'wsl' || process.platform === 'linux') {
+                const commandScript = scope.join(scope.usageDirectory, MemoryHook.SCRIPT_NAME);
+                const state = setMemoryNotice({
+                    settingsPath: scope.toLocal(scope.settingsPath),
+                    scriptFile: scope.toLocal(commandScript),
+                    commandScript,
+                    source,
+                    enabled,
+                    minimumMb,
+                });
+                result = { state };
+            }
+            return result;
         });
         this.pendingWrites = operation.catch(() => {});
         return operation;

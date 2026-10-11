@@ -32,6 +32,8 @@ Keep several Claude and Codex accounts, each signed in through its own CLI. **Ea
 
 ![The status bar shows each Claude and Codex account's 5-hour and weekly usage](docs/accounts-usage.png)
 
+**Memory** in the status bar warns once it passes 90%, naming the terminal using the most, so you can stop it before WSL or Windows runs out. It only warns; nothing is stopped for you. Turn on [Memory notice](docs/settings.md#telling-agents-when-memory-is-low) and Claude Code agents are told too, so they hold off on heavy builds.
+
 No project setup: your logins and skills stay as they are.
 
 **vs. other tools:** no worktrees to manage, Claude Code and Codex side by side, macOS and Windows alike.

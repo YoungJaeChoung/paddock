@@ -40,6 +40,17 @@ const PaddockPreferenceSchema = {
             default: 'ask',
             description: 'Permission prompts for Claude and Codex that Paddock starts from Accounts. Applies to terminals opened after the change; agents you start by typing claude or codex follow their own settings.',
         },
+        'paddock.agents.memoryNotice': {
+            type: 'boolean',
+            default: false,
+            description: 'Tell Claude Code agents when memory is low. Adds one PreToolUse hook to Claude Code settings (the default one and each Claude account Paddock manages) that, while available memory is below the limit, adds a short note to the agent\'s context after a Bash, Agent or Task tool call so it postpones heavy work. It never blocks or stops anything. Turning it off removes only that hook and quiets agents that are already running. Turning it on reaches agents started afterwards. Works for WSL, Linux and accounts that run in WSL; macOS and Windows-native Claude are not supported.',
+        },
+        'paddock.agents.memoryNoticeMinimumMb': {
+            type: 'number',
+            default: 4096,
+            minimum: 0,
+            description: 'Available memory in MB below which the memory notice is added. 0 keeps the notice quiet.',
+        },
         'paddock.interfaceFontFamily': {
             type: 'string',
             default: '',

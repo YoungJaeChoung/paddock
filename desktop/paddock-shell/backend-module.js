@@ -15,6 +15,7 @@ const { CodexUsage } = require('./codex-usage');
 const { AccountSessions } = require('./account-session');
 const { readJson, usageError } = require('./usage-files');
 const { applyStatusLine, settingsTarget } = require('./claude-usage-settings');
+const { MemoryHook, setMemoryNotice } = require('./memory-hook-settings');
 const { memoryPercent, macUsedMemory, MemoryGuard, tightestMemory, memoryAdvice } = require('./work-model');
 const usage = require('./usage-model');
 const agent = require('./agent-model');
@@ -34,6 +35,11 @@ function usageDirectory() {
 
 function claudeSettingsPath() {
     return path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'settings.json');
+}
+
+/** 앱에 들어 있는 메모리 안내 훅 스크립트 원본. 백엔드는 하나의 번들로 묶이므로 앱 폴더의 paddock-shell에서 찾는다. */
+function memoryHookSource() {
+    return path.join(process.env.THEIA_APP_PROJECT_PATH || process.cwd(), 'paddock-shell', MemoryHook.SCRIPT_NAME);
 }
 
 /**
@@ -280,6 +286,9 @@ const accountSessions = new AccountSessions({ accounts, readWslInfo, readWindows
  * `POST /paddock/usage/claude?enabled=true|false[&automatic=true][&accountId=…]` → 해당 Claude Code 설정에 Paddock 상태 줄을 넣거나 원래대로 되돌린다.
  *   automatic이면(처음 실행의 자동 켜기) 다른 Paddock 설정 폴더의 상태 줄이 살아 있을 때 바꾸지 않고 `{ state: 'unset' }`을 돌려준다.
  * Claude의 `state`는 'unset'(아직 정한 적 없음)·'on'·'off'다.
+ * `POST /paddock/memory-notice?enabled=true|false[&minimumMb=N][&accountId=…]` → 가용 메모리가 부족할 때 에이전트에게 알리는 훅을 해당 Claude Code 설정에 넣거나 뺀다.
+ *   기본 환경은 Linux 앱이면 이 컴퓨터의 설정, Windows 앱이면 WSL 안의 설정이다. accountId가 있으면 등록된 그 계정만 다룬다.
+ *   훅이 `sh`와 `/proc/meminfo`를 쓰므로 macOS·Windows 이 컴퓨터 쪽은 `{ state: 'unsupported' }`다. 응답은 `{ state: 'on'|'off'|'unsupported' }`.
  */
 class PaddockStatusRoutes {
     constructor() {
@@ -287,6 +296,8 @@ class PaddockStatusRoutes {
         this.windowsProcesses = windowsProcessList;
         // 마지막 WSL 스캔이 읽은 `{ total, available, swap, terminals, at }`. 아직 읽은 적 없으면 null.
         this.wslMemory = null;
+        // 기본 환경의 Claude 설정 파일을 읽고 고쳐 쓰는 작업(상태 줄·메모리 안내)을 한 줄로 세운다. 같은 파일을 동시에 고쳐 쓰면 한쪽 변경이 사라진다.
+        this.pendingDefaultWrites = Promise.resolve();
         this.liveCodexUsage = new CodexUsage();
         this.accountUsage = new AccountUsage({
             accounts, readWslInfo, liveCodexUsage: this.liveCodexUsage,
@@ -442,12 +453,69 @@ class PaddockStatusRoutes {
             } else {
                 const operation = Object.hasOwn(request.query, 'accountId')
                     ? this.accountUsage.setClaude(request.query.accountId, enabled === 'true', request.query.automatic === 'true')
-                    : this.setClaude(enabled === 'true', request.query.automatic === 'true');
+                    : this.queueDefaultWrite(() => this.setClaude(enabled === 'true', request.query.automatic === 'true'));
                 operation
                     .then(result => response.json(result))
                     .catch(error => response.status(error.statusCode || 500).json({ error: error instanceof Error ? error.message : String(error) }));
             }
         });
+
+        app.post('/paddock/memory-notice', (request, response) => {
+            const { enabled, minimumMb } = request.query;
+            const hasMinimum = minimumMb !== undefined;
+            if (enabled !== 'true' && enabled !== 'false') {
+                response.status(400).json({ error: 'enabled must be true or false' });
+            } else if (hasMinimum && !/^\d{1,6}$/.test(String(minimumMb))) {
+                response.status(400).json({ error: 'minimumMb must be a whole number of megabytes' });
+            } else {
+                const options = { enabled: enabled === 'true', minimumMb: hasMinimum ? Number(minimumMb) : MemoryHook.DEFAULT_MINIMUM_MB, source: memoryHookSource() };
+                const operation = Object.hasOwn(request.query, 'accountId')
+                    ? this.accountUsage.setMemoryNotice(request.query.accountId, options)
+                    : this.queueDefaultWrite(() => this.setMemoryNotice(options));
+                operation
+                    .then(result => response.json(result))
+                    .catch(error => response.status(error.statusCode || 500).json({ error: error instanceof Error ? error.message : String(error) }));
+            }
+        });
+    }
+
+    /** 기본 환경 설정 파일을 고치는 작업을 앞선 작업이 끝난 뒤에 실행한다. 앞선 작업이 실패해도 이어서 실행한다. */
+    queueDefaultWrite(
+        task,
+    ) {
+        const operation = this.pendingDefaultWrites.then(task);
+        this.pendingDefaultWrites = operation.catch(() => {});
+        return operation;
+    }
+
+    /**
+     * 기본 환경의 Claude Code 설정에 메모리 안내 훅을 켜거나 끈다.
+     * Linux 앱은 이 컴퓨터의 설정에, Windows 앱은 WSL 안의 설정에 쓴다(WSL에서 실행한 Claude는 WSL 쪽 설정만 읽고, Windows용 Claude는 `sh`가 없다).
+     * 적용한 곳이 없으면(macOS·WSL이 없는 Windows) 'unsupported'다.
+     */
+    async setMemoryNotice(
+        { enabled, minimumMb, source },
+    ) {
+        let state = 'unsupported';
+        if (process.platform === 'linux') {
+            const script = path.join(usageDirectory(), MemoryHook.SCRIPT_NAME);
+            state = setMemoryNotice({ settingsPath: settingsTarget(claudeSettingsPath()), scriptFile: script, commandScript: script, source, enabled, minimumMb });
+        }
+        const wslInfo = await readWslInfo();
+        if (wslInfo.home && wslInfo.linuxHome) {
+            const root = wslInfo.home.slice(0, wslInfo.home.length - wslInfo.linuxHome.replace(/\//g, '\\').length);
+            const toLocal = file => `${root}${file.replace(/\//g, '\\')}`;
+            const linuxScript = `${wslInfo.linuxHome}/.paddock/config/usage/${MemoryHook.SCRIPT_NAME}`;
+            // 설정 파일이 링크(예: dotfiles 저장소)면 WSL 안에서 링크를 따라가 실제 파일에 쓴다.
+            // 끄는데 켠 적이 없으면(스크립트가 없으면) 앱을 시작할 때마다 wsl.exe를 부르지 않도록 건드리지 않는다.
+            if (enabled || fs.existsSync(toLocal(linuxScript))) {
+                const wslSettings = await resolveWslLink(`${wslInfo.linuxHome}/.claude/settings.json`);
+                state = setMemoryNotice({ settingsPath: toLocal(wslSettings), scriptFile: toLocal(linuxScript), commandScript: linuxScript, source, enabled, minimumMb });
+            } else {
+                state = 'off';
+            }
+        }
+        return { state };
     }
 
     /**

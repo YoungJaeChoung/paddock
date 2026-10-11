@@ -49,6 +49,7 @@ const { FolderTabs } = require('./workspace/folder-tabs');
 const { QuickSettings } = require('./workspace/quick-settings');
 const { PathBar } = require('./workspace/path-bar');
 const { StatusBar } = require('./workspace/status-bar');
+const { MemoryNotice } = require('./workspace/memory-notice');
 
 // 터미널 현재 폴더·실행 중 프로그램·메모리처럼 이벤트가 없는 값을 다시 읽는 간격(ms).
 const REFRESH_INTERVAL = 2000;
@@ -154,6 +155,7 @@ class PaddockWorkspace {
         this.quickSettings = new QuickSettings(this);
         this.pathBar = new PathBar(this);
         this.statusBar = new StatusBar(this);
+        this.memoryNotice = new MemoryNotice(this);
     }
 
     // -- 명령·단축키 --
@@ -411,6 +413,8 @@ class PaddockWorkspace {
                 const panel = this.shell.sidebar.node.querySelector('#quick-settings');
                 if (panel.matches(':popover-open')) this.quickSettings.renderQuickSettings();
             }
+            // 메모리 안내를 켜거나 기준값을 바꾸면 기본 환경과 등록 계정의 Claude 설정을 맞춘다.
+            if (this.memoryNotice.isPreference(preferenceName)) void this.memoryNotice.syncAll();
             if (preferenceName === 'paddock.interfaceFontFamily' || preferenceName === 'paddock.sidebarIndent') {
                 this.quickSettings.applyInterfacePreferences();
                 if (preferenceName === 'paddock.sidebarIndent') this.refreshSoon();
@@ -680,6 +684,7 @@ class PaddockWorkspace {
         // 읽지 못하면 빈 선택으로 시작하고 이후 선택부터 저장한다.
         this.usagePanel.data.restoreSelection(await this.storage.getData(STORAGE.USAGE_SELECTION, {}).catch(() => ({})));
         void this.usagePanel.refresh();
+        void this.memoryNotice.syncAll();
         const liveIds = new Set(this.terminals.all.map(terminal => terminal.id));
         this.state = model.restore(saved || '', liveIds);
         const savedInner = await this.storage.getData(STORAGE.INNER_TABS, '{}');
@@ -1376,7 +1381,8 @@ class PaddockWorkspace {
                 requestAnimationFrame(() => requestAnimationFrame(() => {
                     for (const terminal of this.terminals.all) {
                         if (!terminal.isVisible || terminal.isDisposed || !terminal.term?.element) continue;
-                        terminal.term.clearTextureAtlas?.();
+                        // xterm rebuilds the atlas when DPI changes. Clearing a shared atlas here
+                        // also invalidates hidden tabs and is unnecessary for a layout resize.
                         terminal.resizeTerminal();
                         terminal.term.refresh(0, terminal.term.rows - 1);
                     }

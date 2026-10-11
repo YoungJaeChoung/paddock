@@ -102,7 +102,7 @@ class StatusBar {
                 if (report.percent !== null) {
                     const details = this.memoryDetails(report);
                     this.fillMeter(host.querySelector('[data-meter="memory"]'), report.percent, `${details.summary} Hide it in Quick settings.`);
-                    this.warnMemory(report.percent, details.warning);
+                    this.warnMemory(report.percent, details.warning, details.target);
                 }
             } catch {
                 // 요청이 실패하면 마지막 값을 그대로 둔다. 처음부터 실패면 "—"가 남는다.
@@ -120,21 +120,30 @@ class StatusBar {
     ) {
         const scope = report.source === 'wsl' ? 'WSL memory' : 'System memory';
         const heaviest = model.heaviestTerminal(report.terminals);
+        const terminal = heaviest && this.workspace.terminals.all.find(item => item.id === heaviest.id);
+        const isDetached = Boolean(heaviest) && !terminal && (report.detached || []).includes(heaviest.id);
         let owner = '';
-        if (heaviest) {
-            const terminal = this.workspace.terminals.all.find(item => item.id === heaviest.id);
-            if (terminal) owner = this.workspace.terminalDisplayName(terminal);
-            else if ((report.detached || []).includes(heaviest.id)) owner = 'leftover processes of a closed terminal';
-            else owner = 'a terminal in another window';
-        }
-        const largest = heaviest ? ` Largest WSL terminal: ${owner} (${(heaviest.bytes / 1024 ** 3).toFixed(1)} GB).` : '';
+        if (terminal) owner = this.workspace.terminalDisplayName(terminal);
+        else if (isDetached) owner = 'leftover processes of a closed terminal';
+        else if (heaviest) owner = 'a terminal in another window';
+        const gigabytes = heaviest ? (heaviest.bytes / 1024 ** 3).toFixed(1) : '';
+        const largest = heaviest ? ` Largest WSL terminal: ${owner} (${gigabytes} GB).` : '';
         const swapUsed = report.wsl?.swapUsed || 0;
         const swapping = swapUsed >= StatusBar.SWAP_NOTICE_BYTES ? ` WSL is swapping ${(swapUsed / 1024 ** 3).toFixed(1)} GB, which slows everything.` : '';
         const advice = (report.advice || []).map(code => StatusBar.MEMORY_ADVICE[code]).filter(Boolean).join(' ');
         const rest = `${largest}${swapping}${advice ? ` ${advice}` : ''}`;
+        // 알림은 상태 한 문장과 할 일 한 문장만 말한다. swap·설정 안내는 제목에만 둔다.
+        const full = `${scope} is ${report.percent}% full.`;
+        let action;
+        if (terminal) action = `${owner} uses ${gigabytes} GB. Stop its work or close it.`;
+        else if (isDetached) action = `A closed terminal left processes using ${gigabytes} GB. Stop them.`;
+        else if (heaviest) action = `A terminal in another window uses ${gigabytes} GB. Stop its work or close it there.`;
+        else action = report.source === 'wsl' ? 'Close terminals you are not using.' : 'Close apps you are not using.';
         return {
             summary: `${scope} in use: ${report.percent}%.${rest}`,
-            warning: `${scope} is ${report.percent}% full, and agents may be cut off if it runs out.${rest}`,
+            warning: `${full} ${action}`,
+            // 알림에 붙일 버튼: 가장 큰 터미널이 이 창에 있을 때만 그 터미널로 이동한다. 대신 닫거나 멈추지는 않는다.
+            target: terminal ? { id: terminal.id, label: `Go to ${owner}` } : null,
         };
     }
 
@@ -145,10 +154,15 @@ class StatusBar {
     warnMemory(
         percent,
         message,
+        target,
     ) {
         if (percent >= model.MemoryGuard.WARN_PERCENT && !this.isMemoryWarned) {
             this.isMemoryWarned = true;
-            void this.workspace.messages.warn(message);
+            const actions = target ? [target.label] : [];
+            void this.workspace.messages.warn(message, ...actions).then((chosen) => {
+                if (target && chosen === target.label) return this.workspace.activate(target.id);
+                return undefined;
+            }).catch(() => {});
         } else if (percent < model.MemoryGuard.REARM_PERCENT) {
             this.isMemoryWarned = false;
         }

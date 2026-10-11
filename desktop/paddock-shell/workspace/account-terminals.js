@@ -106,6 +106,7 @@ class AccountTerminals {
         if (!directory?.isDirectory) throw new Error('The current folder is unavailable. Open an existing folder and try the account again.');
         const prepared = await retryAccountStorage(() => this.workspace.accounts.prepare(id), this.workspace.accounts, { accountId: id });
         await this.workspace.usagePanel.data.prepareLaunch(prepared.profile);
+        await this.workspace.memoryNotice.prepareLaunch(prepared.profile);
         const uri = new URI(cwd);
         const isWindows = OS.backend.type() === OS.Type.Windows;
         let launchCwd = cwd;
@@ -167,8 +168,11 @@ class AccountTerminals {
             await this.workspace.saveInnerTabs();
         }
         // 사이드바 폴더에서 열면 지금 보는 탭과 무관한 폴더일 수 있어, 그 폴더의 새 터미널과 같은 자리에 연다.
+        // 현재 탭 바로 뒤에 끼우면 뒤에 있던 탭들이 오른쪽으로 밀리므로, 같은 칸의 마지막 탭 뒤에 붙인다.
+        const pane = !targetFolder && current && !current.isDisposed ? this.workspace.shell.getTabBarFor(current) : null;
+        const lastTab = pane?.titles[pane.titles.length - 1]?.owner;
         const widgetOptions = !targetFolder && current && !current.isDisposed
-            ? { area: 'main', mode: fileRoot ? 'split-left' : 'tab-after', ref: current }
+            ? { area: 'main', mode: fileRoot ? 'split-left' : 'tab-after', ref: fileRoot ? current : lastTab ?? current }
             : { area: 'main' };
         await this.workspace.openTerminal(terminal, { widgetOptions, mode: 'activate' });
         for (const warning of prepared.warnings || []) void this.workspace.messages.warn(warning);
@@ -256,6 +260,7 @@ class AccountTerminals {
             const prepared = await retryAccountStorage(() => this.workspace.accounts.prepareResume(id, request), this.workspace.accounts, { accountId: id });
             // 새 탭으로 여는 경로(accountLaunchOptions)와 같이, 바뀐 계정의 Claude가 시작하기 전에 상태 줄을 넣어 둔다.
             await this.workspace.usagePanel.data.prepareLaunch(prepared.profile);
+            await this.workspace.memoryNotice.prepareLaunch(prepared.profile);
             const cwd = await this.workspace.readCwd(terminal);
             const directory = cwd && await this.workspace.files.resolve(new URI(cwd)).catch(() => undefined);
             if (!directory?.isDirectory) throw new Error('The current folder is unavailable. Restore it before switching accounts.');

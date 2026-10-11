@@ -463,3 +463,42 @@ test('AU28 같은 상태 줄 명령이 이미 들어 있으면 설정 파일을 
     assert.equal(fs.existsSync(`${settingsPath}.paddock-backup`), false);
     assert.equal(fs.existsSync(path.join(directory, 'previous.json')), false);
 });
+
+const MEMORY_HOOK_SOURCE = path.join(__dirname, '..', 'memory-hook.sh');
+
+test('AU-MEM1 memory notice changes only the chosen Claude account, keeps its status line, and leaves other hooks alone', { skip: process.platform !== 'linux' }, async context => {
+    const { accounts, reader } = fixture(context);
+    const first = await accounts.create({ provider: 'claude' });
+    const second = await accounts.create({ provider: 'claude' });
+    const firstScope = await reader.resolve(first.id);
+    const secondScope = await reader.resolve(second.id);
+    const userHook = { matcher: '*', hooks: [{ type: 'command', command: 'python3 ~/.claude/hooks/mem-guard.py' }] };
+    writeRecord(firstScope.settingsPath, { theme: 'dark', hooks: { PreToolUse: [userHook] } });
+    writeRecord(secondScope.settingsPath, { theme: 'light' });
+    await reader.setClaude(first.id, true);
+    const withStatusLine = JSON.parse(fs.readFileSync(firstScope.settingsPath, 'utf8')).statusLine;
+
+    assert.deepEqual(await reader.setMemoryNotice(first.id, { enabled: true, minimumMb: 2048, source: MEMORY_HOOK_SOURCE }), { state: 'on' });
+    const script = path.join(firstScope.usageDirectory, 'memory-hook.sh');
+    const on = JSON.parse(fs.readFileSync(firstScope.settingsPath, 'utf8'));
+    assert.deepEqual(on.hooks.PreToolUse[0], userHook);
+    assert.match(on.hooks.PreToolUse[1].hooks[0].command, /^PADDOCK_MEMORY_MIN_MB=2048 sh /);
+    assert.ok(on.hooks.PreToolUse[1].hooks[0].command.includes(script));
+    assert.deepEqual(on.statusLine, withStatusLine);
+    assert.equal(fs.existsSync(script), true);
+    assert.deepEqual(JSON.parse(fs.readFileSync(secondScope.settingsPath, 'utf8')), { theme: 'light' });
+    assert.equal(fs.existsSync(secondScope.usageDirectory), false);
+
+    assert.deepEqual(await reader.setMemoryNotice(first.id, { enabled: false, minimumMb: 2048, source: MEMORY_HOOK_SOURCE }), { state: 'off' });
+    const off = JSON.parse(fs.readFileSync(firstScope.settingsPath, 'utf8'));
+    assert.deepEqual(off.hooks.PreToolUse, [userHook]);
+    assert.deepEqual(off.statusLine, withStatusLine);
+    assert.equal(fs.existsSync(path.join(firstScope.usageDirectory, 'memory-hook.off')), true);
+});
+
+test('AU-MEM2 memory notice rejects missing and Codex accounts', async context => {
+    const { accounts, reader } = fixture(context);
+    await assert.rejects(reader.setMemoryNotice('', { enabled: true, minimumMb: 4096, source: MEMORY_HOOK_SOURCE }), error => error.statusCode === 400);
+    const codex = await accounts.create({ provider: 'codex' });
+    await assert.rejects(reader.setMemoryNotice(codex.id, { enabled: true, minimumMb: 4096, source: MEMORY_HOOK_SOURCE }), error => error.statusCode === 400);
+});
