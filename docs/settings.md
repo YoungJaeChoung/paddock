@@ -11,7 +11,7 @@ Keep several Claude and Codex accounts, each signed in through its own CLI. Afte
 
 ## Stop alerts
 
-An agent you aren't watching is marked when it has printed for at least 5 seconds and then goes quiet for 3: a short sound plays and a green dot marks its repo and terminal. Open it and the dot clears. Paddock watches the terminal's output, so the dot means "stopped": read the last lines to see whether it finished or is waiting for your answer. A long build step that prints nothing also counts as a stop.
+An agent you aren't watching is marked when it has printed for at least 5 seconds and then goes quiet for 3: a short sound plays and a green dot marks its repo and terminal. Open it and the dot clears. When the agent reports its own status (Claude Code does, through the terminal's program-status signal), Paddock uses that instead: the dot marks a finished response or an agent waiting for your approval, and a long build that prints nothing does not count as a stop. For an agent that doesn't report, Paddock watches the terminal's output, so the dot means "stopped": read the last lines to see whether it finished or is waiting for your answer, and a long build step that prints nothing also counts as a stop.
 
 ![While web-app's agent keeps working, shop-api's agent stops: a green dot appears on shop-api, clicking its terminal clears the dot, and the next instruction is typed](stop-alert.gif)
 

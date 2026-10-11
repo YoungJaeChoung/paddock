@@ -115,3 +115,61 @@ test('C-agent-A3.5: 시작·입력·응답·재출력·셸 복귀를 빠짐없�
         }
     }
 });
+
+test('C-agent-A4.1: 에이전트가 OSC 7501로 보낸 본문을 해석하고 서브에이전트·알 수 없는 상태는 버린다', () => {
+    assert.deepEqual(agent.parseProgramStatus('?'), { isQuery: true });
+    assert.deepEqual(agent.parseProgramStatus('state=working:app=claude-code'), { state: 'working', kind: null });
+    assert.deepEqual(agent.parseProgramStatus('state=blocked:app=claude-code:kind=permission'), { state: 'blocked', kind: 'permission' });
+    assert.deepEqual(agent.parseProgramStatus('state=done:app=claude-code:msg=aGVsbG8='), { state: 'done', kind: null });
+    assert.equal(agent.parseProgramStatus('state=working:app=claude-code:id=sub1'), null);
+    assert.equal(agent.parseProgramStatus('state=sleeping'), null);
+    assert.equal(agent.parseProgramStatus('garbage'), null);
+});
+
+test('C-agent-A4.2: 출력 없이 오래 도는 빌드는 끝나기 전에 알리지 않고 done이 오면 한 번 알린다', () => {
+    const { MIN_BUSY_MS } = agent.ACTIVITY;
+    let a = agent.noteInput(agent.idle(), 'run the tests\r', 0);
+    a = agent.noteStatus(a, { state: 'working', kind: null }, 100);
+    a = agent.noteOutput(a, 200);
+    // 마지막 출력 뒤 25초 동안 아무 출력이 없다. 출력 멎음 판정이라면 이미 알렸을 시간이다.
+    let r = agent.settle(a, 200 + 25000, true);
+    assert.equal(r.finished, false);
+    assert.equal(agent.activityState(a, 200 + 25000, true), 'working', '조용해도 일하는 중으로 표시한다');
+    a = agent.noteStatus(r.activity, { state: 'done', kind: null }, 200 + 25000);
+    r = agent.settle(a, 200 + 25500, true);
+    assert.equal(r.finished, true);
+    assert.equal(agent.settle(r.activity, 200 + 26000, true).finished, false, '한 번만 알린다');
+    assert.ok(25000 > MIN_BUSY_MS);
+});
+
+test('C-agent-A4.3: 사용자를 기다리면 바로 알리고 짧게 끝난 응답은 알리지 않는다', () => {
+    let a = agent.noteStatus(agent.idle(), { state: 'working', kind: null }, 0);
+    let r = agent.settle(agent.noteStatus(a, { state: 'blocked', kind: 'permission' }, 1000), 1100, true);
+    assert.equal(r.finished, true, '권한을 기다리는 에이전트는 일한 시간과 무관하게 사용자가 필요하다');
+    assert.equal(agent.settle(agent.noteStatus(r.activity, { state: 'blocked', kind: 'permission' }, 1500), 1600, true).finished, false, '같은 기다림을 반복해 알리지 않는다');
+    a = agent.noteStatus(agent.idle(), { state: 'working', kind: null }, 0);
+    r = agent.settle(agent.noteStatus(a, { state: 'done', kind: null }, 2000), 2100, true);
+    assert.equal(r.finished, false, '몇 초짜리 응답은 알리지 않는다');
+});
+
+test('C-agent-A4.4: 신호는 입력으로 지워지지 않고 clear가 오면 출력 멎음 판정으로 돌아간다', () => {
+    const { QUIET_MS, MIN_BUSY_MS } = agent.ACTIVITY;
+    let a = agent.noteStatus(agent.idle(), { state: 'idle', kind: null }, 0);
+    a = agent.noteInput(a, 'go\r', 10);
+    assert.equal(a.signal.state, 'idle');
+    a = agent.noteStatus(a, { state: 'clear', kind: null }, 20);
+    assert.equal(a.signal, null);
+    for (let t = 100; t <= MIN_BUSY_MS + 1000; t += 200) a = agent.noteOutput(a, t);
+    assert.equal(agent.settle(a, MIN_BUSY_MS + 1000 + QUIET_MS, true).finished, true);
+});
+
+test('C-agent-A4.5: 신호를 보내던 에이전트가 끝나 셸로 돌아오면 일하다 끊긴 경우만 알리고 기록을 비운다', () => {
+    const { MIN_BUSY_MS } = agent.ACTIVITY;
+    let a = agent.noteStatus(agent.idle(), { state: 'working', kind: null }, 0);
+    let r = agent.settle(a, MIN_BUSY_MS + 1, false);
+    assert.equal(r.finished, true);
+    assert.equal(r.activity.signal, null);
+    a = agent.noteStatus(agent.idle(), { state: 'idle', kind: null }, 0);
+    assert.equal(agent.settle(a, 60000, false).finished, false);
+    assert.equal(agent.settle(agent.noteStatus(agent.idle(), { state: 'working', kind: null }, 0), 1000, null).finished, false, '프로그램을 모르면 판정을 미룬다');
+});

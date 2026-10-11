@@ -4,6 +4,10 @@
  * 에이전트는 일하는 동안 화면(스피너·스트리밍 출력)을 계속 고쳐 쓰고, 끝나거나 사용자 답을 기다리면 조용해진다.
  * Enter 뒤 오래 이어진 출력이 멎으면 알린다. 작업 완료나 입력 대기를 확정하지 않는다.
  * 짧게 끝난 응답(몇 초)은 알리지 않는다 — 기다리는 사이 다른 일을 하지 않았을 가능성이 크다.
+ *
+ * 에이전트가 터미널 제어 시퀀스(OSC 7501, Program Status)로 "일하는 중·사용자를 기다림·끝남"을 직접 알리면
+ * 그 신호를 우선한다. 출력이 오래 없는 빌드를 끝난 것으로 잘못 알리지 않고, 답을 기다리는 상태도 알 수 있다.
+ * 신호를 보내지 않는 에이전트는 위의 출력 멎음 판정을 그대로 쓴다.
  */
 
 const ACTIVITY = {
@@ -11,6 +15,12 @@ const ACTIVITY = {
     QUIET_MS: 3000,
     // 이만큼 넘게 일한 경우만 알린다(ms).
     MIN_BUSY_MS: 5000,
+};
+
+// 에이전트가 터미널로 직접 알리는 상태(OSC 7501 Program Status)의 규칙.
+const PROGRAM_STATUS = {
+    OSC_CODE: 7501,
+    STATES: ['working', 'blocked', 'done', 'idle', 'error', 'clear'],
 };
 
 // 에이전트로 알아보는 프로그램 이름. 실행 파일 이름이나 스크립트 경로의 한 부분과 맞춘다.
@@ -76,7 +86,7 @@ function isShell(
 
 /** 아직 일하지 않는 상태. */
 function idle() {
-    return { armedAt: null, busySince: null, lastOutput: null, agent: false };
+    return { armedAt: null, busySince: null, lastOutput: null, agent: false, signal: null };
 }
 
 /** 사용자 입력. Enter가 들어오면 그 뒤의 출력을 "일"로 센다. */
@@ -85,7 +95,8 @@ function noteInput(
     data,
     now,
 ) {
-    return data.includes('\r') ? { ...idle(), armedAt: now } : activity;
+    // 에이전트가 알려 온 상태(signal)는 입력으로 지우지 않는다. 이 터미널이 신호를 보낸다는 사실이 이어져야 한다.
+    return data.includes('\r') ? { ...idle(), armedAt: now, signal: activity.signal } : activity;
 }
 
 /**
@@ -97,6 +108,70 @@ function noteOutput(
     now,
 ) {
     return { ...activity, busySince: activity.armedAt === null ? activity.busySince : activity.busySince ?? now, lastOutput: now };
+}
+
+/**
+ * 에이전트가 OSC 7501로 보낸 본문을 해석한다. 지원 여부를 묻는 질의(`?`)이거나 상태 알림이다.
+ * 서브에이전트의 기록(`id=…`이 붙음)과 알 수 없는 상태는 터미널 전체의 상태가 아니므로 null이다.
+ *
+ * Examples:
+ *   '?'                                             → { isQuery: true }
+ *   'state=working:app=claude-code'                 → { state: 'working', kind: null }
+ *   'state=blocked:app=claude-code:kind=permission' → { state: 'blocked', kind: 'permission' }
+ *   'state=working:app=claude-code:id=sub1'         → null
+ *   'state=sleeping'                                → null
+ */
+function parseProgramStatus(
+    data,
+) {
+    let result = null;
+    if (data.startsWith('?')) {
+        result = { isQuery: true };
+    } else {
+        const fields = new Map(data.split(':').map((field) => {
+            const at = field.indexOf('=');
+            return at > 0 ? [field.slice(0, at), field.slice(at + 1)] : [field, ''];
+        }));
+        const state = fields.get('state');
+        if (PROGRAM_STATUS.STATES.includes(state) && !fields.has('id')) result = { state, kind: fields.get('kind') ?? null };
+    }
+    return result;
+}
+
+/**
+ * 에이전트가 알린 상태를 활동 기록에 넣는다. 알릴 때(`alert`)가 되면 다음 `settle`이 한 번 알린다.
+ *
+ * 알리는 경우: 사용자를 기다리게 되었을 때(blocked)·오류가 났을 때(error)는 바로, 끝났을 때(done)는 MIN_BUSY_MS 넘게
+ * 일한 뒤에만 알린다. 사용자를 기다리는 에이전트는 시간과 무관하게 사용자가 필요해서다.
+ * `clear`는 에이전트가 상태 표시를 거둔다는 뜻이라 신호 사용을 멈추고 출력 멎음 판정으로 돌아간다.
+ *
+ * Examples:
+ *   working(0) → done(6000)    → alert true
+ *   working(0) → done(2000)    → alert false
+ *   working(0) → blocked(1000) → alert true
+ *   done → blocked → blocked   → 첫 blocked에서만 alert
+ */
+function noteStatus(
+    activity,
+    status,
+    now,
+) {
+    let next = activity;
+    if (status.state === 'clear') {
+        next = { ...activity, signal: null };
+    } else {
+        const previous = activity.signal;
+        const isWorking = previous?.state === 'working';
+        const workingSince = status.state === 'working' ? (isWorking ? previous.workingSince : now) : previous?.workingSince ?? null;
+        let alert = previous?.alert ?? false;
+        if (status.state === 'blocked' || status.state === 'error') {
+            alert = alert || previous?.state !== status.state;
+        } else if (status.state === 'done') {
+            alert = alert || (isWorking && now - previous.workingSince >= ACTIVITY.MIN_BUSY_MS);
+        }
+        next = { ...activity, signal: { state: status.state, kind: status.kind, workingSince, alert } };
+    }
+    return next;
 }
 
 /**
@@ -118,7 +193,10 @@ function activityState(
         state = 'unknown';
     } else if (agentNow) {
         state = 'quiet';
-        if (activity.armedAt !== null && activity.busySince === null && now - activity.armedAt < ACTIVITY.QUIET_MS) {
+        if (activity.signal?.state === 'working') {
+            // 에이전트가 일하는 중이라고 직접 알렸다. 출력이 없어도 조용한 것이 아니다.
+            state = 'working';
+        } else if (activity.armedAt !== null && activity.busySince === null && now - activity.armedAt < ACTIVITY.QUIET_MS) {
             state = 'waiting';
         } else if (activity.lastOutput !== null && now - activity.lastOutput < ACTIVITY.QUIET_MS) {
             state = 'working';
@@ -130,6 +208,7 @@ function activityState(
 /**
  * 주기적으로 불러 긴 출력이 멎었는지 본다. `agentNow`는 지금 이 터미널의 프로그램이 에이전트인지다.
  * 일하는 동안 한 번이라도 에이전트였으면 끝났을 때 알린다(`claude -p`처럼 끝나며 셸로 돌아가는 경우 포함).
+ * 에이전트가 상태를 직접 알려 온 터미널(`signal`)은 출력 멎음을 보지 않고 그 신호가 알릴 때를 정한다.
  * 반환: `{ activity, finished }` — `finished`가 true면 알릴 때다.
  */
 function settle(
@@ -139,7 +218,18 @@ function settle(
 ) {
     let next = activity.busySince !== null && agentNow ? { ...activity, agent: true } : activity;
     let finished = false;
-    if (next.busySince !== null && now - next.lastOutput >= ACTIVITY.QUIET_MS) {
+    if (next.signal) {
+        // 에이전트가 직접 알린 상태가 있으면 출력이 멎은 것은 보지 않는다. 출력 없이 도는 빌드는 끝난 것이 아니다.
+        if (agentNow === false) {
+            // 에이전트가 끝나 셸로 돌아왔다. 알릴 것이 남았거나 일하다 끊겼다면 알리고 기록을 비운다.
+            const wasWorking = next.signal.state === 'working' && now - next.signal.workingSince >= ACTIVITY.MIN_BUSY_MS;
+            finished = next.signal.alert || wasWorking;
+            next = idle();
+        } else if (next.signal.alert) {
+            finished = true;
+            next = { ...next, signal: { ...next.signal, alert: false } };
+        }
+    } else if (next.busySince !== null && now - next.lastOutput >= ACTIVITY.QUIET_MS) {
         finished = next.agent && next.lastOutput - next.busySince >= ACTIVITY.MIN_BUSY_MS;
         next = idle();
     }
@@ -148,6 +238,9 @@ function settle(
 
 module.exports = {
     ACTIVITY,
+    PROGRAM_STATUS,
+    parseProgramStatus,
+    noteStatus,
     AGENT_NAMES,
     programName,
     isAgent,

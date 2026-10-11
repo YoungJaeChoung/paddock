@@ -67,6 +67,18 @@ class AgentActivity {
                 if (reported) this.workspace.reportedCwds.set(terminal.id, URI.fromFilePath(reported).toString());
                 return true;
             });
+            // 에이전트(Claude Code 등)가 보내는 상태 알림(OSC 7501). 일하는 중·사용자를 기다림·끝남을 직접 알려 주므로
+            // 출력이 멎었는지로 추측하는 것보다 정확하다. 지원을 묻는 질의에 답해야 에이전트가 알림을 보내기 시작한다.
+            terminal.term?.parser?.registerOscHandler(agent.PROGRAM_STATUS.OSC_CODE, (data) => {
+                const status = agent.parseProgramStatus(data);
+                if (status?.isQuery) {
+                    terminal.sendText(`\x1b]${agent.PROGRAM_STATUS.OSC_CODE};?\x1b\\`);
+                } else if (status) {
+                    this.workspace.activity.set(terminal.id, agent.noteStatus(this.workspace.activity.get(terminal.id) ?? agent.idle(), status, Date.now()));
+                    this.workspace.refreshSoon();
+                }
+                return true;
+            });
             terminal.onDidDispose?.(() => {
                 this.workspace.reportedCwds.delete(terminal.id);
                 this.workspace.activity.delete(terminal.id);
