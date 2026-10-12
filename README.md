@@ -26,7 +26,9 @@ Changed files are **marked M or U in the file tree and open beside the terminal*
 
 ### Switch Claude accounts and keep the conversation
 
-Keep several Claude and Codex accounts, each signed in through its own CLI. **Each account's 5-hour and weekly usage** shows in the status bar once an agent on it has replied, as its CLI reports it. When a Claude account runs low, **pick another account from the account button at the top right and the same tab continues the same conversation under it**, in the same folder and layout. The conversation so far is reloaded; a request Claude was still answering when you switched has to be sent again. A Codex account opens a new terminal in the same folder; `codex resume` reopens the old conversation.
+Keep several Claude and Codex accounts, each signed in through its own CLI. **Each account's 5-hour and weekly usage** shows in the status bar once an agent on it has replied, as its CLI reports it.
+
+When a Claude account runs low, **pick another account at the top right and the same tab continues the same conversation under it**; a request still being answered must be sent again. **New conversation…** starts a fresh one instead. Codex isn't supported yet: in our tests its sub-agents didn't carry over to another account, so a Codex account opens a new terminal and `codex resume` reopens the old conversation.
 
 ![Top: Claude · Personal is at 91% of its 5-hour usage and the Accounts menu offers Claude · Work to continue this conversation. Bottom: the same tab now runs under Work with the same conversation and 12% used](docs/accounts-continue.png)
 
