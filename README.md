@@ -12,27 +12,33 @@ Run agents in several repos and you only learn one has finished when you tab thr
 
 ## Why Paddock
 
-### Every agent in one list, with a sound when one stops
+### 1. Every agent in one list, with a sound when one stops
 
 When an agent you aren't watching stops, **a sound plays and a green dot marks its repo and terminal**. Run `claude` or `codex` in a Paddock terminal as usual and its repo joins the sidebar. ([How a stop is detected](docs/settings.md#stop-alerts): the output goes quiet, so a silent build counts too.)
 
 ![Paddock's sidebar: shop-api's Claude and docs-site's Codex have stopped and show green dots; web-app's Claude is still working](docs/stopped-agents.png)
 
-### Open the files they changed
+### 2. Open the files they changed
 
 Changed files are **marked M or U in the file tree and open beside the terminal**, so you check the work and type the next instruction without leaving the window.
 
 ![Changed files marked M and U in the file tree, with Cart.tsx open beside the agent's terminal](docs/files-changed.png)
 
-### See every account's usage
+### 3. See every account's usage
 
 Keep several Claude and Codex accounts, each signed in through its own CLI. **Each account's 5-hour and weekly usage** shows in the status bar once an agent on it has replied, as its CLI reports it.
 
 ![The status bar shows each Claude and Codex account's 5-hour and weekly usage](docs/accounts-usage.png)
 
-### Switch Claude accounts and keep the conversation
+### 4. Switch accounts when one runs low
 
-When a Claude account runs low, **pick another account at the top right and the same tab continues the same conversation under it**; a request still being answered must be sent again. **New conversation…** starts a fresh one instead. Codex isn't supported yet: in our tests its sub-agents didn't carry over to another account, so a Codex account opens a new terminal and `codex resume` reopens the old conversation.
+#### 4-1. Start a new conversation
+
+Pick an account from the account button at the top right and **New conversation…** opens a new tab in the same folder under it. The old tab stays as it is. This works for Claude and Codex accounts.
+
+#### 4-2. Continue the same conversation (Claude)
+
+**Pick another Claude account instead and the same tab continues the same conversation under it.** A request Claude was still answering must be sent again. Codex isn't supported yet: in our tests its sub-agents didn't carry over to another account, so for Codex use 4-1 and `codex resume` reopens the old conversation.
 
 ![Top: Claude · Personal is at 91% of its 5-hour usage and the Accounts menu offers Claude · Work to continue this conversation. Bottom: the same tab now runs under Work with the same conversation and 12% used](docs/accounts-continue.png)
 
