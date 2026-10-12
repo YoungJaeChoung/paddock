@@ -24,15 +24,17 @@ Changed files are **marked M or U in the file tree and open beside the terminal*
 
 ![Changed files marked M and U in the file tree, with Cart.tsx open beside the agent's terminal](docs/files-changed.png)
 
-### Switch Claude accounts and keep the conversation
+### See every account's usage
 
 Keep several Claude and Codex accounts, each signed in through its own CLI. **Each account's 5-hour and weekly usage** shows in the status bar once an agent on it has replied, as its CLI reports it.
+
+![The status bar shows each Claude and Codex account's 5-hour and weekly usage](docs/accounts-usage.png)
+
+### Switch Claude accounts and keep the conversation
 
 When a Claude account runs low, **pick another account at the top right and the same tab continues the same conversation under it**; a request still being answered must be sent again. **New conversation…** starts a fresh one instead. Codex isn't supported yet: in our tests its sub-agents didn't carry over to another account, so a Codex account opens a new terminal and `codex resume` reopens the old conversation.
 
 ![Top: Claude · Personal is at 91% of its 5-hour usage and the Accounts menu offers Claude · Work to continue this conversation. Bottom: the same tab now runs under Work with the same conversation and 12% used](docs/accounts-continue.png)
-
-![The status bar shows each Claude and Codex account's 5-hour and weekly usage](docs/accounts-usage.png)
 
 **Memory** in the status bar warns once it passes 90%, naming the terminal using the most, so you can stop it before WSL or Windows runs out. It only warns; nothing is stopped for you. Turn on [Memory notice](docs/settings.md#telling-agents-when-memory-is-low) and Claude Code agents are told too, so they hold off on heavy builds.
 
