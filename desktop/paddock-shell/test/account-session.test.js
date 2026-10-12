@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { AccountProfiles } = require('../account-profiles');
-const { AccountSessions, findClaudeTranscript, readClaudeSession, chooseAgentProcess } = require('../account-session');
+const { terminalShell, AccountSessions, findClaudeTranscript, readClaudeSession, chooseAgentProcess } = require('../account-session');
 
 const SESSION_ID = '00000000-0000-4000-8000-000000000011';
 
@@ -311,4 +311,15 @@ test('C-ACCOUNT-RESUME-B21 a Claude running with another configuration folder is
     assert.equal(await setup.sessions.observeSession(request), undefined);
     await assert.rejects(setup.sessions.prepareResume(setup.target.id, request), /different configuration folder/);
     assert.equal((await setup.sessions.observeSession(setup.request)).sessionId, SESSION_ID);
+});
+
+test('C-ACCOUNT-RESUME-B22 picks the earliest-started root as the WSL shell, not a detached background process that kept the terminal marker', () => {
+    const shell = { pid: 403, parentPid: 1, start: '500', argv: ['bash'] };
+    const claude = { pid: 3131, parentPid: 403, start: '631', argv: ['claude'] };
+    const xvfb = { pid: 2014346, parentPid: 1, start: '98765', argv: ['Xvfb'] };
+    const ibus = { pid: 959071, parentPid: 1, start: '70000', argv: ['ibus-daemon'] };
+    assert.equal(terminalShell([xvfb, ibus, shell, claude]), shell);
+    assert.equal(terminalShell([shell, claude]), shell);
+    assert.equal(terminalShell([]), undefined);
+    assert.equal(chooseAgentProcess([xvfb, ibus, shell, claude], terminalShell([xvfb, ibus, shell, claude]).pid, 'claude'), claude);
 });

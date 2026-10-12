@@ -345,9 +345,7 @@ class AccountSessions {
         request,
         processes,
     ) {
-        const shell = request.runtime === 'wsl'
-            ? processes.find(item => !processes.some(parent => parent.pid === item.parentPid))
-            : processes.find(item => item.pid === request.shellPid);
+        const shell = request.runtime === 'wsl' ? terminalShell(processes) : processes.find(item => item.pid === request.shellPid);
         const selected = shell && chooseAgentProcess(processes, shell.pid, request.provider);
         const descendants = new Set(shell ? [shell.pid] : []);
         for (let n_depth = 0; n_depth < SessionIdentity.N_PROCESS_DEPTH; n_depth += 1) {
@@ -527,4 +525,28 @@ class AccountSessions {
     }
 }
 
-module.exports = { AccountSessions, findClaudeTranscript, readClaudeSession, chooseAgentProcess };
+/**
+ * WSL 터미널의 셸 프로세스: 이 터미널 표식을 가진 프로세스 중 가장 먼저 시작된 뿌리.
+ *
+ * 터미널 안에서 시작돼 셸을 떠난 프로세스(백그라운드 서버·Xvfb·ibus 등)는 표식 환경 변수를 물려받은 채 init 아래로 옮겨 가
+ * "부모가 목록에 없는" 뿌리가 하나 더 된다. 그런 뿌리를 셸로 고르면 그 아래에 Claude가 없어 대화를 못 찾는다.
+ * 셸은 터미널이 생길 때 가장 먼저 시작되므로 시작 시각(부팅 뒤 jiffies)이 가장 작은 뿌리가 셸이다. 뿌리가 없으면 undefined다.
+ *
+ * | processes (pid:parent:start) | 결과 |
+ * |---|---|
+ * | 10:1:500, 20:10:600 | 10 |
+ * | 7000:1:9000(Xvfb), 10:1:500, 20:10:600 | 10 |
+ * | (없음) | undefined |
+ */
+function terminalShell(
+    processes,
+) {
+    const roots = processes.filter(item => !processes.some(parent => parent.pid === item.parentPid));
+    let shell;
+    for (const item of roots) {
+        if (!shell || Number(item.start) < Number(shell.start)) shell = item;
+    }
+    return shell;
+}
+
+module.exports = { terminalShell, AccountSessions, findClaudeTranscript, readClaudeSession, chooseAgentProcess };
