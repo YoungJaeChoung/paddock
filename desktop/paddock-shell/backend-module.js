@@ -21,6 +21,7 @@ const usage = require('./usage-model');
 const agent = require('./agent-model');
 const { WorkPresenceRegistry } = require('./work-presence');
 const wsl = require('./wsl-terminals');
+const { PaddockSessionRoutes } = require('./session-routes');
 const windowsProcesses = require('./windows-processes');
 const { attributeAccount, parseEnviron } = require('./agent-account');
 const { trustWslRepositories } = require('./git-environment');
@@ -622,6 +623,8 @@ decorate(injectable(), PaddockStatusRoutes);
 exports.default = new ContainerModule((bind) => {
     bind(PaddockStatusRoutes).toSelf().inSingletonScope();
     bind(BackendApplicationContribution).toService(PaddockStatusRoutes);
+    bind(PaddockSessionRoutes).toSelf().inSingletonScope();
+    bind(BackendApplicationContribution).toService(PaddockSessionRoutes);
     // Git 보기를 그리는 내장 git 확장은 플러그인 호스트 프로세스에서 git을 실행하므로, 그 프로세스 환경에만 WSL 저장소 신뢰를 넣는다.
     bind(PluginHostEnvironmentVariable).toConstantValue({ process: env => trustWslRepositories(env, process.platform) });
     // Expose account actions only; filesystem helpers are not remotely callable.

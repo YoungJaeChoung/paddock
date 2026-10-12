@@ -4,12 +4,15 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { app, screen } = require('electron');
+const childProcess = require('node:child_process');
+const { app, dialog, powerMonitor, screen } = require('electron');
 const { ContainerModule, injectable, decorate } = require('@theia/core/shared/inversify');
 const { ElectronMainApplication } = require('@theia/core/lib/electron-main/electron-main-application');
 const { isOSX } = require('@theia/core/lib/common/os');
 const { moveLegacyDirectory } = require('./legacy-directory');
 const { isViewportStale, fillsWorkArea, boundsWithin } = require('./window-fit');
+const BackendSession = require('./backend-session');
+const QuitPreference = require('./quit-preference');
 
 // macOS에서만 의미 있는 창 옵션. Windows에서 titleBarStyle을 넘기면 창 틀과 닫기 버튼이 사라진다.
 const MAC_ONLY_WINDOW_OPTIONS = ['titleBarStyle', 'trafficLightPosition'];
@@ -147,19 +150,173 @@ function keepMaximizedContentFitted(
     });
 }
 
+/** 터미널 수를 문장에 넣을 말로 바꾼다. 읽지 못했으면(null) 수를 말하지 않는다. */
+function terminalsPhrase(
+    n_terminals,
+) {
+    let phrase = 'Terminals';
+    if (n_terminals === 1) phrase = '1 terminal';
+    else if (n_terminals > 1) phrase = `${n_terminals} terminals`;
+    return phrase;
+}
+
+/** 포트가 열릴 때까지 기다리는 최대 횟수(100ms 간격). */
+const N_START_POLLS = 600;
+
 /** Paddock 설정을 적용한 뒤 Theia 데스크톱 앱을 시작한다. */
 class PaddockMainApplication extends ElectronMainApplication {
-    getTitleBarStyle(
-        config,
-    ) {
-        // 이전 창의 기본 native 값이 저장돼 있어도 새 제목줄을 한 번 적용한다.
-        // 창 위치·크기는 보존하고, 이후 사용자가 바꾼 제목줄 설정은 그대로 따른다.
-        if (!isOSX && !this.electronStore.get('paddock.integratedTitlebar')) {
-            const windowState = this.electronStore.get('windowstate');
-            if (windowState) this.electronStore.set('windowstate', { ...windowState, frame: false });
-            this.electronStore.set('paddock.integratedTitlebar', true);
+    /**
+     * 앱을 닫아도 터미널이 살아 있도록 백엔드를 앱과 분리해 띄우고, 다시 열면 남아 있는 백엔드에 붙는다.
+     * 기본 구현은 앱이 종료될 때 백엔드를 죽여 터미널 프로세스가 함께 끝난다.
+     *
+     * 남은 백엔드가 이 앱과 다른 버전이면 붙지 않는다. 화면과 백엔드가 주고받는 형식이 달라 동작이 깨지기 때문이다.
+     * 열려 있는 터미널이 있으면 닫고 새로 띄울지 사용자에게 묻고, 거절하면 접속 정보를 지우지 않고 앱을 닫는다.
+     */
+    async startBackend() {
+        const directory = process.env.THEIA_CONFIG_DIR;
+        const fingerprint = BackendSession.fingerprintOf(app.getVersion(), this.globals.THEIA_BACKEND_MAIN_PATH);
+        let port;
+        let isDeclined = false;
+        // 두 앱이 동시에 시작해 서로 다른 백엔드를 띄우거나 같은 백엔드를 서로 끝내지 않도록, 읽기부터 기록까지를 한 번에 한 앱만 한다.
+        const release = await BackendSession.acquireLock(directory);
+        try {
+            const state = BackendSession.readState(directory);
+            if (state) {
+                if (BackendSession.isAlive(state.pid) && await BackendSession.isListening(state.port)) {
+                    if (state.fingerprint === fingerprint) {
+                        // 남아 있는 백엔드는 자기를 띄운 앱의 토큰만 받아들이므로 같은 토큰을 이어 쓴다.
+                        this.electronSecurityToken.value = state.token;
+                        port = state.port;
+                        this.backend = { pid: state.pid, port: state.port, token: state.token };
+                        // 백엔드가 뜬 뒤 바뀐 PATH·계정 환경 변수를 새 터미널이 받도록 지금 앱의 값을 넘긴다.
+                        await BackendSession.shareEnvironment(state.port, state.token, process.env);
+                    } else {
+                        isDeclined = !(await this.replaceOutdatedBackend(state));
+                    }
+                }
+                if (port === undefined && !isDeclined) BackendSession.clearState(directory);
+            }
+            if (!isDeclined && port === undefined) port = await this.launchBackend(directory, fingerprint);
+        } finally {
+            if (release) release();
         }
-        return super.getTitleBarStyle(config);
+        if (isDeclined) {
+            // 사용자가 교체를 거절했다. 남은 터미널을 그대로 두고 앱만 닫는다. 새 백엔드를 띄우거나 접속 정보를 지우지 않는다.
+            app.exit(0);
+            await new Promise(() => {});
+        }
+        return port;
+    }
+
+    /**
+     * 백엔드를 앱의 하위 프로세스가 아니게 새로 띄우고 포트가 열릴 때까지 기다려 포트를 돌려준다.
+     * 접속 정보는 PID를 알자마자 쓴다. 이후 시작이 실패해도 다음 실행이 남은 백엔드를 찾아 정리할 수 있다.
+     */
+    async launchBackend(
+        directory,
+        fingerprint,
+    ) {
+        process.env.THEIA_ELECTRON_VERSION = process.versions.electron;
+        const port = await BackendSession.freePort();
+        const args = [...this.processArgv.getProcessArgvWithoutBin(), `--port=${port}`];
+        const options = await this.getForkOptions();
+        // `theia start`가 넣어 둔 부모 PID를 백엔드가 감시하다 부모가 사라지면 스스로 끝나므로, 분리한 백엔드에는 넘기지 않는다.
+        delete options.env.THEIA_PARENT_PID;
+        const logFd = fs.openSync(path.join(directory, 'backend.log'), 'a');
+        const child = childProcess.spawn(process.execPath, [this.globals.THEIA_BACKEND_MAIN_PATH, ...args], {
+            env: { ...options.env, ELECTRON_RUN_AS_NODE: '1' },
+            // Windows에서 detached는 새 프로세스 그룹을 만들어 터미널의 Ctrl+C를 막으므로 Unix에서만 쓴다.
+            detached: process.platform !== 'win32',
+            windowsHide: true,
+            stdio: ['ignore', logFd, logFd],
+        });
+        fs.closeSync(logFd);
+        child.unref();
+        const { pid } = child;
+        BackendSession.writeState(directory, { pid, port, token: this.electronSecurityToken.value, fingerprint });
+        this.backend = { pid, port, token: this.electronSecurityToken.value };
+        let hasExited = false;
+        child.once('exit', () => { hasExited = true; });
+        for (let n_polls = 0; !(await BackendSession.isListening(port)); n_polls += 1) {
+            if (hasExited || n_polls > N_START_POLLS) {
+                await BackendSession.stop({ pid, port, token: this.electronSecurityToken.value });
+                BackendSession.clearState(directory);
+                this.backend = undefined;
+                throw new Error(`The backend did not start. See ${path.join(directory, 'backend.log')}.`);
+            }
+            await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        return port;
+    }
+
+    /**
+     * 앱과 버전이 다른 남은 백엔드를 끝내고 끝냈으면 true를 돌려준다. 열려 있는 터미널이 있으면 사용자가 허락해야 하고,
+     * 거절하면 false다. 터미널 수를 읽지 못해도(null) 있다고 보고 묻는다.
+     */
+    async replaceOutdatedBackend(
+        state,
+    ) {
+        const n_terminals = await BackendSession.countTerminals(state.port, state.token);
+        let isAllowed = n_terminals === 0;
+        if (!isAllowed) {
+            await app.whenReady();
+            const { response } = await dialog.showMessageBox({
+                type: 'question',
+                buttons: ['Close terminals and update', 'Quit'],
+                defaultId: 1,
+                cancelId: 1,
+                title: 'Paddock was updated',
+                message: 'Paddock needs to restart its background session to use the new version.',
+                detail: `${terminalsPhrase(n_terminals)} still running from the previous version will be closed. Choose Quit to keep them and update later.`,
+            });
+            isAllowed = response === 0;
+        }
+        if (isAllowed) await BackendSession.stop(state);
+        return isAllowed;
+    }
+
+    /**
+     * 창이 모두 닫힌 뒤 남은 터미널을 어떻게 할지 정하고 백엔드를 그에 맞게 처리한다.
+     * 열린 터미널이 없으면 백엔드를 남길 이유가 없어 설정과 무관하게 끝낸다. 있으면 앱 화면의 "모두 끝내고 종료" 요청,
+     * 설정(paddock.backend.onQuit) 순으로 따르고, 설정이 ask면 묻는다. 묻는 창에서 "다시 묻지 않기"를 고르면 그 선택을 설정에 적는다.
+     * 이 앱이 백엔드를 띄웠거나 붙어 있는 경우에만 동작하며, 그 포트가 아직 열려 있을 때만 끝낸다(PID 재사용 방지).
+     */
+    async settleBackendOnQuit() {
+        const directory = process.env.THEIA_CONFIG_DIR;
+        const backend = this.backend;
+        if (backend && BackendSession.isAlive(backend.pid) && await BackendSession.isListening(backend.port)) {
+            const n_terminals = await BackendSession.countTerminals(backend.port, backend.token);
+            const settingsPath = path.join(directory, 'settings.json');
+            const isStopRequested = BackendSession.takeStopOnce(directory, Date.now());
+            let settings = '';
+            try { settings = fs.readFileSync(settingsPath, 'utf8'); } catch { /* 설정 파일이 아직 없다. */ }
+            let onQuit = QuitPreference.readOnQuit(settings);
+            let isStopped = n_terminals === 0 || isStopRequested || onQuit === QuitPreference.ON_QUIT.STOP;
+            // OS가 종료·로그아웃 중이면 사용자가 답할 수 없다. 묻지 않고 유지로 본다(어차피 OS가 프로세스를 정리한다).
+            if (!isStopped && onQuit === QuitPreference.ON_QUIT.ASK && !this.isSystemShutdown) {
+                const { response, checkboxChecked } = await dialog.showMessageBox({
+                    type: 'question',
+                    buttons: ['Keep running in background', 'Stop all and quit'],
+                    defaultId: 0,
+                    cancelId: 0,
+                    title: 'Quit Paddock',
+                    message: `${terminalsPhrase(n_terminals)} still running.`,
+                    detail: 'Keep them running to pick up where you left off the next time you open Paddock. You can change this later in Settings under "Backend: On Quit" (paddock.backend.onQuit).',
+                    checkboxLabel: "Don't ask again",
+                });
+                isStopped = response === 1;
+                if (checkboxChecked) {
+                    onQuit = isStopped ? QuitPreference.ON_QUIT.STOP : QuitPreference.ON_QUIT.KEEP;
+                    const updated = QuitPreference.withOnQuit(settings, onQuit);
+                    // 설정 파일이 읽히지 않는 형식이면 쓰지 않는다. 다음 종료에서 다시 묻는다.
+                    if (updated !== null) fs.writeFileSync(settingsPath, updated);
+                }
+            }
+            if (isStopped) {
+                await BackendSession.stop(backend);
+                BackendSession.clearState(directory);
+            }
+        }
     }
 
     async start(
@@ -167,6 +324,27 @@ class PaddockMainApplication extends ElectronMainApplication {
     ) {
         usePaddockDirectories();
         if (process.platform === 'win32') app.on('browser-window-created', (event, window) => keepMaximizedContentFitted(window));
+        // 창이 모두 닫혀 종료가 확정된 시점(will-quit)에 백엔드를 어떻게 할지 정한다. 저장하지 않은 편집기 때문에 창 닫기가
+        // 거부되면 이 이벤트가 오지 않으므로 백엔드는 그대로다. 결정이 끝나기 전의 종료 요청은 계속 막는다.
+        app.whenReady().then(() => {
+            // Linux·macOS는 powerMonitor가, Windows는 창의 session-end가 OS 종료를 알린다.
+            powerMonitor.on('shutdown', () => { this.isSystemShutdown = true; });
+        });
+        app.on('browser-window-created', (event, window) => window.on('session-end', () => { this.isSystemShutdown = true; }));
+        let settling;
+        app.on('will-quit', (event) => {
+            if (this.backend) {
+                event.preventDefault();
+                if (!settling) {
+                    settling = this.settleBackendOnQuit()
+                        .catch((error) => console.error('Could not settle the backend on quit:', error))
+                        .finally(() => {
+                            this.backend = undefined;
+                            app.quit();
+                        });
+                }
+            }
+        });
         await super.start(config);
     }
 

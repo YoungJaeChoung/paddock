@@ -10,6 +10,7 @@ const { PaddockShell } = require('./shell');
 const { PaddockAboutDialog } = require('./about-dialog');
 const { PaddockWorkspace } = require('./workspace');
 const { PaddockExtensionOpen } = require('./extension-open');
+const { PaddockBackendStop } = require('./backend-stop');
 const { PaddockPdfOpener } = require('./pdf-viewer');
 const { PaddockBinaryNoticeOpener } = require('./binary-notice');
 const { OpenHandler } = require('@theia/core/lib/browser/opener-service');
@@ -28,6 +29,17 @@ const PaddockPreferenceSchema = {
             type: 'boolean',
             default: true,
             description: 'Play a sound when an AI agent (Claude, Codex, …) finishes in a terminal you are not looking at.',
+        },
+        'paddock.backend.onQuit': {
+            type: 'string',
+            enum: ['ask', 'keep', 'stop'],
+            enumDescriptions: [
+                'Ask each time you quit while terminals are running.',
+                'Keep terminals and their programs running in the background. Opening Paddock again picks them up.',
+                'Close every terminal and its programs when you quit.',
+            ],
+            default: 'ask',
+            description: 'What to do with running terminals when you quit Paddock. With no terminals open nothing is kept. To stop background terminals once, run "Paddock: Quit and Stop All Terminals" from the command palette.',
         },
         'paddock.agents.permissions': {
             type: 'string',
@@ -99,6 +111,7 @@ exports.default = new ContainerModule((bind, unbind, isBound, rebind, unbindAsyn
     bind(KeybindingContribution).toService(PaddockWorkspace);
     // 확장이 알림 버튼에서 부르는 VS Code의 `extension.open`(확장 페이지 열기·업데이트)을 제공한다.
     bind(CommandContribution).toDynamicValue(({ container }) => new PaddockExtensionOpen(container)).inSingletonScope();
+    bind(CommandContribution).toDynamicValue(({ container }) => new PaddockBackendStop(container)).inSingletonScope();
     bind(OpenHandler).toDynamicValue(({ container }) => new PaddockPdfOpener(container)).inSingletonScope();
     bind(OpenHandler).toDynamicValue(({ container }) => new PaddockBinaryNoticeOpener(container)).inSingletonScope();
     bind(PreferenceContribution).toConstantValue({ schema: PaddockPreferenceSchema });
