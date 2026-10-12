@@ -36,6 +36,8 @@ Keep several Claude and Codex accounts, each signed in through its own CLI. **Ea
 
 Pick an account from the account button at the top right and **New conversation…** opens a new tab in the same folder under it. The old tab stays as it is. This works for Claude and Codex accounts.
 
+![Top: Claude · Personal is at 91% of its 5-hour usage and New conversation… lists the accounts to open a new terminal with. Bottom: a new Claude · Work tab with a fresh conversation next to the Personal tab](docs/accounts-new.png)
+
 #### 4-2. Continue the same conversation (Claude)
 
 **Pick another Claude account instead and the same tab continues the same conversation under it.** A request Claude was still answering must be sent again. Codex isn't supported yet: in our tests its sub-agents didn't carry over to another account, so for Codex use 4-1 and `codex resume` reopens the old conversation.
