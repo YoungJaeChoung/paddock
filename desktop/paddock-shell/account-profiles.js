@@ -16,6 +16,10 @@ class AccountProfile {
     static ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
     static METADATA_FILE = 'account-profiles.json';
     static N_LABEL_CHARACTERS = 64;
+    // Folders the CLI loads by name from its config folder; each one is linked whole so entries added later appear without re-linking.
+    static SHARED_FOLDERS = Object.freeze({ claude: ['commands', 'agents'], codex: ['prompts'] });
+    // Instruction files the CLI loads by name; Claude Code already finds its CLAUDE.md without a link, so only Codex lists one.
+    static SHARED_FILES = Object.freeze({ claude: [], codex: ['AGENTS.md'] });
 }
 
 function checkedLabel(
@@ -65,6 +69,55 @@ function privateDirectory(
     if (existing && process.platform !== 'win32' && (existing.mode & 0o700) !== 0o700) throw new Error('Account folder access is restricted. Allow access before opening this account.');
     if (!existing) fs.mkdirSync(directory, { mode: 0o700 });
     if (process.platform !== 'win32') fs.chmodSync(directory, 0o700);
+}
+
+/**
+ * Links one host folder (for example commands) or file (for example AGENTS.md) into an account's config folder.
+ *
+ * The CLI looks these entries up by name inside its config folder, so an account that lacks the link loses them.
+ * Nothing is linked when the host has no such entry; an existing account entry that is not this link is kept and reported.
+ * `kind` is 'folder' or 'file'. Returns a warning text when an account entry was kept or a file link was refused, otherwise null.
+ */
+function linkSharedEntry(
+    source,
+    target,
+    name,
+    kind,
+) {
+    let isFolder = false;
+    try {
+        const info = fs.statSync(source);
+        isFolder = kind === 'folder' ? info.isDirectory() : info.isFile();
+    } catch (error) {
+        if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw error;
+    }
+    let warning = null;
+    if (isFolder) {
+        let existing = null;
+        try {
+            existing = fs.lstatSync(target);
+        } catch (error) {
+            if (error.code !== 'ENOENT') throw error;
+        }
+        let sameSource = false;
+        if (existing?.isSymbolicLink()) {
+            try {
+                sameSource = fs.realpathSync(target) === fs.realpathSync(source);
+            } catch (error) {
+                if (error.code !== 'ENOENT') throw error;
+            }
+        }
+        if (!existing) {
+            try {
+                fs.symlinkSync(source, target, kind === 'file' ? 'file' : process.platform === 'win32' ? 'junction' : 'dir');
+            } catch (error) {
+                // Windows allows file links only with developer mode or elevation.
+                if (kind !== 'file' || error.code !== 'EPERM') throw error;
+                warning = `The ${name} file could not be linked. Enable Windows developer mode to share it.`;
+            }
+        } else if (!sameSource) warning = `An existing ${name} ${kind} was kept.`;
+    }
+    return warning;
 }
 
 /** Keeps the fixed browser opener beside its account without following a replaced helper into another file. */
@@ -438,6 +491,13 @@ class AccountProfiles {
                     if (!existing) fs.symlinkSync(source, target, process.platform === 'win32' ? 'junction' : 'dir');
                     else if (!sameSource) warnings.push(`An existing skill named ${entry.name} was kept.`);
                 }
+            }
+        }
+        const hostDirectory = profile.provider === 'claude' ? this.claudeDirectory : this.codexDirectory;
+        for (const [names, kind] of [[AccountProfile.SHARED_FOLDERS[profile.provider], 'folder'], [AccountProfile.SHARED_FILES[profile.provider], 'file']]) {
+            for (const name of names) {
+                const warning = linkSharedEntry(path.join(hostDirectory, name), path.join(configDir, name), name, kind);
+                if (warning) warnings.push(warning);
             }
         }
         const browserDirectory = process.platform === 'linux' && process.env.WSL_DISTRO_NAME ? installBrowserBridge(configDir) : null;

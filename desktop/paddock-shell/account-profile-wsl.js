@@ -143,7 +143,29 @@ if [ -d "$source_dir" ]; then
             fi
         fi
     done
-fi`;
+fi
+# Folders and instruction files the CLI loads by name from its config folder are linked whole; a missing host entry is skipped.
+case "$provider" in
+    claude) shared_names="commands agents" ;;
+    codex) shared_names="prompts AGENTS.md" ;;
+esac
+shared_root=\${source_dir%/skills}
+for shared_name in $shared_names; do
+    shared_source="$shared_root/$shared_name"
+    shared_target="$config_dir/$shared_name"
+    shared_kind=""
+    if [ -d "$shared_source" ] && [ "$shared_name" != AGENTS.md ]; then shared_kind=folder; fi
+    if [ -f "$shared_source" ] && [ "$shared_name" = AGENTS.md ]; then shared_kind=file; fi
+    if [ -n "$shared_kind" ]; then
+        if [ -e "$shared_target" ] || [ -L "$shared_target" ]; then
+            if [ ! -L "$shared_target" ] || [ "$(readlink "$shared_target")" != "$shared_source" ]; then
+                printf 'An existing %s %s was kept.\\0' "$shared_name" "$shared_kind"
+            fi
+        else
+            ln -s "$shared_source" "$shared_target"
+        fi
+    fi
+done`;
 }
 
 /** Runs only fixed scripts; account labels and frontend paths never become shell text. */

@@ -2,7 +2,7 @@
 
 **Every repo's Claude Code and Codex agents in one window, with a sound the moment one stops.**
 
-Run agents in several repos and you only learn one has finished when you tab through terminals to find it, and it sat idle until then. Paddock is a terminal app that lists every repo's agents in one window and tells you.
+Run agents in several repos and you only learn one has finished when you tab through terminals to find it, and it sat idle until then. Paddock is a terminal app that lists every repo's agents in one window and tells you. When a Claude account runs low, switch accounts in the same tab and the conversation continues.
 
 **[Download for macOS or Windows](#install)** · Free app, MIT license
 
@@ -24,11 +24,11 @@ Changed files are **marked M or U in the file tree and open beside the terminal*
 
 ![Changed files marked M and U in the file tree, with Cart.tsx open beside the agent's terminal](docs/files-changed.png)
 
-### Several accounts in one place
+### Switch Claude accounts and keep the conversation
 
-Keep several Claude and Codex accounts, each signed in through its own CLI. **Each account's 5-hour and weekly usage** shows in the status bar once an agent on it has replied, as its CLI reports it; when one runs low, **pick another account in the Accounts menu** and its agent starts in the same folder.
+Keep several Claude and Codex accounts, each signed in through its own CLI. **Each account's 5-hour and weekly usage** shows in the status bar once an agent on it has replied, as its CLI reports it. When a Claude account runs low, **pick another account in the Accounts menu and the same tab continues the same conversation under it**, in the same folder and layout. Claude restarts under the new account and reloads the saved conversation, so work it was in the middle of doesn't carry over. A Codex account opens a new terminal in the same folder; `codex resume` reopens the old conversation.
 
-![The Accounts menu lists two Claude accounts and a Codex account; picking one starts its agent in the same folder](docs/accounts-switch.png)
+![The Accounts menu lists two Claude accounts and a Codex account](docs/accounts-switch.png)
 
 ![The status bar shows each Claude and Codex account's 5-hour and weekly usage](docs/accounts-usage.png)
 

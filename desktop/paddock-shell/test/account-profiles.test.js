@@ -228,6 +228,54 @@ test('A15 keeps a broken conflicting skill link and reports that it was not shar
     assert.equal(fs.existsSync(missingDirectory), false);
 });
 
+test('A20 links host command and agent folders, skips missing ones, and keeps the links after the account folder is rebuilt', async context => {
+    const setup = fixture(context);
+    const commands = path.join(setup.claudeDirectory, 'commands');
+    fs.mkdirSync(commands, { recursive: true });
+    fs.writeFileSync(path.join(commands, 'ask.md'), 'Ask questions.\n');
+    const prompts = path.join(setup.codexDirectory, 'prompts');
+    fs.mkdirSync(prompts, { recursive: true });
+    const claude = await setup.accounts.create({ provider: 'claude' });
+    const codex = await setup.accounts.create({ provider: 'codex' });
+    const first = await setup.accounts.prepare(claude.id);
+    assert.equal(fs.realpathSync(path.join(first.configDir, 'commands')), fs.realpathSync(commands));
+    assert.equal(fs.readFileSync(path.join(first.configDir, 'commands', 'ask.md'), 'utf8'), 'Ask questions.\n');
+    assert.equal(fs.existsSync(path.join(first.configDir, 'agents')), false);
+    assert.equal(fs.existsSync(path.join(first.configDir, 'prompts')), false);
+    assert.deepEqual(first.warnings, []);
+    const preparedCodex = await setup.accounts.prepare(codex.id);
+    assert.equal(fs.realpathSync(path.join(preparedCodex.configDir, 'prompts')), fs.realpathSync(prompts));
+    assert.equal(fs.existsSync(path.join(preparedCodex.configDir, 'commands')), false);
+    assert.equal(fs.existsSync(path.join(preparedCodex.configDir, 'AGENTS.md')), false);
+    fs.writeFileSync(path.join(setup.codexDirectory, 'AGENTS.md'), 'Codex rules.\n');
+    const linkedCodex = await setup.accounts.prepare(codex.id);
+    assert.equal(fs.readFileSync(path.join(linkedCodex.configDir, 'AGENTS.md'), 'utf8'), 'Codex rules.\n');
+    assert.deepEqual(linkedCodex.warnings, []);
+    // A folder that appears on the host later is linked on the next launch.
+    fs.mkdirSync(path.join(setup.claudeDirectory, 'agents'));
+    const second = await setup.accounts.prepare(claude.id);
+    assert.equal(fs.lstatSync(path.join(second.configDir, 'agents')).isSymbolicLink(), true);
+    assert.deepEqual(second.warnings, []);
+    // Rebuilding the account folder restores the same links.
+    fs.rmSync(first.configDir, { recursive: true, force: true });
+    const rebuilt = await setup.accounts.prepare(claude.id);
+    assert.equal(fs.realpathSync(path.join(rebuilt.configDir, 'commands')), fs.realpathSync(commands));
+    assert.equal(fs.readFileSync(path.join(commands, 'ask.md'), 'utf8'), 'Ask questions.\n');
+});
+
+test('A21 keeps an account-owned commands folder and reports it', async context => {
+    const setup = fixture(context);
+    fs.mkdirSync(path.join(setup.claudeDirectory, 'commands'), { recursive: true });
+    const profile = await setup.accounts.create({ provider: 'claude' });
+    const initial = await setup.accounts.prepare(profile.id);
+    fs.unlinkSync(path.join(initial.configDir, 'commands'));
+    fs.mkdirSync(path.join(initial.configDir, 'commands'));
+    fs.writeFileSync(path.join(initial.configDir, 'commands', 'own.md'), 'own');
+    const prepared = await setup.accounts.prepare(profile.id);
+    assert.deepEqual(prepared.warnings, ['An existing commands folder was kept.']);
+    assert.deepEqual(fs.readdirSync(path.join(prepared.configDir, 'commands')), ['own.md']);
+});
+
 test('A13 WSL preparation script passes POSIX shell syntax checking without touching account folders', { skip: process.platform === 'win32' }, () => {
     const result = spawnSync('sh', ['-n', '-c', WslScripts.PREPARE], { encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
