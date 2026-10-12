@@ -480,7 +480,9 @@ class WorkSidebar {
         const items = [
             ['edit', 'Rename terminal', () => this.workspace.renameTerminal(id), false],
             ['split-horizontal', 'Show to the Side', () => this.workspace.folderTabs.showBeside(id), false],
-            ['link-external', 'Move to New Window', () => this.workspace.folderTabs.moveTabToWindow(id), false],
+            this.workspace.shell.getWidgetById(id)?.secondaryWindow
+                ? ['link-external', 'Move Back to Main Window', () => this.workspace.folderTabs.moveTabToMain(id), false]
+                : ['link-external', 'Move to New Window', () => this.workspace.folderTabs.moveTabToWindow(id), false],
             ['close', 'Close terminal', () => this.workspace.closeWidget(this.workspace.shell.getWidgetById(id)), true],
         ];
         for (const [icon, label, action, danger] of items) {

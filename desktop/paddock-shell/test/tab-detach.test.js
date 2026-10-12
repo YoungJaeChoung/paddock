@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { attachTabDrag } = require('../tab-detach');
+const { attachTabDrag, attachDetachedTabDrag, mainWindowPoint } = require('../tab-detach');
 
 function fixture(
     dock = {},
@@ -192,13 +192,73 @@ test('TD10 restored widgets leave the secondary window list so the empty window 
     assert.equal(forgetRestoredWidgets(undefined), 0);
 });
 
-test('TD11 a tab that cannot dock (detached to another window) never promises an edge split', () => {
-    const detached = fixture({ drop() {}, canDock: id => id !== 'terminal-a' });
+test('TD11 a tab already in another window promises a move back instead of a new window', () => {
+    const detached = fixture({ drop() {}, hint: id => (id === 'terminal-a' ? 'Drop on a pane to move it back to this window' : undefined) });
     detached.emit('pointerdown');
     detached.emit('pointermove', { clientY: 80 });
-    assert.equal([...detached.previews][0].textContent, 'terminal A · Drag outside to open in a new window');
-    const docked = fixture({ drop() {}, canDock: () => true });
+    assert.equal([...detached.previews][0].textContent, 'terminal A · Drop on a pane to move it back to this window');
+    const docked = fixture({ drop() {}, hint: () => undefined });
     docked.emit('pointerdown');
     docked.emit('pointermove', { clientY: 80 });
     assert.equal([...docked.previews][0].textContent, 'terminal A · Drag to an edge to split, or outside for a new window');
+});
+
+const mainWindow = { screenX: 100, screenY: 50, innerWidth: 800, innerHeight: 600, outerHeight: 600 };
+
+test('TD12 secondary-window screen points map into the main window body or null', () => {
+    assert.deepEqual(mainWindowPoint({ screenX: 150, screenY: 90 }, mainWindow), { x: 50, y: 40 });
+    assert.equal(mainWindowPoint({ screenX: 50, screenY: 90 }, mainWindow), null);
+    assert.equal(mainWindowPoint({ screenX: 150, screenY: 700 }, mainWindow), null);
+    // 메인 창 위쪽 장식(높이 30) 안의 점은 본문 밖이다.
+    const framed = { ...mainWindow, outerHeight: 630 };
+    assert.equal(mainWindowPoint({ screenX: 150, screenY: 70 }, framed), null);
+    assert.deepEqual(mainWindowPoint({ screenX: 150, screenY: 100 }, framed), { x: 50, y: 20 });
+});
+
+function detachedFixture() {
+    const listeners = new Map();
+    const secondary = { innerWidth: 500, innerHeight: 400, addEventListener: (type, fn) => listeners.set(type, fn) };
+    const calls = [];
+    const tab = { id: 'file-a' };
+    attachDetachedTabDrag(secondary, mainWindow, target => target.id, {
+        preview: (id, x, y) => calls.push(['preview', id, x, y]),
+        cancel: () => calls.push(['cancel']),
+        drop: (id, x, y) => calls.push(['drop', id, x, y]),
+    });
+    const emit = (type, extra = {}) => listeners.get(type)({
+        button: 0, pointerId: 1, clientX: 10, clientY: 10, screenX: 0, screenY: 0, key: '',
+        target: { closest: () => null, ...tab }, ...extra,
+    });
+    return { emit, calls, tab };
+}
+
+test('TD13 dropping a secondary-window tab on the main window docks it at the main-window point', () => {
+    const f = detachedFixture();
+    f.emit('pointerdown');
+    f.emit('pointermove', { clientX: 600, clientY: 200, screenX: 150, screenY: 90 });
+    f.emit('pointerup', { clientX: 600, clientY: 200, screenX: 150, screenY: 90 });
+    assert.deepEqual(f.calls, [['preview', 'file-a', 50, 40], ['cancel'], ['drop', 'file-a', 50, 40]]);
+});
+
+test('TD14 releases inside the secondary window, outside both windows, or after Escape never dock', () => {
+    const inside = detachedFixture();
+    inside.emit('pointerdown');
+    inside.emit('pointerup', { clientX: 300, clientY: 300, screenX: 150, screenY: 90 });
+    assert.equal(inside.calls.some(call => call[0] === 'drop'), false);
+
+    const away = detachedFixture();
+    away.emit('pointerdown');
+    away.emit('pointerup', { clientX: 600, clientY: 200, screenX: 5000, screenY: 5000 });
+    assert.equal(away.calls.some(call => call[0] === 'drop'), false);
+
+    const escaped = detachedFixture();
+    escaped.emit('pointerdown');
+    escaped.emit('keydown', { key: 'Escape' });
+    escaped.emit('pointerup', { clientX: 600, clientY: 200, screenX: 150, screenY: 90 });
+    assert.equal(escaped.calls.some(call => call[0] === 'drop'), false);
+
+    const click = detachedFixture();
+    click.emit('pointerdown', { clientX: 495, clientY: 10 });
+    click.emit('pointerup', { clientX: 497, clientY: 10, screenX: 150, screenY: 90 });
+    assert.equal(click.calls.some(call => call[0] === 'drop'), false);
 });

@@ -548,13 +548,19 @@ class PaddockWorkspace {
                 else open();
             }
         }, true);
+        // 분리 창의 탭을 끌어 이 창에 놓으면 탭 줄 끌기와 같은 칸·탭 줄 대상으로 되돌린다.
+        Object.assign(this.shell.secondaryWindowHandler.secondaryWindowService.tabDock, {
+            preview: (id, x, y) => this.folderTabs.previewTabDock(id, x, y),
+            cancel: () => this.tabDockPreview?.remove(),
+            drop: (id, x, y) => this.run(() => this.folderTabs.dockTab(id, x, y)),
+        });
         for (const strip of [this.shell.folderBar.node.querySelector('.folder-tabs')]) {
             attachTabDrag(strip, id => this.run(() => this.folderTabs.moveTabToWindow(id)), {
                 preview: (id, x, y) => this.folderTabs.previewTabDock(id, x, y),
                 cancel: () => this.tabDockPreview?.remove(),
                 drop: (id, x, y) => this.run(() => this.folderTabs.dockTab(id, x, y)),
-                // 다른 창에 분리된 탭은 칸 대상이 없다(tabDockTarget). 끌 때 나누기 안내를 보이지 않는다.
-                canDock: id => !this.shell.getWidgetById(id)?.secondaryWindow,
+                // 다른 창에 분리된 탭을 끌 때는 새 창이 아니라 이 창으로 되돌리는 안내를 보인다.
+                hint: id => (this.shell.getWidgetById(id)?.secondaryWindow ? 'Drop on a pane or the tab row to move it back to this window' : undefined),
             });
             for (const scroller of strip.parentElement.querySelectorAll(':scope > .tabs-scroll')) {
                 scroller.addEventListener('click', () => {

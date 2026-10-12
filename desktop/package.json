@@ -18,6 +18,8 @@
           "editor.fontFamily": "Consolas, Menlo, 'Droid Sans Mono', 'DejaVu Sans Mono', 'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans Mono CJK KR', monospace",
           "editor.enablePreview": false,
           "editor.wordWrap": "on",
+          "files.autoSave": "afterDelay",
+          "files.autoSaveDelay": 1000,
           "workbench.tree.indent": 20,
           "files.exclude": {
             "**/.git": true,

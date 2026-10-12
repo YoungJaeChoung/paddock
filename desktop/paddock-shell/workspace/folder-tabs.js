@@ -44,15 +44,12 @@ class FolderTabs {
 
     /**
      * Dragging the common tab strip uses the same docking modes as the native pane tabs.
-     * 다른 창에 분리된 탭은 대상이 없다. 메인 칸에 직접 붙이면 보조 창의 복원 절차를 건너뛰어
-     * 위젯이 보조 창 소속으로 남으므로, 되돌리기는 보조 창을 닫는 정식 경로에만 맡긴다.
+     * 다른 창에 분리된 탭도 같은 대상을 가진다. 놓으면 메인 칸으로 되돌아온다(dockTab → moveTabToMain).
      */
     tabDockTarget(id, x, y) {
-        const isDetached = Boolean(this.workspace.shell.getWidgetById(id)?.secondaryWindow);
         // 탭 줄 위면 가리킨 탭 앞뒤에 끼워 넣는다. 아니면 칸 본문의 가장자리(나누기)·가운데(그 칸으로 옮기기)다.
-        let dock = isDetached ? null : this.tabRowTarget(id, x, y);
-        const bars = isDetached || dock ? [] : this.workspace.shell.mainPanel.tabBars();
-        for (const bar of bars) {
+        let dock = this.tabRowTarget(id, x, y);
+        for (const bar of dock ? [] : this.workspace.shell.mainPanel.tabBars()) {
             const current = bar.currentTitle?.owner;
             if (!dock && current?.isVisible) {
                 const target = tabDropTarget(current.node.getBoundingClientRect(), x, y);
@@ -104,7 +101,10 @@ class FolderTabs {
     async dockTab(id, x, y) {
         const target = this.tabDockTarget(id, x, y);
         const widget = this.workspace.shell.getWidgetById(id);
-        if (target && widget) {
+        if (widget?.secondaryWindow) {
+            // 분리 창의 탭은 놓은 자리가 칸이 아니어도(빈 곳·같은 칸 가운데) 창 안에 놓았다면 메인으로 되돌린다.
+            await this.moveTabToMain(id, target ? { mode: target.mode, ref: target.ref } : {});
+        } else if (target && widget) {
             // 같은 칸 안 순서 바꾸기는 최종 번호를 직접 정해 옮긴다. Lumino에 맡기면 오른쪽으로 옮길 때 한 칸 더 뒤에 앉는다(tabMoveIndex).
             const bar = this.workspace.shell.getTabBarFor(target.ref);
             const index = target.isInsert && bar ? tabMoveIndex(bar.titles.map(title => title.owner.id), id, target.mode, target.ref.id) : null;
@@ -404,7 +404,10 @@ class FolderTabs {
         const current = this.workspace.currentWidget();
         const ref = widget && (current && current !== widget && current.isVisible ? current
             : [...this.workspace.shell.mainPanel.tabBars()].map(bar => bar.currentTitle?.owner).find(owner => owner && owner !== widget && owner.isVisible));
-        if (widget && ref) {
+        if (widget?.secondaryWindow && ref) {
+            // 분리 창의 터미널은 메인 칸에 직접 붙이지 않고 되돌리기 경로로 옮겨 보조 창 소속을 푼다.
+            await this.moveTabToMain(id, { mode: 'split-right', ref });
+        } else if (widget && ref) {
             this.workspace.shell.addWidget(widget, { area: 'main', mode: 'split-right', ref });
             await this.workspace.activate(id);
             await this.workspace.refresh();
@@ -432,14 +435,36 @@ class FolderTabs {
         }
     }
 
+    /**
+     * 다른 창에 분리된 탭을 이 창의 칸으로 되돌린다. 프로세스·출력·저장 안 한 편집은 그대로이고, 그 창은 비면 닫힌다.
+     *
+     * @param id 되돌릴 탭의 위젯 id.
+     * @param options 되돌릴 칸 위치 `{ mode, ref }`. 비우면 Theia 기본 위치.
+     */
+    async moveTabToMain(
+        id,
+        options = {},
+    ) {
+        const shell = this.workspace.shell;
+        const widget = shell.getWidgetById(id);
+        if (!widget || widget.isDisposed) throw new Error('This tab has already closed.');
+        // 되돌린 뒤 선택하면서 그 탭이 속한 묶음의 배치가 본문에 되살아난다(activate → showRootOf).
+        if (widget.secondaryWindow) {
+            await shell.secondaryWindowHandler.secondaryWindowService.restoreWidget(widget, shell, options);
+            await this.workspace.activate(id);
+            await this.workspace.refresh();
+        }
+    }
+
     openTabWindowMenu(
         id,
         point,
     ) {
         const menu = createPopupMenu();
-        menu.append(menuItem({ icon: 'link-external', label: 'Move to New Window' }, () => {
+        const isDetached = Boolean(this.workspace.shell.getWidgetById(id)?.secondaryWindow);
+        menu.append(menuItem({ icon: 'link-external', label: isDetached ? 'Move Back to Main Window' : 'Move to New Window' }, () => {
             menu.hidePopover();
-            this.workspace.run(() => this.moveTabToWindow(id));
+            this.workspace.run(() => (isDetached ? this.moveTabToMain(id) : this.moveTabToWindow(id)));
         }));
         showPopupMenuAt(menu, point.x, point.y);
     }

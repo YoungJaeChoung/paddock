@@ -6,7 +6,7 @@ const { TerminalCopyOnSelectionHandler } = require('@theia/terminal/lib/browser/
 const { FrontendApplicationContribution } = require('@theia/core/lib/browser/frontend-application-contribution');
 const { SecondaryWindowService } = require('@theia/core/lib/browser/window/secondary-window-service');
 const { ElectronSecondaryWindowService } = require('@theia/core/lib/electron-browser/window/electron-secondary-window-service');
-const { forgetRestoredWidgets } = require('./tab-detach');
+const { forgetRestoredWidgets, attachDetachedTabDrag } = require('./tab-detach');
 
 /**
  * 메인 창으로 되돌린 위젯이 보조 창 닫기를 막지 않게 하는 보조 창 서비스.
@@ -15,6 +15,62 @@ const { forgetRestoredWidgets } = require('./tab-detach');
  * 되돌린 위젯을 목록에서 지워 빈 창은 닫히게 하고, 저장 안 한 내용과 표시는 메인 창의 에디터에 그대로 둔다.
  */
 class PaddockSecondaryWindowService extends ElectronSecondaryWindowService {
+    /**
+     * 보조 창의 탭을 메인 창 칸에 놓는 끌기의 처리기. 작업 화면이 `preview`·`cancel`·`drop`을 채운다.
+     * 보조 창은 칸을 모르므로 놓을 자리 계산은 메인 창의 탭 줄 끌기와 같은 쪽에 맡긴다.
+     */
+    tabDock = {};
+
+    windowCreated(
+        newWindow,
+        widget,
+        shell,
+    ) {
+        super.windowCreated(newWindow, widget, shell);
+        const tabId = target => {
+            const tab = target.closest?.('.lm-TabBar-tab');
+            const bars = newWindow.rootWidget?.dockPanel.tabBars() ?? [];
+            const bar = tab && [...bars].find(item => item.contentNode.contains(tab));
+            const index = bar && [...bar.contentNode.children].indexOf(tab);
+            return bar?.titles[index]?.owner.id;
+        };
+        attachDetachedTabDrag(newWindow, window, tabId, {
+            preview: (id, x, y) => this.tabDock.preview?.(id, x, y),
+            cancel: () => this.tabDock.cancel?.(),
+            drop: (id, x, y) => this.tabDock.drop?.(id, x, y),
+        });
+    }
+
+    /**
+     * 보조 창에 있는 위젯 하나를 창을 닫지 않고 메인 창으로 되돌린다.
+     * 창을 닫는 복귀(`restoreWidgets`)와 같은 순서(되돌림 알림 → 보조 창 소속 해제 → 메인 칸에 추가)를 밟아
+     * 프로세스·출력·저장 안 한 편집이 그대로이고, 그 창에 남은 위젯이 없으면 빈 창만 닫는다.
+     *
+     * @param widget 되돌릴 위젯. 보조 창에 있지 않거나 이미 닫혔으면 아무것도 하지 않는다.
+     * @param shell 메인 창의 셸.
+     * @param options 메인 칸 위치(`mode`·`ref`). 없으면 Theia 기본 위치에 붙는다.
+     * @returns 되돌렸으면 true.
+     */
+    async restoreWidget(
+        widget,
+        shell,
+        options = {},
+    ) {
+        const secondaryWindow = widget.secondaryWindow;
+        const isRestorable = Boolean(secondaryWindow) && !widget.isDisposed;
+        if (isRestorable) {
+            this.beforeWidgetRestoreEmitter.fire([widget, secondaryWindow]);
+            widget.secondaryWindow = undefined;
+            widget.previousArea = undefined;
+            await shell.addWidget(widget, { ...options, area: 'main' });
+            await shell.activateWidget(widget.id);
+            // 되돌린 위젯이 목록에 남으면 창 닫기가 막힌다(forgetRestoredWidgets). 남은 위젯이 없으면 빈 창을 닫는다.
+            forgetRestoredWidgets(secondaryWindow.rootWidget);
+            if (!secondaryWindow.closed && !(secondaryWindow.rootWidget?.widgets.length > 0)) secondaryWindow.close();
+        }
+        return isRestorable;
+    }
+
     async restoreWidgets(
         newWindow,
         extractableWidget,
