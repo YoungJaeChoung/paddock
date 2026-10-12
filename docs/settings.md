@@ -8,7 +8,7 @@ Open settings with `Ctrl+,` (macOS `Cmd+,`) and search for `paddock`.
 
 ## Accounts and usage
 
-Keep several Claude and Codex accounts, each signed in through its own CLI. After an account's first reply, its 5-hour and weekly usage shows in the status bar. The numbers are what each CLI reports — Claude Code through its status line, Codex through its own limit query — not read from your login. In a terminal where Claude Code is running, choosing another Claude account from **Accounts** stops that Claude and reopens the same conversation under the new account in the same tab; the saved conversation is reloaded, so work Claude was in the middle of is not carried over. Windows terminals outside WSL ask you to exit Claude first. Choosing **New conversation…** starts a fresh one instead. A Codex account opens a new terminal in the same folder; go back to the old conversation with `codex resume`.
+Keep several Claude and Codex accounts, each signed in through its own CLI. After an account's first reply, its 5-hour and weekly usage shows in the status bar. The numbers are what each CLI reports — Claude Code through its status line, Codex through its own limit query — not read from your login. In a terminal where Claude Code is running, choosing another Claude account from **Accounts** stops that Claude and reopens the same conversation under the new account in the same tab; the saved conversation is reloaded, so a request Claude was still answering has to be sent again. Windows terminals outside WSL ask you to exit Claude first. Choosing **New conversation…** starts a fresh one instead. A Codex account opens a new terminal in the same folder; go back to the old conversation with `codex resume`.
 
 ## Memory
 
