@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { distributionOf, withDistribution, environmentLabel } = require('../terminal-environment');
+const { distributionOf, withDistribution, environmentLabel, clearInheritedSession } = require('../terminal-environment');
 
 test('a WSL project selects its own distribution instead of the default launcher', () => {
     const options = { shellPath: 'wsl.exe', shellArgs: ['-d', 'Ubuntu'] };
@@ -20,4 +20,11 @@ test('adding a distribution preserves other options and removes duplicate distri
     assert.deepEqual(withDistribution(['--distribution=Ubuntu', '--cd', '/home/me'], 'Debian'), ['--distribution', 'Debian', '--cd', '/home/me']);
     assert.equal(distributionOf({ shellArgs: ['--distribution', 'Debian'] }), 'Debian');
     assert.equal(distributionOf({ paddockAccount: { wslDistribution: 'Ubuntu' } }), 'Ubuntu');
+});
+
+test('an app started from a Claude Code terminal drops that session\'s markers but keeps the user\'s Claude settings', () => {
+    const env = { CLAUDECODE: '1', CLAUDE_CODE_CHILD_SESSION: '1', CLAUDE_CODE_SESSION_ID: 'x', CLAUDE_CONFIG_DIR: '/home/me/.claude', CLAUDE_CODE_USE_BEDROCK: '1', PATH: '/bin' };
+    assert.deepEqual(clearInheritedSession(env), ['CLAUDECODE', 'CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_CODE_SESSION_ID']);
+    assert.deepEqual(env, { CLAUDE_CONFIG_DIR: '/home/me/.claude', CLAUDE_CODE_USE_BEDROCK: '1', PATH: '/bin' });
+    assert.deepEqual(clearInheritedSession({ PATH: '/bin' }), []);
 });

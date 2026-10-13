@@ -14,6 +14,7 @@ const { isViewportStale, fillsWorkArea, boundsWithin } = require('./window-fit')
 const BackendSession = require('./backend-session');
 const QuitPreference = require('./quit-preference');
 const { startPerformanceProbe } = require('./performance-probe');
+const { clearInheritedSession } = require('./terminal-environment');
 
 // macOS에서만 의미 있는 창 옵션. Windows에서 titleBarStyle을 넘기면 창 틀과 닫기 버튼이 사라진다.
 const MAC_ONLY_WINDOW_OPTIONS = ['titleBarStyle', 'trafficLightPosition'];
@@ -101,6 +102,8 @@ function useWslGpu() {
     }
 }
 useWslGpu();
+// 백엔드와 모든 터미널이 이 환경을 물려받으므로, 백엔드를 띄우기 전인 모듈을 읽는 시점에 지운다.
+clearInheritedSession(process.env);
 
 // 최대화하거나 모니터 배율이 바뀐 뒤 화면이 창 크기를 따라왔는지 확인하기까지 기다리는 시간.
 // 배율이 다른 모니터에서는 정상이어도 화면이 따라오는 데 0.7초쯤 걸려, 그보다 넉넉히 둔다.
