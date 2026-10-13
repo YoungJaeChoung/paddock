@@ -150,6 +150,10 @@ body {
 .paddock-shell .terminal-row .row-main { padding-left: calc(22px + var(--p-sidebar-indent, 12px)); }
 .paddock-shell .terminal-row.is-remote .row-main { cursor: pointer; }
 .paddock-shell .terminal-row.is-remote .row-meta { max-width: 92px; font-size: 11px; }
+.paddock-shell .terminal-row.is-background .row-main { cursor: pointer; }
+.paddock-shell .terminal-row.is-background .row-meta { max-width: 92px; font-size: 11px; }
+.paddock-shell .terminal-row.is-background { background: var(--p-hover-bg); opacity: 0.8; }
+.paddock-shell .terminal-row.is-background:hover { opacity: 1; }
 .paddock-shell .terminal-row.is-current { background: var(--p-tab-active-bg); color: var(--p-fg-strong); }
 .paddock-shell .row-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .paddock-shell .row-suffix, .paddock-shell .row-meta { flex: none; color: var(--p-fg-muted); font-size: 12px; }

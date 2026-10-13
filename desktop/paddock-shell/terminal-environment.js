@@ -46,11 +46,15 @@ class InheritedSession {
      * Paddock을 실행한 Claude Code 세션이 자식 프로세스에 남기는 표지. 앱이 물려받으면 모든 터미널로 번진다.
      * 터미널 안에서 새로 띄운 Claude는 이 표지를 보고 자신을 하위 세션으로 여겨 대화 저장을 끈다.
      * 사용자가 정해 두는 Claude 설정 변수(CLAUDE_CONFIG_DIR, CLAUDE_CODE_USE_BEDROCK 등)는 목록에 없으므로 남는다.
+     *
+     * 다른 Paddock의 터미널 안에서 이 앱을 실행하면 그 터미널의 표지(PADDOCK_TERMINAL)도 물려받는다.
+     * 그러면 이 앱의 터미널에서 실행한 프로그램이 바깥 Paddock에는 바깥 터미널의 프로그램으로 보여,
+     * 바깥 Work 목록의 그 터미널이 이 앱의 작업 폴더로 옮겨 간다. 표지가 필요한 터미널(WSL)에는 이 앱이 자기 표지를 따로 넣는다.
      */
     static NAMES = [
         'CLAUDECODE', 'CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_BRIDGE_SESSION_ID',
         'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_EXECPATH', 'CLAUDE_CODE_MESSAGING_SOCKET', 'CLAUDE_CODE_MESSAGING_TOKEN',
-        'CLAUDE_CODE_SESSION_ATTENDED',
+        'CLAUDE_CODE_SESSION_ATTENDED', 'PADDOCK_TERMINAL',
     ];
 }
 

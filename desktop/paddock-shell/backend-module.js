@@ -5,7 +5,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFile, spawn, spawnSync } = require('node:child_process');
 const express = require('express');
-const { ContainerModule, injectable, decorate } = require('@theia/core/shared/inversify');
+const { ContainerModule, injectable, inject, decorate } = require('@theia/core/shared/inversify');
+const { ProcessManager } = require('@theia/process/lib/node/process-manager');
+const { TerminalProcess } = require('@theia/process/lib/node/terminal-process');
 const { BackendApplicationContribution } = require('@theia/core/lib/node/backend-application');
 const { PluginHostEnvironmentVariable } = require('@theia/plugin-ext/lib/common/plugin-protocol');
 const { ConnectionHandler, RpcConnectionHandler } = require('@theia/core/lib/common/messaging');
@@ -311,16 +313,21 @@ class PaddockStatusRoutes {
         app,
     ) {
         // 모든 Paddock 창이 한 백엔드에 자신의 목록 정보만 보내고 다른 창의 목록을 받는다.
+        // 닫힌 창의 기록은 아직 끝나지 않은 터미널만 남겨 '퇴역' 표시로 함께 내려간다.
+        const isAlive = id => {
+            const managed = this.processManager.get(id);
+            return managed instanceof TerminalProcess && !managed.killed;
+        };
         app.post('/paddock/work-presence', express.json({ limit: '64kb' }), (request, response) => {
             const { windowId, folders, terminals } = request.body || {};
             if (typeof windowId !== 'string' || !windowId) {
                 response.status(400).json({ error: 'windowId is required' });
             } else {
-                response.json(this.workPresence.update(windowId, { folders, terminals }));
+                response.json(this.workPresence.update(windowId, { folders, terminals }, Date.now(), isAlive));
             }
         });
         app.delete('/paddock/work-presence', (request, response) => {
-            if (typeof request.query.windowId === 'string') this.workPresence.remove(request.query.windowId);
+            if (typeof request.query.windowId === 'string') this.workPresence.retire(request.query.windowId, isAlive);
             response.status(204).end();
         });
         app.get('/paddock/memory', async (request, response) => {
@@ -619,6 +626,7 @@ class PaddockStatusRoutes {
 
 }
 decorate(injectable(), PaddockStatusRoutes);
+decorate(inject(ProcessManager), PaddockStatusRoutes.prototype, 'processManager');
 
 exports.default = new ContainerModule((bind) => {
     bind(PaddockStatusRoutes).toSelf().inSingletonScope();

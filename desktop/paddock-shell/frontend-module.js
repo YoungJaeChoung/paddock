@@ -12,6 +12,7 @@ const { PaddockAboutDialog } = require('./about-dialog');
 const { PaddockWorkspace } = require('./workspace');
 const { PaddockExtensionOpen } = require('./extension-open');
 const { PaddockBackendStop } = require('./backend-stop');
+const { PaddockQuitPrompt } = require('./quit-prompt');
 const { PaddockReviewNotes } = require('./review-notes-contribution');
 const { PaddockPdfOpener } = require('./pdf-viewer');
 const { PaddockBinaryNoticeOpener } = require('./binary-notice');
@@ -22,6 +23,8 @@ const { TerminalCopyOnSelectionHandler } = require('@theia/terminal/lib/browser/
 const { withQueuedCopy } = require('./terminal-copy');
 const { LocalFileLinkProvider } = require('@theia/terminal/lib/browser/terminal-file-link-provider');
 const { withoutBarePathLinks } = require('./terminal-links');
+const { LocalStorageService } = require('@theia/core/lib/browser/storage-service');
+const { WINDOW_ROLE, windowRole } = require('./window-role');
 require('./controls.css');
 
 // Paddock 설정. 설정 화면(Preferences)에서 "paddock"로 찾을 수 있다.
@@ -107,6 +110,12 @@ exports.default = new ContainerModule((bind, unbind, isBound, rebind, unbindAsyn
     onActivation(TerminalCopyOnSelectionHandler, (context, handler) => withQueuedCopy(handler));
     // 터미널 파일 경로 링크: 문장 끝 마침표 같은 `.`·`..`·`~` 하나를 경로 링크로 보지 않는다(terminal-links.js). 위와 같은 까닭으로 만들어지는 순간 감싼다.
     onActivation(LocalFileLinkProvider, (context, provider) => withoutBarePathLinks(provider));
+    // 다른 창이 떠 있을 때 연 창은 저장소를 메모리로 쓴다(window-role.js). 첫 창의 배치를 되살려 같은 이름의 빈 셸을
+    // 복제하지 않고, 이 창의 배치·작업 목록이 첫 창의 저장 내용을 덮어쓰지 않는다. 설정 파일은 창과 무관하게 함께 쓴다.
+    onActivation(LocalStorageService, (context, service) => {
+        if (windowRole(window.location.search) === WINDOW_ROLE.SECONDARY) service.storage = {};
+        return service;
+    });
     bind(PaddockWorkspace).toDynamicValue(({ container }) => new PaddockWorkspace(container)).inSingletonScope();
     bind(FrontendApplicationContribution).toService(PaddockWorkspace);
     bind(CommandContribution).toService(PaddockWorkspace);
@@ -114,6 +123,8 @@ exports.default = new ContainerModule((bind, unbind, isBound, rebind, unbindAsyn
     // 확장이 알림 버튼에서 부르는 VS Code의 `extension.open`(확장 페이지 열기·업데이트)을 제공한다.
     bind(CommandContribution).toDynamicValue(({ container }) => new PaddockExtensionOpen(container)).inSingletonScope();
     bind(CommandContribution).toDynamicValue(({ container }) => new PaddockBackendStop(container)).inSingletonScope();
+    // 마지막 창을 닫을 때 남은 터미널을 계속 실행할지 창 안에서 묻는다(quit-prompt.js).
+    bind(FrontendApplicationContribution).toDynamicValue(({ container }) => new PaddockQuitPrompt(container)).inSingletonScope();
     // 코드 줄에 남긴 검토 메모를 모아 에이전트 터미널에 한 번에 붙여 넣는다(review-notes.js).
     bind(PaddockReviewNotes).toDynamicValue(({ container }) => new PaddockReviewNotes(container)).inSingletonScope();
     bind(CommandContribution).toService(PaddockReviewNotes);

@@ -121,6 +121,21 @@ test('다른 창의 같은 id 터미널은 목록에 함께 보이되 이 창의
     assert.equal(local.folders.length, 1);
 });
 
+test('퇴역 표시는 remote에 실리고 폴더 없는 터미널은 remote에만 unassigned로 남는다', () => {
+    const local = model.empty();
+    const snapshot = { windowId: 'gone', retired: true, folders: [{ key: 'file:///a', expanded: true }], terminals: [
+        { id: 't0', folder: 'file:///a', name: 'claude', program: 'claude', terminalId: 4 },
+        { id: 't1', folder: '', name: 'terminal 2', program: 'bash', terminalId: 5 },
+    ] };
+    const { state, remote } = model.mergeWorkPresence(local, [snapshot]);
+    assert.equal(remote.get('gone:t0').retired, true);
+    assert.equal(model.folderOf(state, 'gone:t1'), null);
+    assert.equal('gone:t1' in state.terminals, false);
+    assert.deepEqual(state.folders.map(folder => folder.key), ['file:///a']);
+    assert.deepEqual(remote.get('gone:t1'), { program: 'bash', windowId: 'gone', terminalId: 5, retired: true, unassigned: true, name: 'terminal 2' });
+    assert.equal(model.mergeWorkPresence(local, [{ ...snapshot, retired: undefined }]).remote.get('gone:t0').retired, false);
+});
+
 test('C-work-F5.1: 메모리 사용률은 (전체-가용)/전체를 0~100 정수로 반올림한다', () => {
     assert.equal(model.memoryPercent(16, 9.76), 39);
     assert.equal(model.memoryPercent(0, 0), null);

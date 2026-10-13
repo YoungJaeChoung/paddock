@@ -15,6 +15,7 @@ const { EnvVariablesServer } = require('@theia/core/lib/common/env-variables');
 const { ConfirmDialog, SingleTextInputDialog } = require('@theia/core/lib/browser/dialogs');
 const { FileService } = require('@theia/filesystem/lib/browser/file-service');
 const { TerminalService } = require('@theia/terminal/lib/browser/base/terminal-service');
+const { IShellTerminalServer } = require('@theia/terminal/lib/common/shell-terminal-protocol');
 const { TerminalWidget } = require('@theia/terminal/lib/browser/base/terminal-widget');
 const { TerminalProfileService, NULL_PROFILE } = require('@theia/terminal/lib/browser/terminal-profile-service');
 const { ShellTerminalProfile } = require('@theia/terminal/lib/browser/shell-terminal-profile');
@@ -773,6 +774,12 @@ class PaddockWorkspace {
                 const widget = this.shell.getWidgetById(id);
                 return { id, folder: entry.folder, name: entry.name, program: widget ? this.programOf(widget) : '', terminalId: widget?.terminalId, shared: widget?.options.paddockShared };
             }).filter(terminal => !terminal.shared);
+            // 작업 폴더에 속하지 않은(Unassigned) 맨 위 터미널도 알린다. 이 창이 닫힌 뒤에도 남은 셸을 다른 창이 찾을 수 있다.
+            for (const widget of this.topTerminals()) {
+                if (!widget.options?.paddockShared) {
+                    terminals.push({ id: widget.id, folder: '', name: this.unassignedName(widget), program: this.programOf(widget), terminalId: widget.terminalId });
+                }
+            }
             const url = new Endpoint({ path: '/paddock/work-presence' }).getRestUrl().toString();
             const response = await fetch(url, {
                 method: 'POST',
@@ -1351,6 +1358,49 @@ class PaddockWorkspace {
             terminal.dispose();
             throw error;
         }
+    }
+
+    /**
+     * 닫힌 창에서 계속 도는 터미널을 이 창의 소유로 가져온다. 공유 보기(`openRemoteTerminal`)와 달리 이 창이 프로세스를 소유하므로 닫으면 셸도 끝난다.
+     * 이미 끝났으면 Theia가 새 셸을 만들어 붙이므로, 받은 터미널 ID가 요청과 다를 때 그 새 셸을 버리고 오류로 알린다.
+     * 폴더가 있으면 그 작업 폴더에 넣고, 없으면 Unassigned에 둔다. 저장하면 이 창의 목록 보고가 퇴역 기록에서 이 터미널을 지운다.
+     */
+    async adoptTerminal(
+        row,
+        remote,
+    ) {
+        // 이 창이 이미 그 셸을 보여 주고 있으면 새로 붙이지 않고 그 터미널을 고른다.
+        const existing = this.terminals.all.find(terminal => terminal.terminalId === remote.terminalId);
+        if (existing) {
+            await this.activate(existing.id);
+        } else {
+            const terminal = await this.terminals.newTerminal({ title: row.name, cwd: row.folder || undefined });
+            try {
+                await this.terminals.open(terminal, { widgetOptions: this.widgetOptions(), mode: 'activate' });
+                await terminal.start(remote.terminalId);
+                if (terminal.terminalId !== remote.terminalId) throw new Error('This terminal has already closed.');
+                if (row.folder) {
+                    this.state = model.assignTerminal(this.state, terminal.id, row.folder, row.name);
+                    this.cwdCache.set(terminal.id, row.folder);
+                    this.selectedFolder = row.folder;
+                } else {
+                    terminal.setTitle(row.name);
+                }
+                await this.save();
+                await this.refresh();
+            } catch (error) {
+                terminal.dispose();
+                throw error;
+            }
+        }
+    }
+
+    /** 닫힌 창에서 남은 터미널의 셸을 끝내고 목록을 다시 맞춘다. */
+    async endBackgroundTerminal(
+        remote,
+    ) {
+        await this.container.get(IShellTerminalServer).close(remote.terminalId);
+        await this.refreshWorkPresence();
     }
 
     /** 새 터미널이나 미리보기 칸을 추가한 분할에 같은 공간을 준다. 기존 칸을 다시 볼 때는 부르지 않는다. */

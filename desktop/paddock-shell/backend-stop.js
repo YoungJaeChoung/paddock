@@ -1,7 +1,7 @@
 const { EnvVariablesServer } = require('@theia/core/lib/common/env-variables');
 const { FileService } = require('@theia/filesystem/lib/browser/file-service');
 const { URI } = require('@theia/core/lib/common/uri');
-const { STOP_ONCE_FILE } = require('./backend-session');
+const { QUIT_CHOICE_FILE, QUIT_CHOICE, formatQuitChoice } = require('./backend-session');
 
 /** 창 닫기가 취소됐는지 보고 표지를 거두기까지 기다리는 시간(ms). */
 const CANCEL_CLEANUP_MS = 30000;
@@ -30,9 +30,9 @@ class PaddockBackendStop {
 
     async quitAndStop() {
         const directory = new URI(await this.container.get(EnvVariablesServer).getConfigDirUri());
-        const flag = directory.resolve(STOP_ONCE_FILE);
+        const flag = directory.resolve(QUIT_CHOICE_FILE);
         const files = this.container.get(FileService);
-        await files.write(flag, String(Date.now()));
+        await files.write(flag, formatQuitChoice(QUIT_CHOICE.STOP, Date.now()));
         window.electronTheiaCore.close();
         // 창이 닫히면 이 화면과 타이머가 함께 사라지고 메인이 표지를 쓴다. 저장 확인 등으로 닫기가 취소돼 아직 살아 있으면 표지를 거둔다.
         setTimeout(() => files.delete(flag).catch(() => undefined), CANCEL_CLEANUP_MS);

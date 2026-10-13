@@ -88,6 +88,8 @@ class WorkSidebar {
         this.workspace.displayWorkState = merged.state;
         this.remoteWorkRows = merged.remote;
         const rows = model.visibleRows(merged.state, currentId, this.showAll);
+        // 닫힌 창에서 남은 Unassigned 터미널. 다른 창이 쓰는 Unassigned 터미널은 보이지 않는다.
+        const backgroundUnassigned = [...merged.remote].filter(([, remote]) => remote.unassigned && remote.retired);
         const unassigned = this.workspace.topTerminals();
         const selectedRoot = this.workspace.shownTopTerminal();
         const filesFolder = this.filesFolder();
@@ -103,6 +105,7 @@ class WorkSidebar {
             [...this.workspace.doneIds], selectedRoot, [...new Set(this.workspace.terminals.all.map(terminal => this.workspace.terminalEnvironment(terminal)))], filesFolder && this.workspace.filesExpanded ? this.workspace.fileTree.gitChanges() : [], unassigned.map(terminal => [terminal.id, this.workspace.unassignedName(terminal), this.workspace.programOf(terminal), this.workspace.agentActivity.runningAccountLabel(terminal), this.workspace.terminalEnvironment(terminal),
                 this.workspace.cwdCache.get(terminal.id), this.workspace.doneIds.has(terminal.id), this.workspace.innerTabIds(terminal.id).length,
                 agent.activityState(this.workspace.activity.get(terminal.id) ?? agent.idle(), Date.now(), this.workspace.programs.has(terminal.id) ? agent.isAgent(this.workspace.programs.get(terminal.id)) : null)]),
+            backgroundUnassigned.map(([id, remote]) => [id, remote.name, remote.program, remote.terminalId, remote.retired]),
             rows.map(row => {
                 const terminal = this.workspace.shell.getWidgetById(row.id);
                 return [this.remoteWorkRows.get(row.id), terminal ? this.workspace.programOf(terminal) : '', terminal ? this.workspace.agentActivity.runningAccountLabel(terminal) : '', terminal ? this.workspace.terminalEnvironment(terminal) : '', this.workspace.doneIds.has(row.id),
@@ -139,7 +142,7 @@ class WorkSidebar {
                 for (const row of rows) {
                     list.append(this.renderRow(row, currentId));
                 }
-                if (unassigned.length) {
+                if (unassigned.length || backgroundUnassigned.length) {
                     list.append(element('div', 'unassigned-heading', 'Unassigned'));
                     for (const terminal of unassigned) {
                         const row = this.renderRow({ kind: 'terminal', id: terminal.id, name: this.workspace.unassignedName(terminal), suffix: '', unassigned: true }, currentId);
@@ -163,6 +166,11 @@ class WorkSidebar {
                         close.setAttribute('aria-label', n_terminals > 1 ? `Close ${n_terminals} terminals in this group` : `Close ${this.workspace.unassignedName(terminal)}`);
                         close.title = close.getAttribute('aria-label');
                         row.append(close);
+                        list.append(row);
+                    }
+                    for (const [id, remote] of backgroundUnassigned) {
+                        const row = this.renderRow({ kind: 'terminal', id, name: remote.name, suffix: '', folder: '', unassigned: true }, currentId);
+                        row.classList.add('unassigned-row');
                         list.append(row);
                     }
                 }
@@ -267,12 +275,23 @@ class WorkSidebar {
             });
         } else if (row.kind === 'terminal' && this.remoteWorkRows.has(row.id)) {
             const remote = this.remoteWorkRows.get(row.id);
-            node = element('div', 'work-row terminal-row is-remote');
-            const label = button([element('span', 'prompt-mark', '›_'), element('span', 'row-name', row.name), element('span', 'row-suffix', row.suffix)], 'row-main', () => this.workspace.run(() => this.workspace.openRemoteTerminal(row, remote)));
+            // 닫힌 창에서 계속 도는 터미널(background)은 가져오거나 끝낼 수 있고, 다른 창이 쓰는 터미널은 같은 셸을 함께 보기만 한다.
+            const isBackground = remote.retired === true;
+            node = element('div', `work-row terminal-row ${isBackground ? 'is-background' : 'is-remote'}`);
+            const open = isBackground ? () => this.workspace.adoptTerminal(row, remote) : () => this.workspace.openRemoteTerminal(row, remote);
+            const label = button([element('span', 'prompt-mark', '›_'), element('span', 'row-name', row.name), element('span', 'row-suffix', row.suffix)], 'row-main', () => this.workspace.run(open));
             label.disabled = !Number.isSafeInteger(remote.terminalId) || remote.terminalId < 0;
-            node.append(label, element('span', 'row-meta', 'other window'));
+            node.append(label, element('span', 'row-meta', isBackground ? 'background' : 'other window'));
+            if (isBackground) {
+                const close = button([codicon('close')], 'work-close', () => this.workspace.run(() => this.workspace.endBackgroundTerminal(remote)));
+                close.setAttribute('aria-label', `End ${row.name}`);
+                close.title = 'End this terminal';
+                node.append(close);
+            }
             this.forwardRowClicks(node, label);
-            node.title = `${row.name}${remote.program ? ` · ${remote.program}` : ''} — open in another Paddock window`;
+            node.title = isBackground
+                ? `${row.name}${remote.program ? ` · ${remote.program}` : ''} — still running from a closed window. Click to open it here, or x to end it`
+                : `${row.name}${remote.program ? ` · ${remote.program}` : ''} — open in another Paddock window`;
         } else if (row.kind === 'terminal') {
             const terminal = this.workspace.shell.getWidgetById(row.id);
             const unseen = row.unassigned ? this.workspace.innerTabIds(row.id).some(id => this.workspace.doneIds.has(id)) : this.workspace.doneIds.has(row.id);

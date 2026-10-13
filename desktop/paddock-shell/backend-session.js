@@ -9,11 +9,18 @@ const path = require('node:path');
 /** 접속 정보를 두는 파일 이름. 설정 폴더 안에 둔다. */
 const STATE_FILE = 'backend.json';
 
-/** "이번 종료에 한해 남은 터미널을 모두 끝낸다"는 요청을 앱 화면이 남기는 표지 파일 이름. 내용은 요청 시각(ms)이다. */
-const STOP_ONCE_FILE = 'backend-stop-once';
+/**
+ * 이번 종료에 한해 남은 터미널을 어떻게 할지 앱 화면이 정해 남기는 표지 파일 이름. 내용은 `선택:요청 시각(ms)`이다(예: `stop:1700000000000`).
+ * 선택은 `keep`(계속 실행)·`stop`(모두 끝냄)이다. 마지막 창이 닫히기 전에 창 안에서 물은 답이나
+ * "Quit and Stop All Terminals" 명령이 적고, 메인 프로세스가 종료를 확정할 때 읽고 지운다.
+ */
+const QUIT_CHOICE_FILE = 'backend-quit-choice';
 
-/** 종료 요청 표지가 유효한 시간(ms). 저장 확인 때문에 창 닫기가 늦어져도 이 안에는 받아들이고, 넘으면 낡은 표지로 버린다. */
-const STOP_ONCE_TTL_MS = 5 * 60 * 1000;
+/** 종료 선택 표지의 값. */
+const QUIT_CHOICE = Object.freeze({ KEEP: 'keep', STOP: 'stop' });
+
+/** 종료 선택 표지가 유효한 시간(ms). 저장 확인 때문에 창 닫기가 늦어져도 이 안에는 받아들이고, 넘으면 낡은 표지로 버린다. */
+const QUIT_CHOICE_TTL_MS = 5 * 60 * 1000;
 
 /** 시작·종료 결정을 한 번에 한 앱만 하도록 잡는 잠금 파일 이름. 내용은 잠금을 쥔 프로세스의 PID다. */
 const LOCK_FILE = 'backend.lock';
@@ -58,22 +65,39 @@ function writeState(
     fs.chmodSync(file, 0o600);
 }
 
+/** 종료 선택 표지에 적을 내용. `at`은 요청 시각(ms)이다. */
+function formatQuitChoice(
+    choice,
+    at,
+) {
+    return `${choice}:${at}`;
+}
+
 /**
- * 종료 요청 표지를 읽고 지운다. 표지가 있고 유효 시간 안이면 true다. 표지는 한 번만 쓰이므로 읽으면 항상 지운다.
- * `now`는 현재 시각(ms)이다.
+ * 종료 선택 표지를 읽고 지운다. 표지는 한 번만 쓰이므로 읽으면 항상 지운다. `now`는 현재 시각(ms)이다.
+ *
+ * Examples
+ * --------
+ * | 표지 내용(now = 1000)          | 결과     |
+ * | ------------------------------ | -------- |
+ * | `stop:900`                     | `'stop'` |
+ * | `keep:900`                     | `'keep'` |
+ * | 없음 · `stop:-400000`(낡음) · 깨짐 | `null`   |
  */
-function takeStopOnce(
+function takeQuitChoice(
     directory,
     now,
 ) {
-    const file = path.join(directory, STOP_ONCE_FILE);
-    let isRequested = false;
+    const file = path.join(directory, QUIT_CHOICE_FILE);
+    let choice = null;
     try {
-        const requestedAt = Number(fs.readFileSync(file, 'utf8'));
-        isRequested = Number.isFinite(requestedAt) && now - requestedAt >= 0 && now - requestedAt <= STOP_ONCE_TTL_MS;
+        const [value, at] = fs.readFileSync(file, 'utf8').trim().split(':');
+        const requestedAt = Number(at);
+        const isFresh = Number.isFinite(requestedAt) && now - requestedAt >= 0 && now - requestedAt <= QUIT_CHOICE_TTL_MS;
+        if (isFresh && Object.values(QUIT_CHOICE).includes(value)) choice = value;
     } catch { /* 표지가 없다. */ }
     fs.rmSync(file, { force: true });
-    return isRequested;
+    return choice;
 }
 
 /** 접속 정보를 지운다. 이미 없으면 아무것도 하지 않는다. */
@@ -292,4 +316,4 @@ function signalGroup(
     }
 }
 
-module.exports = { STATE_FILE, STOP_ONCE_FILE, takeStopOnce, readState, writeState, clearState, isAlive, isListening, freePort, fingerprintOf, sharedEnvironment, callBackend, countTerminals, shareEnvironment, stop, acquireLock };
+module.exports = { STATE_FILE, QUIT_CHOICE_FILE, QUIT_CHOICE, formatQuitChoice, takeQuitChoice, readState, writeState, clearState, isAlive, isListening, freePort, fingerprintOf, sharedEnvironment, callBackend, countTerminals, shareEnvironment, stop, acquireLock };

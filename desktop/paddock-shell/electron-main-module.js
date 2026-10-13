@@ -15,6 +15,7 @@ const BackendSession = require('./backend-session');
 const QuitPreference = require('./quit-preference');
 const { startPerformanceProbe } = require('./performance-probe');
 const { clearInheritedSession } = require('./terminal-environment');
+const { WINDOW_ROLE } = require('./window-role');
 
 // macOS에서만 의미 있는 창 옵션. Windows에서 titleBarStyle을 넘기면 창 틀과 닫기 버튼이 사라진다.
 const MAC_ONLY_WINDOW_OPTIONS = ['titleBarStyle', 'trafficLightPosition'];
@@ -281,8 +282,8 @@ class PaddockMainApplication extends ElectronMainApplication {
 
     /**
      * 창이 모두 닫힌 뒤 남은 터미널을 어떻게 할지 정하고 백엔드를 그에 맞게 처리한다.
-     * 열린 터미널이 없으면 백엔드를 남길 이유가 없어 설정과 무관하게 끝낸다. 있으면 앱 화면의 "모두 끝내고 종료" 요청,
-     * 설정(paddock.backend.onQuit) 순으로 따르고, 설정이 ask면 묻는다. 묻는 창에서 "다시 묻지 않기"를 고르면 그 선택을 설정에 적는다.
+     * 열린 터미널이 없으면 백엔드를 남길 이유가 없어 설정과 무관하게 끝낸다. 있으면 앱 화면이 남긴 종료 선택(창 안에서 물은 답·"모두 끝내고 종료" 명령),
+     * 설정(paddock.backend.onQuit) 순으로 따르고, 선택이 없고 설정이 ask면 묻는다. 묻는 창에서 "다시 묻지 않기"를 고르면 그 선택을 설정에 적는다.
      * 이 앱이 백엔드를 띄웠거나 붙어 있는 경우에만 동작하며, 그 포트가 아직 열려 있을 때만 끝낸다(PID 재사용 방지).
      */
     async settleBackendOnQuit() {
@@ -291,13 +292,16 @@ class PaddockMainApplication extends ElectronMainApplication {
         if (backend && BackendSession.isAlive(backend.pid) && await BackendSession.isListening(backend.port)) {
             const n_terminals = await BackendSession.countTerminals(backend.port, backend.token);
             const settingsPath = path.join(directory, 'settings.json');
-            const isStopRequested = BackendSession.takeStopOnce(directory, Date.now());
+            // 마지막 창이 닫히기 전에 창 안에서 물은 답(또는 "Quit and Stop All Terminals")이 있으면 그 답을 따른다.
+            const choice = BackendSession.takeQuitChoice(directory, Date.now());
             let settings = '';
             try { settings = fs.readFileSync(settingsPath, 'utf8'); } catch { /* 설정 파일이 아직 없다. */ }
             let onQuit = QuitPreference.readOnQuit(settings);
-            let isStopped = n_terminals === 0 || isStopRequested || onQuit === QuitPreference.ON_QUIT.STOP;
+            let isStopped = n_terminals === 0 || choice === BackendSession.QUIT_CHOICE.STOP
+                || (choice === null && onQuit === QuitPreference.ON_QUIT.STOP);
+            // 창 안에서 답을 받지 못한 종료(창이 여럿인 채 앱을 끝내는 경우 등)만 여기서 묻는다. 창이 모두 닫힌 뒤라 소속 창 없이 뜬다.
             // OS가 종료·로그아웃 중이면 사용자가 답할 수 없다. 묻지 않고 유지로 본다(어차피 OS가 프로세스를 정리한다).
-            if (!isStopped && onQuit === QuitPreference.ON_QUIT.ASK && !this.isSystemShutdown) {
+            if (!isStopped && choice === null && onQuit === QuitPreference.ON_QUIT.ASK && !this.isSystemShutdown) {
                 const { response, checkboxChecked } = await dialog.showMessageBox({
                     type: 'question',
                     buttons: ['Keep running in background', 'Stop all and quit'],
@@ -355,6 +359,44 @@ class PaddockMainApplication extends ElectronMainApplication {
             }
         });
         await super.start(config);
+    }
+
+    /**
+     * 앱이 떠 있는데 다시 실행하면 새 창을 열지 않고 열려 있는 창을 앞으로 가져온다.
+     *
+     * 기본 동작은 같은 백엔드에 붙는 새 창을 연다. 실행 아이콘을 다시 누르는 건 대개 떠 있는 앱을 찾으려는 것이라,
+     * 창이 뒤에 가려져 있으면 모르는 사이에 창이 늘어난다. 새 창은 New Window(Ctrl+Shift+N)로 명시적으로 연다.
+     * 주소 열기(`--open-url`) 실행이나 열린 창이 없을 때는 기본 동작을 따른다.
+     */
+    async onSecondInstance(
+        event,
+        argv,
+        cwd,
+        originalArgv,
+    ) {
+        // activeWindowStack의 맨 앞이 마지막으로 초점을 받은 창이다.
+        const shown = this.windows.get(this.activeWindowStack[0])?.window;
+        if (shown && !shown.isDestroyed() && !originalArgv.includes('--open-url')) {
+            if (shown.isMinimized()) shown.restore();
+            shown.show();
+            shown.focus();
+        } else {
+            await super.onSecondInstance(event, argv, cwd, originalArgv);
+        }
+    }
+
+    /**
+     * 기본 창을 연다. 다른 창이 이미 떠 있으면 새 창 주소에 두 번째 창 표시(`paddockWindow=secondary`)를 붙인다.
+     *
+     * 모든 창이 같은 저장소를 쓰므로, 표시가 없으면 새 창이 첫 창의 배치를 되살려 같은 이름의 빈 셸을 복제하고
+     * 두 창이 서로의 작업 목록을 덮어쓴다. 표시를 받은 창은 저장소를 메모리로 써 빈 화면으로 시작한다(window-role.js).
+     * 시작 때 만들어 둔 첫 창을 재사용하는 경우(`initialWindow`)는 첫 창이다.
+     */
+    async openDefaultWindow(
+        params = {},
+    ) {
+        const isSecondary = !this.initialWindow && this.windows.size > 0;
+        return super.openDefaultWindow(isSecondary ? { ...params, [WINDOW_ROLE.QUERY]: WINDOW_ROLE.SECONDARY } : params);
     }
 
     getDefaultOptions() {

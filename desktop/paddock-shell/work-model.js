@@ -418,6 +418,16 @@ function visibleRows(
 /**
  * 이 창의 작업 목록에 다른 창의 터미널 이름·소속을 합쳐 표시용 목록을 만든다.
  * 다른 창의 터미널 id에는 창 id를 붙여 이 창의 터미널과 구별한다.
+ * 닫힌 창에서 계속 도는 터미널은 스냅샷의 `retired` 표시를 `remote` 값에 그대로 싣는다.
+ * 작업 폴더가 없는 터미널(`folder: ''`)은 폴더 항목을 만들지 않으므로 `state.terminals`에 넣지 않고, `remote`에만 `unassigned: true`와 이름을 담는다.
+ *
+ * Examples
+ * --------
+ * | 스냅샷 터미널                                   | 결과                                                               |
+ * |-------------------------------------------------|--------------------------------------------------------------------|
+ * | 창 w1(살아 있음) `{ id: 't0', folder: 'file:///a' }` | 폴더 'file:///a' 아래 `w1:t0`, remote에 `{ windowId: 'w1', ... }`        |
+ * | 퇴역 스냅샷의 같은 터미널                         | remote 값에 `retired: true`가 더해진다                               |
+ * | 퇴역 스냅샷 `{ id: 't1', folder: '', name: 'shell' }` | `merged.terminals`에 없음, remote `w1:t1` = `{ unassigned: true, name: 'shell', ... }` |
  */
 function mergeWorkPresence(
     state,
@@ -434,8 +444,13 @@ function mergeWorkPresence(
         }
         for (const terminal of snapshot.terminals || []) {
             const id = `${snapshot.windowId}:${terminal.id}`;
-            merged = assignTerminal(merged, id, terminal.folder, terminal.name);
-            remote.set(id, { program: terminal.program || '', windowId: snapshot.windowId, terminalId: terminal.terminalId });
+            const retired = snapshot.retired === true;
+            if (terminal.folder === '') {
+                remote.set(id, { program: terminal.program || '', windowId: snapshot.windowId, terminalId: terminal.terminalId, retired, unassigned: true, name: terminal.name });
+            } else {
+                merged = assignTerminal(merged, id, terminal.folder, terminal.name);
+                remote.set(id, { program: terminal.program || '', windowId: snapshot.windowId, terminalId: terminal.terminalId, retired });
+            }
         }
     }
     return { state: merged, remote };

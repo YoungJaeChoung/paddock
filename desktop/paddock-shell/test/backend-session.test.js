@@ -76,16 +76,20 @@ test('acquireLock은 한 번에 한 곳만 잡고 낡은 잠금은 가져온다'
     third();
 });
 
-test('takeStopOnce는 유효한 표지를 한 번만 받아들이고 항상 지운다', () => {
+test('takeQuitChoice는 유효한 선택을 한 번만 받아들이고 항상 지운다', () => {
     const directory = temporaryDirectory();
-    const file = path.join(directory, BackendSession.STOP_ONCE_FILE);
-    assert.equal(BackendSession.takeStopOnce(directory, 1000), false);
-    fs.writeFileSync(file, '900');
-    assert.equal(BackendSession.takeStopOnce(directory, 1000), true);
+    const file = path.join(directory, BackendSession.QUIT_CHOICE_FILE);
+    assert.equal(BackendSession.takeQuitChoice(directory, 1000), null);
+    fs.writeFileSync(file, BackendSession.formatQuitChoice(BackendSession.QUIT_CHOICE.STOP, 900));
+    assert.equal(BackendSession.takeQuitChoice(directory, 1000), 'stop');
     assert.equal(fs.existsSync(file), false);
-    fs.writeFileSync(file, String(1000 - 6 * 60 * 1000));
-    assert.equal(BackendSession.takeStopOnce(directory, 1000), false);
+    fs.writeFileSync(file, BackendSession.formatQuitChoice(BackendSession.QUIT_CHOICE.KEEP, 900));
+    assert.equal(BackendSession.takeQuitChoice(directory, 1000), 'keep');
+    fs.writeFileSync(file, BackendSession.formatQuitChoice(BackendSession.QUIT_CHOICE.STOP, 1000 - 6 * 60 * 1000));
+    assert.equal(BackendSession.takeQuitChoice(directory, 1000), null);
     assert.equal(fs.existsSync(file), false);
     fs.writeFileSync(file, 'abc');
-    assert.equal(BackendSession.takeStopOnce(directory, 1000), false);
+    assert.equal(BackendSession.takeQuitChoice(directory, 1000), null);
+    fs.writeFileSync(file, 'other:900');
+    assert.equal(BackendSession.takeQuitChoice(directory, 1000), null);
 });
