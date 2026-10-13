@@ -231,7 +231,7 @@ class AgentActivity {
      * 에이전트를 띄운 곳이 곧 작업할 곳이라 작업 폴더는 이렇게만 생긴다. 한 번 올린 터미널은 에이전트가 끝나도 남는다.
      */
     async promoteAgents() {
-        const { state, promoted, added } = model.promoteAgentTerminals(this.workspace.state, this.workspace.terminals.all.map((terminal) => {
+        const { state, promoted } = model.promoteAgentTerminals(this.workspace.state, this.workspace.terminals.all.map((terminal) => {
             const program = this.workspace.programs.get(terminal.id);
             return { id: terminal.id, root: this.workspace.innerTerminalRoots.get(terminal.id) || terminal.id,
                 name: this.workspace.unassignedName(terminal),
@@ -273,9 +273,6 @@ class AgentActivity {
             }
             if (innerChanged) await this.workspace.saveInnerTabs();
             await this.workspace.save();
-            for (const key of added) {
-                this.workspace.openRepository(key);
-            }
             const current = this.workspace.currentWidget();
             if (current && promoted.includes(current.id)) this.workspace.selectedFolder = model.folderOf(this.workspace.state, current.id);
         }

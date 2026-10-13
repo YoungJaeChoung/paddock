@@ -144,6 +144,8 @@ class PaddockWorkspace {
         this.wslDistributions = [];
         this.defaultWslDistribution = '';
         this.wslHomePath = '';
+        // Git 확장에 저장소를 알린 작업 폴더 주소(openShownRepository). 같은 폴더를 두 번 열지 않는다.
+        this.openedRepositoryFolders = new Set();
         // -- 화면 조각·기능 묶음 --
         this.rootSwitcher = new RootSwitcher(this);
         this.agentActivity = new AgentActivity(this);
@@ -720,9 +722,6 @@ class PaddockWorkspace {
         else await this.activate((restored && this.rootSwitcher.rootOf(restored) ? restored : extra).id);
         this.selectedTopTerminal = this.currentWidget()?.id || null;
         this.selectedFolder = this.workFolderOf(this.currentWidget()) || this.state.folders[0]?.key || null;
-        for (const folder of this.state.folders) {
-            this.openRepository(folder.key);
-        }
         // 켜자마자 입력할 수 있게 본문에 보이는 터미널에 포커스를 준다.
         const shown = this.shell.mainPanel.currentTitle?.owner;
         if (this.isTerminal(shown)) await this.activate(shown.id);
@@ -1611,6 +1610,24 @@ class PaddockWorkspace {
         }
     }
 
+    /**
+     * 보여 주는 폴더가 속한 작업 폴더의 저장소를 Git 확장에 처음 한 번만 알린다.
+     * 시작할 때 작업 폴더 전부를 열지 않는 이유: 화면은 보여 주는 폴더의 저장소만 쓰고, WSL 폴더를 열 때마다
+     * Windows의 git이 WSL 경로를 읽어 느리며 그 저장소에 건 파일 감시는 실패한다.
+     * 작업 폴더 밖의 폴더(Unassigned 터미널의 폴더 등)는 그 폴더 자체를 연다.
+     */
+    openShownRepository(
+        shown,
+    ) {
+        const uri = new URI(shown);
+        const folder = this.state.folders.find(item => new URI(item.key).isEqualOrParent(uri));
+        const key = folder ? folder.key : shown;
+        if (!this.openedRepositoryFolders.has(key)) {
+            this.openedRepositoryFolders.add(key);
+            this.openRepository(key);
+        }
+    }
+
     openRepository(
         key,
     ) {
@@ -1646,6 +1663,7 @@ class PaddockWorkspace {
             this.watchedFolder = null;
             if (key) {
                 const uri = new URI(key);
+                this.openShownRepository(key);
                 let watch;
                 if (['wsl.localhost', 'wsl$'].includes(uri.authority.toLowerCase())) {
                     const timer = setInterval(() => {
