@@ -173,3 +173,10 @@ test('C-agent-A4.5: 신호를 보내던 에이전트가 끝나 셸로 돌아오�
     assert.equal(agent.settle(a, 60000, false).finished, false);
     assert.equal(agent.settle(agent.noteStatus(agent.idle(), { state: 'working', kind: null }, 0), 1000, null).finished, false, '프로그램을 모르면 판정을 미룬다');
 });
+
+test('AM-SOUND: a second done sound inside the cooldown is skipped', () => {
+    const { shouldSound, ACTIVITY } = require('../agent-model');
+    assert.equal(shouldSound(null, 1000), true);
+    assert.equal(shouldSound(1000, 1000 + ACTIVITY.SOUND_COOLDOWN_MS - 1), false);
+    assert.equal(shouldSound(1000, 1000 + ACTIVITY.SOUND_COOLDOWN_MS), true);
+});

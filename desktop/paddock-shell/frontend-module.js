@@ -4,6 +4,7 @@ const { ApplicationShell } = require('@theia/core/lib/browser/shell/application-
 const { AboutDialog } = require('@theia/core/lib/browser/about-dialog');
 const { FrontendApplicationContribution } = require('@theia/core/lib/browser/frontend-application-contribution');
 const { KeybindingContribution } = require('@theia/core/lib/browser/keybinding');
+const { MenuContribution } = require('@theia/core/lib/common/menu');
 const { CommandContribution } = require('@theia/core/lib/common/command');
 const { PreferenceContribution } = require('@theia/core/lib/common/preferences/preference-schema');
 const { PaddockShell } = require('./shell');
@@ -11,6 +12,7 @@ const { PaddockAboutDialog } = require('./about-dialog');
 const { PaddockWorkspace } = require('./workspace');
 const { PaddockExtensionOpen } = require('./extension-open');
 const { PaddockBackendStop } = require('./backend-stop');
+const { PaddockReviewNotes } = require('./review-notes-contribution');
 const { PaddockPdfOpener } = require('./pdf-viewer');
 const { PaddockBinaryNoticeOpener } = require('./binary-notice');
 const { OpenHandler } = require('@theia/core/lib/browser/opener-service');
@@ -112,6 +114,11 @@ exports.default = new ContainerModule((bind, unbind, isBound, rebind, unbindAsyn
     // 확장이 알림 버튼에서 부르는 VS Code의 `extension.open`(확장 페이지 열기·업데이트)을 제공한다.
     bind(CommandContribution).toDynamicValue(({ container }) => new PaddockExtensionOpen(container)).inSingletonScope();
     bind(CommandContribution).toDynamicValue(({ container }) => new PaddockBackendStop(container)).inSingletonScope();
+    // 코드 줄에 남긴 검토 메모를 모아 에이전트 터미널에 한 번에 붙여 넣는다(review-notes.js).
+    bind(PaddockReviewNotes).toDynamicValue(({ container }) => new PaddockReviewNotes(container)).inSingletonScope();
+    bind(CommandContribution).toService(PaddockReviewNotes);
+    bind(MenuContribution).toService(PaddockReviewNotes);
+    bind(KeybindingContribution).toService(PaddockReviewNotes);
     bind(OpenHandler).toDynamicValue(({ container }) => new PaddockPdfOpener(container)).inSingletonScope();
     bind(OpenHandler).toDynamicValue(({ container }) => new PaddockBinaryNoticeOpener(container)).inSingletonScope();
     bind(PreferenceContribution).toConstantValue({ schema: PaddockPreferenceSchema });

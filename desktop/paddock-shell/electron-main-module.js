@@ -13,6 +13,7 @@ const { moveLegacyDirectory } = require('./legacy-directory');
 const { isViewportStale, fillsWorkArea, boundsWithin } = require('./window-fit');
 const BackendSession = require('./backend-session');
 const QuitPreference = require('./quit-preference');
+const { startPerformanceProbe } = require('./performance-probe');
 
 // macOS에서만 의미 있는 창 옵션. Windows에서 titleBarStyle을 넘기면 창 틀과 닫기 버튼이 사라진다.
 const MAC_ONLY_WINDOW_OPTIONS = ['titleBarStyle', 'trafficLightPosition'];
@@ -327,6 +328,11 @@ class PaddockMainApplication extends ElectronMainApplication {
         // 창이 모두 닫혀 종료가 확정된 시점(will-quit)에 백엔드를 어떻게 할지 정한다. 저장하지 않은 편집기 때문에 창 닫기가
         // 거부되면 이 이벤트가 오지 않으므로 백엔드는 그대로다. 결정이 끝나기 전의 종료 요청은 계속 막는다.
         app.whenReady().then(() => {
+            // 멈춤·메모리 기록은 설정 폴더의 logs/performance.log에 쌓인다(performance-probe.js).
+            startPerformanceProbe(
+                path.join(process.env.THEIA_CONFIG_DIR, 'logs'),
+                () => app.getAppMetrics().map(metric => ({ type: metric.type, workingSetKb: metric.memory.workingSetSize })),
+            );
             // Linux·macOS는 powerMonitor가, Windows는 창의 session-end가 OS 종료를 알린다.
             powerMonitor.on('shutdown', () => { this.isSystemShutdown = true; });
         });

@@ -295,7 +295,10 @@ class AgentActivity {
             if (watching) this.acknowledgeActivity(terminal);
             if (finished && !watching) {
                 this.workspace.doneIds.add(terminal.id);
-                if (this.workspace.preferences.get('paddock.agentDoneSound', true)) this.playDoneSound();
+                if (this.workspace.preferences.get('paddock.agentDoneSound', true) && agent.shouldSound(this.lastSoundAt ?? null, now)) {
+                    this.lastSoundAt = now;
+                    this.playDoneSound();
+                }
             }
         }
     }

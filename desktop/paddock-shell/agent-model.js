@@ -15,6 +15,8 @@ const ACTIVITY = {
     QUIET_MS: 3000,
     // 이만큼 넘게 일한 경우만 알린다(ms).
     MIN_BUSY_MS: 5000,
+    // 완료 소리를 낸 뒤 이 시간 안에 오는 다음 소리는 내지 않는다(ms). 여러 에이전트가 거의 동시에 끝날 때 소리가 겹쳐 울리는 것을 막는다.
+    SOUND_COOLDOWN_MS: 4000,
 };
 
 // 에이전트가 터미널로 직접 알리는 상태(OSC 7501 Program Status)의 규칙.
@@ -175,6 +177,22 @@ function noteStatus(
 }
 
 /**
+ * 완료 소리를 낼지. 마지막 소리 뒤 SOUND_COOLDOWN_MS가 지났거나 아직 낸 적이 없을 때만 낸다.
+ * 소리만 거르고 완료 표시(미확인 점)는 그대로 붙는다 — 어느 터미널이 끝났는지는 표시로 알 수 있다.
+ *
+ * Examples:
+ *   lastSoundAt null, now 1000     → true
+ *   lastSoundAt 1000, now 3000     → false
+ *   lastSoundAt 1000, now 5000     → true
+ */
+function shouldSound(
+    lastSoundAt,
+    now,
+) {
+    return lastSoundAt === null || now - lastSoundAt >= ACTIVITY.SOUND_COOLDOWN_MS;
+}
+
+/**
  * 터미널 입력·출력으로 관찰한 에이전트 상태. 프로그램을 모르면 unknown, 에이전트가 아니면 null이다.
  *
  * Enter 직후 첫 출력을 기다리는 3초는 waiting, 최근 출력은 working, 그 밖에는 quiet이다.
@@ -250,4 +268,5 @@ module.exports = {
     noteOutput,
     activityState,
     settle,
+    shouldSound,
 };
