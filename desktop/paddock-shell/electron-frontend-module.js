@@ -7,6 +7,8 @@ const { FrontendApplicationContribution } = require('@theia/core/lib/browser/fro
 const { SecondaryWindowService } = require('@theia/core/lib/browser/window/secondary-window-service');
 const { ElectronSecondaryWindowService } = require('@theia/core/lib/electron-browser/window/electron-secondary-window-service');
 const { forgetRestoredWidgets, attachDetachedTabDrag } = require('./tab-detach');
+const { FileSystemWatcherErrorHandler } = require('@theia/filesystem/lib/browser/filesystem-watcher-error-handler');
+const { OS } = require('@theia/core/lib/common/os');
 
 /**
  * 메인 창으로 되돌린 위젯이 보조 창 닫기를 막지 않게 하는 보조 창 서비스.
@@ -94,6 +96,14 @@ exports.default = new ContainerModule((bind, unbind, isBound, rebind) => {
             handler.copy = async text => {
                 if (text) window.electronTheiaCore.writeClipboard(text);
             };
+            // Windows의 파일 감시는 WSL 폴더(\\wsl.localhost\…)에 걸리지 않아, Git 확장이 저장소를 열 때마다 실패하고
+            // Linux 전용 안내("감시 한도를 올리라")가 뜬다. 한도 문제가 아니므로 Windows에서는 알림 대신 콘솔에만 남긴다.
+            // WSL 폴더의 변경은 보이는 폴더를 몇 초마다 다시 읽는 쪽(`watchShownFolder`)이 따라간다.
+            if (OS.type() === OS.Type.Windows) {
+                container.get(FileSystemWatcherErrorHandler).handleError = async () => {
+                    console.warn('File watching failed on a WSL folder; the shown folder is re-read periodically instead.');
+                };
+            }
         },
     }));
 });
