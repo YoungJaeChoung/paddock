@@ -41,6 +41,28 @@ test('C-ACCOUNT-RESUME-B02 scans exact transcript filenames without reading conv
     assert.throws(() => findClaudeTranscript(scope, SESSION_ID), /more than one/);
 });
 
+test('C-ACCOUNT-RESUME-B23 checks the working folder\'s project first and scans all folders only when it is absent', context => {
+    const scope = fixture(context);
+    const expected = path.join(scope.configDir, 'projects', '-work-my-app', `${SESSION_ID}.jsonl`);
+    fs.mkdirSync(path.dirname(expected));
+    fs.writeFileSync(expected, 'conversation in the folder the CLI writes for /work/my.app');
+    fs.mkdirSync(path.join(scope.configDir, 'projects', 'other'));
+    fs.writeFileSync(path.join(scope.configDir, 'projects', 'other', `${SESSION_ID}.jsonl`), 'copy elsewhere');
+    assert.equal(findClaudeTranscript(scope, SESSION_ID, '/work/my.app'), expected);
+    // 작업 폴더가 바뀐 대화는 전체 탐색으로 찾고, 여러 곳에 있으면 고르지 않는다.
+    assert.throws(() => findClaudeTranscript(scope, SESSION_ID, '/elsewhere'), /more than one/);
+    fs.rmSync(expected);
+    assert.equal(findClaudeTranscript(scope, SESSION_ID, '/work/my.app'), path.join(scope.configDir, 'projects', 'other', `${SESSION_ID}.jsonl`));
+});
+
+test('C-ACCOUNT-RESUME-B24 refuses a redirected working-folder transcript', { skip: process.platform === 'win32' }, context => {
+    const scope = fixture(context);
+    const outside = path.join(scope.directory, 'outside.json');
+    fs.writeFileSync(outside, '{}');
+    fs.symlinkSync(outside, path.join(scope.configDir, 'projects', 'project', `${SESSION_ID}.jsonl`));
+    assert.throws(() => findClaudeTranscript(scope, SESSION_ID, 'project'), /redirected/);
+});
+
 test('C-ACCOUNT-RESUME-B03 refuses transcript and registry symlinks', { skip: process.platform === 'win32' }, context => {
     const scope = fixture(context);
     const outside = path.join(scope.directory, 'outside.json');

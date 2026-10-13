@@ -13,6 +13,7 @@ class SessionIdentity {
     static TERMINAL = /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,199}$/;
     static N_METADATA_BYTES = 64 * 1024;
     static N_PROCESS_DEPTH = 8;
+    static N_PROJECT_NAME_CHARS = 200;
     static STOP_TIMEOUT_MS = 10000;
     static MISSING_FILE = 'The saved conversation file is missing. Restore it before switching accounts; this terminal has not been changed.';
     static OTHER_FOLDER = 'This Claude runs with a different configuration folder than the selected account. Open it from its saved account to switch accounts.';
@@ -89,15 +90,38 @@ function readClaudeSession(
     return result;
 }
 
-/** Exact UUID filenames identify the saved conversation; modification times never choose a conversation. */
+/**
+ * Claude CLI가 작업 폴더 경로로 짓는 프로젝트 폴더 이름. 영문자·숫자 밖의 글자는 모두 `-`가 된다.
+ * 200자를 넘는 경로는 CLI가 이름을 줄이고 해시를 붙이므로 null(모름)을 돌려 전체 탐색에 맡긴다.
+ */
+function claudeProjectName(
+    cwd,
+) {
+    const name = typeof cwd === 'string' && cwd ? cwd.replace(/[^a-zA-Z0-9]/g, '-') : '';
+    return name && name.length <= SessionIdentity.N_PROJECT_NAME_CHARS ? name : null;
+}
+
+/**
+ * Exact UUID filenames identify the saved conversation; modification times never choose a conversation.
+ * 대화의 작업 폴더에 해당하는 프로젝트 폴더를 먼저 확인한다 — CLI가 그 대화를 기록하는 위치다.
+ * 거기 없을 때만 projects 아래 모든 폴더를 훑는다. 폴더가 수천 개면 Windows에서 WSL 경로로 훑는 데 수 초가 걸리고,
+ * 그동안 백엔드의 다른 요청이 모두 멈추기 때문이다. 전체 탐색에서 여러 곳에 나오면 고르지 않는다.
+ */
 function findClaudeTranscript(
     scope,
     sessionId,
+    cwd,
 ) {
     if (!SessionIdentity.UUID.test(sessionId || '')) throw new Error('The conversation identifier is invalid.');
     const directory = scope.join(scope.configDir, 'projects');
     const matches = [];
-    if (plainEntry(scope.toLocal(directory), 'directory')) {
+    const projectName = claudeProjectName(cwd);
+    const expectedProject = projectName && scope.join(directory, projectName);
+    const expected = expectedProject && scope.join(expectedProject, `${sessionId}.jsonl`);
+    if (expected && plainEntry(scope.toLocal(directory), 'directory') && plainEntry(scope.toLocal(expectedProject), 'directory')
+        && plainEntry(scope.toLocal(expected), 'file')) {
+        matches.push(expected);
+    } else if (plainEntry(scope.toLocal(directory), 'directory')) {
         for (const entry of fs.readdirSync(scope.toLocal(directory), { withFileTypes: true })) {
             if (entry.isDirectory()) {
                 const project = scope.join(directory, entry.name);
@@ -396,7 +420,7 @@ class AccountSessions {
                     if (retained === previous?.snapshot) {
                         transcriptPath = existingTranscript(origin, retained.transcriptPath);
                     } else {
-                        transcriptPath = findClaudeTranscript(origin, record.sessionId);
+                        transcriptPath = findClaudeTranscript(origin, record.sessionId, record.cwd);
                     }
                     if (transcriptPath) {
                         result = { provider: 'claude', sessionId: record.sessionId, sourceAccountId, runtime: request.runtime,
@@ -425,7 +449,7 @@ class AccountSessions {
                 if (!result && !wasObserved && request.resume?.provider === 'claude' && SessionIdentity.UUID.test(request.resume.sessionId || '')
                     && request.resume.shellPid === request.shellPid && request.resume.shellStart === frame.shell.start) {
                     const origin = await this.scope(request, request.resume.sourceAccountId || null);
-                    const transcriptPath = findClaudeTranscript(origin, request.resume.sessionId);
+                    const transcriptPath = findClaudeTranscript(origin, request.resume.sessionId, request.resume.cwd);
                     if (transcriptPath && typeof request.resume.cwd === 'string' && request.resume.cwd && !/[\u0000-\u001f\u007f]/.test(request.resume.cwd)) {
                         result = { provider: 'claude', sessionId: request.resume.sessionId, sourceAccountId: request.resume.sourceAccountId || null,
                             shellPid: request.shellPid, shellStart: frame.shell.start,
