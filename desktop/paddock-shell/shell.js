@@ -6,6 +6,7 @@ const { isOSX, isWindows } = require('@theia/core/lib/common/os');
 const { Saveable } = require('@theia/core/lib/browser/saveable');
 const { ConfirmDialog } = require('@theia/core/lib/browser/dialogs');
 const markup = require('./shell-markup');
+const { widgetArea } = require('./widget-area');
 
 // 사이드바 폭(px). 세로 아이콘 레일은 두지 않고, 보기 전환은 사이드바 위 가로 줄에서 한다.
 // 사용자가 경계선을 끌어 바꾼 폭과 접힘 상태는 이 창의 브라우저 저장소에 남아 다음 실행에 되살린다.
@@ -123,6 +124,22 @@ class PaddockShell extends ApplicationShell {
     }
 
     /**
+     * 시작 때 쉘에 없는 왼쪽·오른쪽·아래 패널에 들어간 화면을 정리하고, 이후 그 패널을 요청하는 화면은 본문으로 돌리기 시작한다.
+     * 사이드바 보기는 사이드바에 붙이고, 나머지는 닫는다. 패널에 남겨 두면 Theia 명령이 "이미 열려 있다"고 보고 새로 넣지 않아 아무것도 안 보이고,
+     * 닫아 두면 명령이 `addWidget`으로 본문에 새로 연다. 배치를 되살리는 동안은 Theia가 패널에 넣는 대로 두고(시작 때 본문에 낯선 탭이 생기지 않게) 끝난 뒤 한 번 부른다.
+     */
+    async releasePanelWidgets() {
+        for (const area of ['left', 'right', 'bottom']) {
+            for (const widget of [...this.getWidgets(area)]) {
+                const view = this.sidebarViewOf?.(widget) ?? null;
+                if (view) await this.showSidebarView?.(view);
+                else if (!(widget instanceof TerminalWidget)) widget.close();
+            }
+        }
+        this.redirectsPanels = true;
+    }
+
+    /**
      * 위젯을 선택하기 전에 그 위젯의 묶음 배치를 본문에 되살린다(`beforeActivate`는 workspace.js가 건다).
      * Theia 명령이나 다른 확장이 직접 선택해도, 화면에서 빠져 있던 다른 묶음의 터미널이 본문에 나타난다.
      */
@@ -137,8 +154,47 @@ class PaddockShell extends ApplicationShell {
             widget.activate();
             return widget;
         }
-        this.beforeActivate?.(id);
-        return super.activateWidget(id);
+        let result = widget;
+        // 사이드바 보기는 쉘의 패널 밖에 있어 Theia의 선택 경로가 "붙어 있지 않다"며 실패하므로 위젯을 직접 선택한다.
+        if (await this.placeInBody(widget)) {
+            widget.activate();
+        } else {
+            this.beforeActivate?.(id);
+            result = await super.activateWidget(id);
+        }
+        return result;
+    }
+
+    async revealWidget(
+        id,
+    ) {
+        const widget = this.getWidgetById(id);
+        return await this.placeInBody(widget) ? widget : super.revealWidget(id);
+    }
+
+    /**
+     * 이미 왼쪽·오른쪽·아래 패널에 들어가 있는 화면을 선택하거나 드러낼 때 본문 탭으로 옮긴다(사이드바 보기는 사이드바로 보낸다).
+     * 시작 때 패널에 미리 넣어 둔 보기는 `addWidget`을 다시 거치지 않으므로, 명령으로 열어도 보이는 자리가 없는 채로 남는다.
+     * 사이드바 보기를 사이드바로 보냈으면 true, 아니면 false를 돌려준다(호출자는 true일 때 Theia의 선택 경로를 건너뛴다).
+     */
+    async placeInBody(
+        widget,
+    ) {
+        let isSidebarView = false;
+        if (widget && !widget.secondaryWindow) {
+            const view = this.sidebarViewOf?.(widget) ?? null;
+            const area = this.getAreaFor(widget);
+            const target = widgetArea({
+                area,
+                isTerminal: false,
+                isSidebarView: Boolean(view),
+                redirectsPanels: true,
+            });
+            isSidebarView = Boolean(view);
+            if (view) await this.showSidebarView?.(view);
+            else if (target !== area) await this.addWidget(widget, { area: target });
+        }
+        return isSidebarView;
     }
 
     async addWidget(
@@ -146,8 +202,18 @@ class PaddockShell extends ApplicationShell {
         options,
     ) {
         // 터미널은 아래 패널이 아니라 본문 칸에 연다. 본문이 이미 터미널이라 자리를 하나로 둔다.
-        const target = widget instanceof TerminalWidget && options?.area !== 'secondaryWindow' ? { ...options, area: 'main' } : options;
-        await super.addWidget(widget, target);
+        // 검색·출력·문제 같은 화면도 쉘에 없는 왼쪽·오른쪽·아래 패널 대신 본문 탭으로 연다. 사이드바가 품는 보기(`sidebarViewOf`는 workspace.js가 건다)만 사이드바로 보낸다.
+        const view = this.sidebarViewOf?.(widget) ?? null;
+        const area = widgetArea({
+            area: options?.area,
+            isTerminal: widget instanceof TerminalWidget,
+            isSidebarView: Boolean(view),
+            redirectsPanels: Boolean(this.redirectsPanels),
+        });
+        const target = area === options?.area ? options : { ...options, area };
+        // 이미 사이드바에 붙은 보기를 패널에 다시 넣으면 붙임 상태만 어긋나 사이드바로 되돌릴 수 없으므로, 넣지 않고 사이드바로만 보낸다.
+        if (!(view && this.sidebar.node.contains(widget.node))) await super.addWidget(widget, target);
+        if (view) await this.showSidebarView?.(view);
     }
 
     /** 실행 중인 셸과 명령을 멈추기 전에 대상 터미널 수를 보여 주고 확인한다. */

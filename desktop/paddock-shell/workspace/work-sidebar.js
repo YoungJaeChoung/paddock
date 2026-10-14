@@ -40,14 +40,7 @@ class WorkSidebar {
             host.hidden = host.dataset.host !== view;
         }
         if (VIEW_CONTAINER[view]) {
-            const host = sidebar.querySelector(`[data-host="${view}"]`);
-            const widget = await this.workspace.widgets.getOrCreateWidget(VIEW_CONTAINER[view]);
-            if (!host.contains(widget.node)) {
-                // Theia가 이 보기를 화면에 없는 왼쪽 패널에 먼저 넣어 두므로, 그 부모에서 떼어 사이드바로 옮긴다.
-                if (widget.parent) widget.parent = null;
-                if (widget.isAttached) Widget.detach(widget);
-                Widget.attach(widget, host);
-            }
+            const widget = await this.hostView(view);
             // 왼쪽 패널에서 숨겨 둔 상태가 따라오므로 다시 보이게 한다.
             widget.show();
             // 사이드바 안에 직접 붙인 보기라 크기 변경을 대신 알려 준다.
@@ -55,6 +48,25 @@ class WorkSidebar {
             widget.update();
         }
         await this.workspace.refresh();
+    }
+
+    /**
+     * 보기 컨테이너(Source control·Extensions)를 Theia가 넣어 둔 패널에서 떼어 사이드바 호스트에 붙이고 그 위젯을 돌려준다.
+     * 보기 줄의 선택은 바꾸지 않는다. 시작 때 배치를 되살리며 패널에 들어온 보기도 이 함수로 먼저 옮겨 두어야
+     * 이후 Theia 명령(`vsxExtensions.toggle` 등)이 보기를 다시 넣을 때 사이드바로 모인다.
+     */
+    async hostView(
+        view,
+    ) {
+        const host = this.workspace.shell.sidebar.node.querySelector(`[data-host="${view}"]`);
+        const widget = await this.workspace.widgets.getOrCreateWidget(VIEW_CONTAINER[view]);
+        if (!host.contains(widget.node)) {
+            // Theia가 이 보기를 화면에 없는 왼쪽 패널에 먼저 넣어 두므로, 그 부모에서 떼어 사이드바로 옮긴다.
+            if (widget.parent) widget.parent = null;
+            if (widget.isAttached) Widget.detach(widget);
+            Widget.attach(widget, host);
+        }
+        return widget;
     }
 
     renderViewBadge() {
@@ -514,4 +526,4 @@ class WorkSidebar {
     }
 }
 
-module.exports = { WorkSidebar };
+module.exports = { WorkSidebar, VIEW_CONTAINER };

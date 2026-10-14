@@ -32,7 +32,7 @@ const STATE = { SINGLE: 'single', SPLIT: 'split' };
 /**
  * 점검할 화면 목록. `match`는 위젯 w를 받아 이 화면이면 참인 식(페이지 안에서 실행),
  * `open`은 화면을 여는 식(페이지 안에서 실행, 확장 페이지처럼 끝나지 않는 명령은 기다리지 않는다).
- * `skip`이 있으면 열지 않고 그 이유를 표에 남긴다.
+ * `skip`이 있으면 열지 않고 그 이유를 표에 남긴다. `needsWorkspace`는 열린 작업 공간이 있어야 열리는 화면이다.
  */
 const SCREENS = [
     {
@@ -85,6 +85,8 @@ const SCREENS = [
         slug: 'search',
         match: "w.id === 'search-in-workspace'",
         open: "svc('CommandRegistry').executeCommand('search-in-workspace.open')",
+        // Theia가 이 명령을 열린 작업 공간이 있을 때만 켠다(isEnabled). 작업 공간 없는 모드에서는 열 수 없다.
+        needsWorkspace: true,
     },
     {
         name: '출력(Output)',
@@ -297,6 +299,11 @@ const PAGE_HELPERS = `(() => {
         return true;
     };
     const isGone = (widget) => widget.isDisposed || !widget.isAttached;
+    // 화면의 탭은 그 화면을 품은 쪽(검색은 보기 컨테이너)의 탭이므로, 화면 노드를 품은 소유자의 탭을 찾는다.
+    const realTabOf = (widget) => {
+        const owner = shell().getTabBarFor(widget)?.titles.find((title) => title.owner === widget || title.owner.node.contains(widget.node))?.owner;
+        return owner ? document.getElementById('shell-tab-' + owner.id) : null;
+    };
     const rectOf = (node) => { const r = node.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height }; };
     /** 찾은 위젯의 영역·보임·위쪽 탭·이름 줄을 읽는다. */
     const inspect = (expression) => {
@@ -307,15 +314,19 @@ const PAGE_HELPERS = `(() => {
             const rect = rectOf(widget.node);
             const tab = document.querySelector('.folder-tabs [role="tab"][data-widget-id="' + widget.id + '"]');
             const pathBar = bar?.node.querySelector(':scope > .path-bar');
+            // 칸을 나눈 뒤 위쪽 줄에 없는 화면은 그 칸이 실제 탭 줄(shows-tabs)을 보여 이름과 ×를 맡는다.
+            const realTab = bar?.node.classList.contains('shows-tabs') ? realTabOf(widget) : null;
             result = {
                 found: true,
                 id: widget.id,
                 label: widget.title.label,
                 kind: widget.constructor.name,
                 area: shell().getAreaFor(widget) || null,
+                inSidebar: Boolean(widget.node.closest('[data-host]')),
                 visible: Boolean(widget.isVisible && rect.width > 0 && rect.height > 0),
                 rect,
                 tab: tab ? { selected: tab.getAttribute('aria-selected') === 'true', label: tab.textContent } : null,
+                realTab: realTab ? { close: Boolean(realTab.querySelector('[class*="tabCloseIcon"]')), text: realTab.textContent } : null,
                 pathBar: pathBar ? { height: Math.round(pathBar.getBoundingClientRect().height), close: Boolean(pathBar.querySelector('.path-action')), text: pathBar.textContent } : null,
             };
         }
@@ -329,7 +340,15 @@ const PAGE_HELPERS = `(() => {
             const tab = document.querySelector('.folder-tabs [role="tab"][data-widget-id="' + widget.id + '"]');
             const tabClose = tab?.closest('.tab')?.querySelector('.tab-close');
             const pathClose = shell().getTabBarFor(widget)?.node.querySelector(':scope > .path-bar .path-action');
+            const realTab = shell().getTabBarFor(widget)?.node.classList.contains('shows-tabs') ? realTabOf(widget) : null;
+            const realClose = realTab?.querySelector('[class*="tabCloseIcon"]');
             if (tabClose) { tabClose.click(); via = 'tab'; }
+            else if (realClose) {
+                // Lumino 탭 줄은 실제 마우스로 눌러야 닫으므로, 누를 좌표만 알려 주고 누르기는 호출자가 CDP로 한다.
+                const r = realClose.getBoundingClientRect();
+                window.__sweepPoint = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+                via = 'real-tab';
+            }
             else if (pathClose) { pathClose.click(); via = 'path-bar'; }
         }
         return via;
@@ -527,26 +546,33 @@ async function main() {
                 await sleep(SETTLE_MS);
                 const info = opened ? await sweep(`inspect(${matchJson})`) : { found: false };
                 if (!info.found) {
-                    cell(1, false, `열리지 않음${row.openError ? `: ${row.openError.slice(0, 80)}` : ''}`);
+                    const isDisabledWithoutWorkspace = screen.needsWorkspace && !withWorkspace && /cannot be executed/.test(row.openError ?? '');
+                    cell(1, isDisabledWithoutWorkspace ? 'info' : false, `열리지 않음${row.openError ? `: ${row.openError.slice(0, 80)}` : ''}${isDisabledWithoutWorkspace ? ' — 작업 공간 없이는 명령이 꺼짐(Theia 설계)' : ''}`);
                     for (const n of [2, 3, 4, 5]) cell(n, null, '-');
                 } else {
                     row.info = info;
                     const isMain = info.area === 'main';
-                    cell(1, isMain && info.visible, `${info.area ?? '영역 없음'}·${info.visible ? '보임' : '안 보임'}(${info.kind})`);
+                    // 사이드바가 품는 보기(Source control·Extensions)는 사이드바 호스트 안에 보이면 통과한다. 본문 규칙(탭·이름 줄)은 적용하지 않는다.
+                    const place = info.inSidebar ? 'sidebar' : (info.area ?? '영역 없음');
+                    cell(1, (isMain || info.inSidebar) && info.visible, `${place}·${info.visible ? '보임' : '안 보임'}(${info.kind})`);
                     if (!isMain) {
-                        for (const n of [2, 3, 4, 5]) cell(n, null, `- (${info.area ?? '영역 없음'}이라 본문 규칙 밖)`);
+                        for (const n of [2, 3, 4, 5]) cell(n, null, `- (${place}이라 본문 규칙 밖)`);
                     } else {
                         // 위쪽 줄에 탭이 없어도 펼친 이름 줄이 이름과 닫기를 맡으면 일관된 화면(△, 실패로 세지 않음)이다. 설정 같은 전역 화면이 이 경우다.
                         const namedByBar = Boolean(info.pathBar && info.pathBar.height > 1 && info.pathBar.close);
+                        const namedByRealTab = Boolean(info.realTab && info.realTab.close);
                         if (info.tab) cell(2, info.tab.selected, info.tab.selected ? '탭 있음·선택' : '탭 있음·선택 안 됨');
-                        else cell(2, namedByBar ? 'info' : false, namedByBar ? '위쪽 줄에 탭 없음(펼친 이름 줄이 이름·닫기를 맡음)' : '위쪽 줄에 탭 없음');
+                        else if (namedByBar) cell(2, 'info', '위쪽 줄에 탭 없음(펼친 이름 줄이 이름·닫기를 맡음)');
+                        else if (namedByRealTab) cell(2, 'info', '위쪽 줄에 탭 없음(칸의 실제 탭 줄이 이름·닫기를 맡음)');
+                        else cell(2, false, '위쪽 줄에 탭 없음');
                         const bar = info.pathBar;
                         const barText = bar ? `h=${bar.height}${bar.close ? '·×있음' : '·×없음'}` : '이름 줄 없음';
                         // 위쪽 줄에 탭이 있는 한 칸 화면은 이름 줄이 접혀야 하고, 탭이 없으면 이름 줄이 펼쳐져 닫기를 맡아야 한다.
                         let barOk = true;
                         let barNote = barText;
                         if (!info.tab) {
-                            barOk = Boolean(bar && bar.height > 1 && bar.close);
+                            barOk = namedByBar || namedByRealTab;
+                            if (namedByRealTab && !namedByBar) barNote = `${barText} — 실제 탭 줄의 탭·×가 이름과 닫기를 맡음`;
                             if (!barOk) barNote = `${barText} — 탭도 없고 펼쳐진 이름 줄·닫기도 없음`;
                         } else if (state === STATE.SINGLE && bar && bar.height > 1) {
                             barOk = false;
@@ -583,13 +609,22 @@ async function main() {
                     // 4: 위쪽 탭 ×(없으면 이름 줄 ×)로 닫는다.
                     if (isMain) {
                         const via = await sweep(`clickClose(${matchJson})`);
+                        if (via === 'real-tab') {
+                            const point = await evaluate('window.__sweepPoint');
+                            for (const type of ['mousePressed', 'mouseReleased']) {
+                                await send('Input.dispatchMouseEvent', { type, x: point.x, y: point.y, button: 'left', clickCount: 1 });
+                            }
+                        }
                         const gone = via !== 'none' && await until(`(() => { const w = window.__sweep.find(${matchJson}); return !w || window.__sweep.isGone(w); })()`, 5000);
-                        cell(4, via === 'tab' ? Boolean(gone) : (via === 'path-bar' && gone ? 'info' : false), via === 'none' ? '누를 ×가 없음' : `${via === 'tab' ? '위쪽 탭 ×' : '이름 줄 ×(위쪽 탭 ×는 없음)'}로 ${gone ? '닫힘' : '안 닫힘'}`);
+                        const viaName = { tab: '위쪽 탭 ×', 'path-bar': '이름 줄 ×(위쪽 탭 ×는 없음)', 'real-tab': '칸의 실제 탭 ×(위쪽 탭 ×는 없음)' }[via];
+                        cell(4, via === 'tab' ? Boolean(gone) : (via !== 'none' && gone ? 'info' : false), via === 'none' ? '누를 ×가 없음' : `${viaName}로 ${gone ? '닫힘' : '안 닫힘'}`);
                     }
                 }
                 // 정리: 남은 화면과 영역을 닫는다.
                 if (screen.cleanup) await evaluate(`(function () { with (window.__sweep) { return (${screen.cleanup}); } })()`);
                 await evaluate(`(async () => { const w = window.__sweep.find(${JSON.stringify(screen.match)}); if (w) { const area = window.__sweep.svc('ApplicationShell').getAreaFor(w); await window.__sweep.svc('ApplicationShell').closeWidget(w.id); if (area && area !== 'main') window.__sweep.svc('ApplicationShell').collapsePanel(area); } return true; })()`);
+                // 사이드바 보기(Extensions 등)가 열려 있으면 Work 목록으로 되돌린다. 목록은 Work 보기에서만 다시 그려져 다음 점검(작업 폴더 만들기)이 막힌다.
+                await evaluate("window.__sweep.svc('PaddockWorkspace').workSidebar.showView('work')");
                 if (screen.setup === 'modifyTracked') {
                     await fsp.writeFile(path.join(sandbox.work, 'b.ts'), 'export const value: number = 1;\n');
                 }

@@ -45,7 +45,7 @@ const { STORAGE, STATUS_ITEMS, MARKDOWN_PREVIEW, element, button, attachMenuKeys
 const { RootSwitcher } = require('./workspace/root-switcher');
 const { AgentActivity } = require('./workspace/agent-activity');
 const { AccountTerminals } = require('./workspace/account-terminals');
-const { WorkSidebar } = require('./workspace/work-sidebar');
+const { WorkSidebar, VIEW_CONTAINER } = require('./workspace/work-sidebar');
 const { FileTree } = require('./workspace/file-tree');
 const { MarkdownPreview } = require('./workspace/markdown-preview');
 const { FolderTabs } = require('./workspace/folder-tabs');
@@ -372,6 +372,13 @@ class PaddockWorkspace {
         window.addEventListener('blur', releasePointer);
         this.shell = this.container.get(ApplicationShell);
         this.shell.beforeActivate = id => this.rootSwitcher.showRootOf(this.shell.getWidgetById(id));
+        // 사이드바가 품는 보기(Source control·Extensions)는 Theia 명령이 열어도 본문이 아니라 사이드바에 보인다.
+        // 시작 때 배치를 되살리며 넣는 보기는 사이드바 보기 선택을 바꾸지 않도록 사이드바에 붙이기만 하고, 배치가 준비된 뒤의 명령은 그 보기로 전환한다.
+        this.shell.sidebarViewOf = widget => Object.keys(VIEW_CONTAINER).find(view => VIEW_CONTAINER[view] === widget.id) ?? null;
+        this.shell.showSidebarView = async (view) => {
+            if (this.layoutReady) await this.workSidebar.showView(view);
+            else await this.workSidebar.hostView(view);
+        };
         // 닫기 확인창이 셸 제목(bash 등) 대신 탭·Work에 보이는 이름으로 대상을 밝힌다.
         this.shell.terminalName = terminal => this.terminalDisplayName(terminal);
         this.messages = this.container.get(MessageService);
@@ -761,6 +768,7 @@ class PaddockWorkspace {
         this.rootSwitcher.showRootOf(this.currentWidget());
         this.bindKeys();
         this.routeTerminalCommands();
+        await this.shell.releasePanelWidgets();
         this.layoutReady = true;
         void this.accountTerminals.updateAccountLabels().catch(() => {});
         this.statusBar.refreshRemote();
