@@ -31,6 +31,7 @@ const { PreferenceService } = require('@theia/core/lib/common/preferences/prefer
 const { PreferencesWidget } = require('@theia/preferences/lib/browser/views/preference-widget');
 const { ThemeService } = require('@theia/core/lib/browser/theming');
 const model = require('./work-model');
+const { fileRootFor } = require('./file-owner');
 const layoutModel = require('./layout-model');
 const tabOverflow = require('./tab-overflow');
 const { attachTabDrag, attachNativeTabDrag } = require('./tab-detach');
@@ -468,6 +469,18 @@ class PaddockWorkspace {
             const widget = title?.owner;
             if (!this.isSwitchingRoot && widget && widget.id !== PreferencesWidget.ID && this.rootSwitcher.rootOf(widget)) {
                 this.preferencesReturnWidget = widget;
+            // 파일 화면은 어떤 길로 열렸든(Paddock 열기·Theia 열기·Git 변경 열기·확장 명령) 여기서 묶음을 받아야 위쪽 줄에 오른다.
+            const fileRoot = this.layoutReady && this.shell.getAreaFor(widget) === 'main' ? fileRootFor({
+                state: this.state,
+                uri: widget.getResourceUri?.()?.toString(),
+                hasRoot: this.fileRoots.has(widget.id),
+                currentRoot: this.fileRoots.get(this.currentWidget()?.id),
+                topTerminal: this.shownTopTerminal(),
+            }) : null;
+            if (fileRoot) {
+                this.fileRoots.set(widget.id, fileRoot);
+                void this.saveInnerTabs();
+            }
             }
             this.refreshSoon();
         });
@@ -1981,7 +1994,6 @@ class PaddockWorkspace {
         uri,
     ) {
         await this.plugins.willStart;
-        const fileRoot = this.fileRoots.get(this.currentWidget()?.id) || this.shownTopTerminal();
         const bars = [...this.shell.mainPanel.tabBars()];
         const fileBar = bars.find(bar => bar.titles.length && bar.titles.every(title => !this.isTerminal(title.owner)) && bar.currentTitle?.owner?.getResourceUri?.());
         const current = this.currentWidget();
@@ -2020,10 +2032,6 @@ class PaddockWorkspace {
             if (widget && bar?.titles.some(title => this.isTerminal(title.owner))) {
                 await this.shell.addWidget(widget, widgetOptions);
                 await this.activate(widget.id);
-            }
-            if (widget && fileRoot && !model.folderContaining(this.state, uri.toString())) {
-                this.fileRoots.set(widget.id, fileRoot);
-                await this.saveInnerTabs();
             }
             this.refreshSoon();
         }
