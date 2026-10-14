@@ -71,7 +71,8 @@ class FolderTabs {
         const strip = shell.folderBar.node.querySelector('.folder-tabs');
         const mainBars = new Set(shell.mainPanel.tabBars());
         const isInside = rect => x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom;
-        const list = strip && this.scrollContainers(strip).find(container => isInside(container.getBoundingClientRect()));
+        // 칸을 나눈 동안 탭 목록은 탭 폭만큼만 차지한다. 묶음(그 칸의 가로 구간) 전체를 놓을 자리로 잡아, 마지막 탭 오른쪽 빈 곳에 놓아도 그 칸 끝에 붙인다.
+        const list = strip && this.scrollContainers(strip).find(container => isInside((container.closest('.folder-tab-group') ?? container).getBoundingClientRect()));
         const tabs = list ? [...list.querySelectorAll('[role="tab"][data-widget-id]')]
             .filter(tab => {
                 const widget = shell.getWidgetById(tab.dataset.widgetId);

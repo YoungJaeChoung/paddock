@@ -4,7 +4,7 @@ const { tabDropTarget, tabDockRef, tabRowInsert, isSameTabPlace, tabMoveIndex } 
 
 test('WD01: pane edges split in the intended direction and center merges tabs', () => {
     const rect = { left: 200, top: 50, width: 800, height: 400 };
-    for (const [x, y, mode] of [[210, 250, 'split-left'], [990, 250, 'split-right'], [600, 60, 'split-top'], [600, 440, 'split-bottom'], [600, 250, 'tab-after']]) {
+    for (const [x, y, mode] of [[205, 250, 'split-left'], [995, 250, 'split-right'], [600, 55, 'split-top'], [600, 445, 'split-bottom'], [600, 250, 'tab-after'], [280, 250, 'tab-after'], [600, 100, 'tab-after']]) {
         const target = tabDropTarget(rect, x, y);
         assert.equal(target.mode, mode);
         assert(target.rect.left >= rect.left && target.rect.top >= rect.top);
@@ -23,6 +23,10 @@ test('WD03: dropping on the center of the pane that already holds the tab change
     assert.equal(tabDockRef('tab-after', ['a', 'b', 'c'], 'b', 'a'), null);
     assert.equal(tabDockRef('tab-after', ['a', 'b'], 'a', 'a'), null);
     assert.equal(tabDockRef('tab-after', ['c'], 'c', 'a'), 'c');
+});
+
+test('WD03b: dropping on the center of another pane appends the tab at its end, not after its current tab', () => {
+    assert.equal(tabDockRef('tab-after', ['b', 'c', 'd'], 'b', 'a'), 'd');
 });
 
 test('WD04: an edge split from the tab own pane keeps another tab as the reference', () => {

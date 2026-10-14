@@ -1,3 +1,9 @@
+/**
+ * 칸 가장자리 분할 띠의 폭 비율. 이 안쪽은 그 칸으로 옮기기다.
+ * 넓으면 다른 칸으로 옮기려던 드롭이 새 칸 만들기가 되므로 VS Code·Orca처럼 좁게 둔다(각각 10%·20%).
+ */
+const EDGE_SPLIT_RATIO = 0.1;
+
 /** Resolves a pane's edge or center and the corresponding docking preview. */
 function tabDropTarget(rect, x, y) {
     const { left, top, width, height } = rect;
@@ -8,7 +14,7 @@ function tabDropTarget(rect, x, y) {
         [(y - top) / height, 'split-top', { left, top, width, height: height / 2 }],
         [(top + height - y) / height, 'split-bottom', { left, top: top + height / 2, width, height: height / 2 }],
     ].sort((a, b) => a[0] - b[0]);
-    return edges[0][0] < 0.25 ? { mode: edges[0][1], rect: edges[0][2] } : { mode: 'tab-after', rect: { left, top, width, height } };
+    return edges[0][0] < EDGE_SPLIT_RATIO ? { mode: edges[0][1], rect: edges[0][2] } : { mode: 'tab-after', rect: { left, top, width, height } };
 }
 
 /**
@@ -16,6 +22,7 @@ function tabDropTarget(rect, x, y) {
  *
  * 끈 탭이 이미 그 칸에 있으면 가운데(`tab-after`)에 놓아도 갈 곳이 없다. 이때 기준 탭을 고르면
  * 끈 탭이 그 탭 뒤로 옮겨져 사용자가 의도하지 않은 순서 바꾸기가 되므로 미리보기·이동 모두 하지 않는다.
+ * 다른 칸 가운데에 놓으면 그 칸의 맨 끝 탭을 기준으로 삼아 끝에 붙인다(현재 탭 뒤가 아니라 예측 가능한 끝 자리).
  * 가장자리 분할에서 끈 탭이 그 칸의 현재 탭이면 자기를 뺀 첫 탭을 기준으로 삼는다. 칸에 탭이 하나뿐이면 나눌 수 없어 null이다.
  *
  * | mode | titleIds | currentId | id | 결과 |
@@ -24,6 +31,7 @@ function tabDropTarget(rect, x, y) {
  * | split-right | [a] | a | a | null |
  * | tab-after | [a, b] | b | a | null |
  * | tab-after | [c] | c | a | c |
+ * | tab-after | [b, c, d] | b | a | d (끝에 붙임) |
  */
 function tabDockRef(
     mode,
@@ -33,7 +41,7 @@ function tabDockRef(
 ) {
     const isOwnPane = titleIds.includes(id);
     let ref = currentId;
-    if (isOwnPane && mode === 'tab-after') ref = null;
+    if (mode === 'tab-after') ref = isOwnPane ? null : titleIds[titleIds.length - 1] ?? null;
     else if (currentId === id) ref = titleIds.find(titleId => titleId !== id) ?? null;
     return ref;
 }
