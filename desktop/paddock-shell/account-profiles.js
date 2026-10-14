@@ -8,6 +8,7 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { WslScripts, runWsl } = require('./account-profile-wsl');
 const { BrowserBridge } = require('./account-browser');
+const { PencilServer, PencilDoctor, toWslPath, registerPencilServer, findWindowsPencil } = require('./account-pencil');
 const { inspectDirectories, repairDirectory, storageAccessResult, openFolderSettings } = require('./account-storage-access');
 
 class AccountProfile {
@@ -120,26 +121,33 @@ function linkSharedEntry(
     return warning;
 }
 
-/** Keeps the fixed browser opener beside its account without following a replaced helper into another file. */
+/**
+ * Keeps the fixed helper commands (browser opener, and for Claude the Pencil diagnostic) beside their account
+ * without following a replaced helper into another file.
+ */
 function installBrowserBridge(
     configDir,
+    provider,
 ) {
     const browserDirectory = path.join(configDir, 'paddock-bin');
     privateDirectory(browserDirectory);
-    const commandFile = path.join(browserDirectory, BrowserBridge.NAME);
-    let existing = null;
-    try {
-        existing = fs.lstatSync(commandFile);
-    } catch (error) {
-        if (error.code !== 'ENOENT') throw error;
-    }
-    if (existing && (!existing.isFile() || existing.isSymbolicLink())) throw new Error('The account browser helper is not a regular file. Restore the helper before trying again.');
-    const temporaryFile = path.join(browserDirectory, `.${BrowserBridge.NAME}.${randomUUID()}.tmp`);
-    try {
-        fs.writeFileSync(temporaryFile, BrowserBridge.SCRIPT, { mode: 0o700, flag: 'wx' });
-        fs.renameSync(temporaryFile, commandFile);
-    } finally {
-        fs.rmSync(temporaryFile, { force: true });
+    const helpers = [[BrowserBridge.NAME, BrowserBridge.SCRIPT], ...(provider === 'claude' ? [[PencilDoctor.NAME, PencilDoctor.SCRIPT]] : [])];
+    for (const [name, script] of helpers) {
+        const commandFile = path.join(browserDirectory, name);
+        let existing = null;
+        try {
+            existing = fs.lstatSync(commandFile);
+        } catch (error) {
+            if (error.code !== 'ENOENT') throw error;
+        }
+        if (existing && (!existing.isFile() || existing.isSymbolicLink())) throw new Error('The account browser helper is not a regular file. Restore the helper before trying again.');
+        const temporaryFile = path.join(browserDirectory, `.${name}.${randomUUID()}.tmp`);
+        try {
+            fs.writeFileSync(temporaryFile, script, { mode: 0o700, flag: 'wx' });
+            fs.renameSync(temporaryFile, commandFile);
+        } finally {
+            fs.rmSync(temporaryFile, { force: true });
+        }
     }
     return browserDirectory;
 }
@@ -147,12 +155,14 @@ function installBrowserBridge(
 class AccountProfiles {
     /** Config locations come from the host application; frontend requests never choose filesystem roots. */
     constructor(
-        { configDirectory, homeDirectory, claudeDirectory, codexDirectory } = {},
+        { configDirectory, homeDirectory, claudeDirectory, codexDirectory, windowsUsersDirectory } = {},
     ) {
         this.homeDirectory = path.resolve(homeDirectory || os.homedir());
         this.configDirectory = path.resolve(configDirectory || process.env.THEIA_CONFIG_DIR || path.join(this.homeDirectory, '.paddock', 'config'));
         this.claudeDirectory = path.resolve(claudeDirectory || process.env.CLAUDE_CONFIG_DIR || path.join(this.homeDirectory, '.claude'));
         this.codexDirectory = path.resolve(codexDirectory || process.env.CODEX_HOME || path.join(this.homeDirectory, '.codex'));
+        // Where Windows user folders appear inside WSL; used to find the Pencil server installed by the Windows app.
+        this.windowsUsersDirectory = windowsUsersDirectory || '/mnt/c/Users';
         this.metadataFile = path.join(this.configDirectory, AccountProfile.METADATA_FILE);
         this.pendingMutation = Promise.resolve();
         this.accessDenials = new Map();
@@ -445,6 +455,19 @@ class AccountProfiles {
         return { profile, configDir: result.configDir, env: { [environmentName]: result.configDir }, warnings: result.warnings, ...(result.browserDirectory ? { browserDirectory: result.browserDirectory } : {}), ...(profile.wslDistribution ? { wslDistribution: profile.wslDistribution } : {}) };
     }
 
+    /**
+     * Returns the Pencil server program path in the form this host's own Claude sessions can run, or null when Pencil is not installed.
+     * Windows hosts use the Windows path; WSL hosts use the /mnt path of the same Windows program.
+     */
+    pencilCommand() {
+        let command = null;
+        if (process.platform === 'win32') {
+            const candidate = path.join(this.homeDirectory, ...PencilServer.EXECUTABLE);
+            if (fs.existsSync(candidate)) command = candidate;
+        } else if (process.platform === 'linux' && process.env.WSL_DISTRO_NAME) command = findWindowsPencil(this.windowsUsersDirectory);
+        return command;
+    }
+
     prepareNative(
         profile,
     ) {
@@ -500,15 +523,25 @@ class AccountProfiles {
                 if (warning) warnings.push(warning);
             }
         }
-        const browserDirectory = process.platform === 'linux' && process.env.WSL_DISTRO_NAME ? installBrowserBridge(configDir) : null;
+        const browserDirectory = process.platform === 'linux' && process.env.WSL_DISTRO_NAME ? installBrowserBridge(configDir, profile.provider) : null;
+        if (profile.provider === 'claude') {
+            const command = this.pencilCommand();
+            if (command) registerPencilServer(path.join(configDir, '.claude.json'), command);
+        }
         return { configDir, warnings, ...(browserDirectory ? { browserDirectory } : {}) };
+    }
+
+    /** Returns the Windows Pencil server as a /mnt path for a WSL profile, or an empty text when it is not installed. */
+    pencilCommandForWsl() {
+        const command = this.pencilCommand();
+        return command ? toWslPath(command) ?? '' : '';
     }
 
     async prepareWsl(
         profile,
     ) {
         if (process.platform !== 'win32') throw new Error('This account requires Windows and its saved WSL distribution.');
-        const output = await runWsl(WslScripts.PREPARE, [profile.id, profile.provider, BrowserBridge.NAME, BrowserBridge.SCRIPT], profile.wslDistribution);
+        const output = await runWsl(WslScripts.PREPARE, [profile.id, profile.provider, BrowserBridge.NAME, BrowserBridge.SCRIPT, PencilDoctor.NAME, PencilDoctor.SCRIPT, this.pencilCommandForWsl()], profile.wslDistribution);
         const configDir = output.shift();
         const browserDirectory = output.shift();
         if (!configDir || !configDir.startsWith('/') || !configDir.endsWith(`/agent-profiles/${profile.id}/${profile.provider}`)) {

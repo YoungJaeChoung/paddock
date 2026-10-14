@@ -96,6 +96,9 @@ profile_id=$1
 provider=$2
 browser_name=$3
 browser_script=$4
+doctor_name=$5
+doctor_script=$6
+pencil_command=$7
 case "$HOME" in /*) ;; *) exit 2 ;; esac
 profile_root="$HOME/.paddock/agent-profiles"
 config_dir="$profile_root/$profile_id/$provider"
@@ -118,6 +121,43 @@ printf '%s' "$browser_script" > "$browser_temp"
 chmod 700 "$browser_temp"
 mv -f "$browser_temp" "$browser_file"
 trap - EXIT
+if [ "$provider" = claude ]; then
+    # The Pencil diagnostic is installed like the browser helper.
+    doctor_file="$browser_dir/$doctor_name"
+    if [ -L "$doctor_file" ] || { [ -e "$doctor_file" ] && [ ! -f "$doctor_file" ]; }; then exit 3; fi
+    doctor_temp=$(mktemp "$browser_dir/.doctor.XXXXXX")
+    trap 'rm -f "$doctor_temp"' EXIT
+    printf '%s' "$doctor_script" > "$doctor_temp"
+    chmod 700 "$doctor_temp"
+    mv -f "$doctor_temp" "$doctor_file"
+    trap - EXIT
+    # Pencil's own registration goes to the host's ~/.claude.json, so only mcpServers.pencil is merged into this account's file.
+    # The file also holds sign-in state: a missing or unparsable file is left alone, and every other key is kept.
+    if [ -n "$pencil_command" ] && [ -f "$pencil_command" ] && [ -f "$config_dir/.claude.json" ] && [ ! -L "$config_dir/.claude.json" ] && command -v python3 >/dev/null 2>&1; then
+        python3 - "$config_dir/.claude.json" "$pencil_command" <<'PY' || true
+import json, os, sys
+path, command = sys.argv[1:]
+with open(path, encoding='utf-8') as handle:
+    text = handle.read()
+data = json.loads(text)
+entry = {'type': 'stdio', 'command': command, 'args': ['--app', 'paddock', '--agent', 'claudeCodeCLI'], 'env': {}}
+servers = data.get('mcpServers', {}) if isinstance(data, dict) else None
+if isinstance(servers, dict) and servers.get('pencil') != entry:
+    indent = '  '
+    for line in text.splitlines():
+        body = line.lstrip(' \\t')
+        if body.startswith('"') and body != line:
+            indent = line[:len(line) - len(body)]
+            break
+    data['mcpServers'] = dict(servers, pencil=entry)
+    temporary = path + '.paddock.tmp'
+    with open(temporary, 'w', encoding='utf-8') as handle:
+        handle.write(json.dumps(data, indent=indent, ensure_ascii=False) + ('\\n' if text.endswith('\\n') else ''))
+    os.chmod(temporary, os.stat(path).st_mode & 0o777)
+    os.replace(temporary, path)
+PY
+    fi
+fi
 printf '%s\\0%s\\0' "$config_dir" "$browser_dir"
 case "$provider" in
     claude) source_dir="\${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills" ;;

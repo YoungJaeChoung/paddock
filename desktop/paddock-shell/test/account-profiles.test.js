@@ -378,7 +378,7 @@ test('A19 Windows WSL preparation separates the browser directory from warnings 
     assert.equal(prepared.configDir, configDir);
     assert.equal(prepared.browserDirectory, browserDirectory);
     assert.deepEqual(prepared.warnings, ['An existing skill named writing was kept.']);
-    assert.deepEqual(calls[0].argumentsList.slice(-4), [profile.id, profile.provider, BrowserBridge.NAME, BrowserBridge.SCRIPT]);
+    assert.deepEqual(calls[0].argumentsList.slice(7, 11), [profile.id, profile.provider, BrowserBridge.NAME, BrowserBridge.SCRIPT]);
     browserDirectory = '/tmp/another-account/paddock-bin';
     await assert.rejects(accounts.prepare(profile.id), /valid browser helper folder/);
 });
