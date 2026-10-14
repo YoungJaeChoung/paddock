@@ -15,7 +15,8 @@ function fixture(
     const configDirectory = path.join(homeDirectory, '.paddock', 'config');
     const claudeDirectory = path.join(homeDirectory, '.claude');
     const codexDirectory = path.join(homeDirectory, '.codex');
-    const configuration = { homeDirectory, configDirectory, claudeDirectory, codexDirectory };
+    // The Windows users folder is pointed at the temporary home so a real Pencil install on a WSL test machine is never found.
+    const configuration = { homeDirectory, configDirectory, claudeDirectory, codexDirectory, windowsUsersDirectory: path.join(homeDirectory, 'Users') };
     context.after(() => fs.rmSync(homeDirectory, { recursive: true, force: true }));
     return { ...configuration, accounts: new AccountProfiles(configuration) };
 }
@@ -458,6 +459,39 @@ test('A27 settings.json on Windows without link permission: the account gets a r
     assert.deepEqual(fs.readdirSync(first.configDir).filter(name => name.startsWith('.settings.json')), [], 'no temporary link or copy is left behind');
     const codex = await setup.accounts.prepare((await setup.accounts.create({ provider: 'codex' })).id);
     assert.equal(fs.existsSync(path.join(codex.configDir, 'config.toml')), false);
+});
+
+test('A29 MCP servers of the default sign-in file reach a new Claude account, follow later additions and removals, and keep the account\'s own servers', async context => {
+    const setup = fixture(context);
+    const defaultFile = path.join(setup.homeDirectory, '.claude.json');
+    const mobbin = { type: 'http', url: 'https://example.com/mobbin' };
+    const supabase = { type: 'stdio', command: 'supabase-mcp', args: [], env: {} };
+    fs.writeFileSync(defaultFile, JSON.stringify({ mcpServers: { mobbin }, oauthAccount: { accountUuid: 'default-login' } }));
+    const profile = await setup.accounts.create({ provider: 'claude' });
+    const first = await setup.accounts.prepare(profile.id);
+    const accountFile = path.join(first.configDir, '.claude.json');
+    const readAccount = () => JSON.parse(fs.readFileSync(accountFile, 'utf8'));
+    assert.deepEqual(readAccount(), { mcpServers: { mobbin } });
+    // The account signs in and adds a server of its own; the default gains one.
+    fs.writeFileSync(accountFile, JSON.stringify({ ...readAccount(), oauthAccount: { accountUuid: 'account-login' }, mcpServers: { ...readAccount().mcpServers, mine: supabase } }));
+    fs.writeFileSync(defaultFile, JSON.stringify({ mcpServers: { mobbin, supabase } }));
+    await setup.accounts.prepare(profile.id);
+    assert.deepEqual(readAccount().mcpServers, { mobbin, mine: supabase, supabase });
+    assert.deepEqual(readAccount().oauthAccount, { accountUuid: 'account-login' });
+    // The default drops mobbin: the untouched copy goes, the account's own server and the other copy stay.
+    fs.writeFileSync(defaultFile, JSON.stringify({ mcpServers: { supabase } }));
+    await setup.accounts.prepare(profile.id);
+    assert.deepEqual(readAccount().mcpServers, { mine: supabase, supabase });
+    assert.equal(fs.statSync(path.join(first.configDir, 'paddock-sync.json')).isFile(), true);
+});
+
+test('A30 an unreadable default sign-in file never stops an account from opening: preparation reports one warning and leaves the account file alone', async context => {
+    const setup = fixture(context);
+    fs.writeFileSync(path.join(setup.homeDirectory, '.claude.json'), '{ broken');
+    const profile = await setup.accounts.create({ provider: 'claude' });
+    const prepared = await setup.accounts.prepare(profile.id);
+    assert.deepEqual(prepared.warnings, ['The default Claude sign-in file (.claude.json) could not be read as JSON, so MCP servers were not synced.']);
+    assert.equal(fs.existsSync(path.join(prepared.configDir, '.claude.json')), false);
 });
 
 test('A21 keeps an account-owned commands folder and reports it', async context => {

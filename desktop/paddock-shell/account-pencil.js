@@ -1,7 +1,8 @@
 /**
- * Registers the Pencil design tool's MCP server in a Claude account profile and ships a diagnostic for it.
+ * Describes the Pencil design tool's MCP server for Claude account profiles and ships a diagnostic for it.
  * The Pencil extension writes its registration only to the host user's ~/.claude.json, so a profile that sets
- * CLAUDE_CONFIG_DIR never sees it. Only the single key mcpServers.pencil is merged; sign-in state and every other key stay untouched.
+ * CLAUDE_CONFIG_DIR never sees it. The profile registration itself is part of the `.claude.json` sync (account-claude-config.js);
+ * this module holds the server description, the default file's path repair, and the lookup of the installed program.
  */
 const fs = require('node:fs');
 const path = require('node:path');
@@ -30,36 +31,55 @@ function pencilEntry(
 }
 
 /**
- * Merges mcpServers.pencil into an existing Claude settings file and returns 'created' | 'updated' | 'unchanged' | 'skipped'.
+ * Points the default `.claude.json`'s Pencil server at the fixed Paddock path when the Pencil extension registered a versioned one.
  *
- * The file also holds sign-in and account state, so it is never replaced wholesale: a missing or unparsable file is skipped
- * (Claude Code creates the file itself on first run, and the next terminal start registers Pencil then).
- * Indentation and the trailing newline of the existing file are kept; the write goes through a same-folder temporary file and a rename.
+ * The extension registers the server from its own versioned install folder (`<deployedPlugins>/highagency.pencildev@<version>/...`),
+ * which disappears when the extension updates; the fixed path under `~/.pencil/mcp/paddock` survives updates. Only a command that lies
+ * under the Paddock-deployed extension folder is replaced, and only when the fixed program exists, so a Pencil registered by another app
+ * (for example Cursor) is never touched. The file also holds sign-in state: it is read again right before writing, written through a
+ * temporary file and rename, and keeps its indentation and permissions. A missing, unparsable, or differently shaped file is left alone.
+ * Returns 'updated' | 'unchanged' | 'skipped'.
+ *
+ * Examples
+ * --------
+ * | registered command                                         | stableCommand | result    |
+ * | ---------------------------------------------------------- | ------------- | --------- |
+ * | `<deployedPlugins>/highagency.pencildev@0.6.75/.../x.exe`  | `~/.pencil/.../x.exe` | updated |
+ * | `~/.pencil/.../x.exe`                                      | same          | unchanged |
+ * | `C:/Cursor/.../x.exe`                                      | `~/.pencil/.../x.exe` | skipped |
  */
-function registerPencilServer(
+function repairPencilCommand(
     claudeFile,
-    command,
+    deployedPluginsDirectory,
+    stableCommand,
 ) {
     let result = 'skipped';
-    let text = null;
-    try {
-        text = fs.readFileSync(claudeFile, 'utf8');
-    } catch (error) {
-        if (error.code !== 'ENOENT') throw error;
-    }
-    let data = null;
-    try {
-        data = text === null ? null : JSON.parse(text);
-    } catch (error) {
-        data = null;
-    }
-    if (data !== null && typeof data === 'object' && !Array.isArray(data) && (data.mcpServers === undefined || (data.mcpServers !== null && typeof data.mcpServers === 'object' && !Array.isArray(data.mcpServers)))) {
-        const entry = pencilEntry(command);
-        if (JSON.stringify(data.mcpServers?.[PencilServer.NAME]) === JSON.stringify(entry)) result = 'unchanged';
-        else {
-            data.mcpServers = { ...data.mcpServers, [PencilServer.NAME]: entry };
-            const indent = /\n( +|\t)"/.exec(text)?.[1] ?? '  ';
-            const output = JSON.stringify(data, null, indent) + (text.endsWith('\n') ? '\n' : '');
+    const read = () => {
+        let text = null;
+        let data = null;
+        try {
+            text = fs.readFileSync(claudeFile, 'utf8');
+            data = JSON.parse(text);
+        } catch {
+            data = null;
+        }
+        return { text, data: data !== null && typeof data === 'object' && !Array.isArray(data) ? data : null };
+    };
+    const isVersioned = (command) => {
+        const prefix = path.join(deployedPluginsDirectory, 'highagency.pencildev@');
+        const normalize = (value) => (process.platform === 'win32' ? path.normalize(value).toLowerCase() : path.normalize(value));
+        return typeof command === 'string' && normalize(command).startsWith(normalize(prefix));
+    };
+    const first = read();
+    const command = first.data?.mcpServers?.[PencilServer.NAME]?.command;
+    if (first.data && stableCommand && fs.existsSync(stableCommand) && isVersioned(command) && command !== stableCommand) {
+        // The running Claude session may have rewritten the file since the first read, so decide again from a fresh read.
+        const fresh = read();
+        const entry = fresh.data?.mcpServers?.[PencilServer.NAME];
+        if (fresh.data && isVersioned(entry?.command)) {
+            fresh.data.mcpServers[PencilServer.NAME] = { ...entry, command: stableCommand };
+            const indent = /\n( +|\t)"/.exec(fresh.text)?.[1] ?? '  ';
+            const output = JSON.stringify(fresh.data, null, indent) + (fresh.text.endsWith('\n') ? '\n' : '');
             const temporaryFile = path.join(path.dirname(claudeFile), `.${path.basename(claudeFile)}.${randomUUID()}.tmp`);
             try {
                 fs.writeFileSync(temporaryFile, output, { mode: fs.statSync(claudeFile).mode & 0o777, flag: 'wx' });
@@ -69,6 +89,8 @@ function registerPencilServer(
             }
             result = 'updated';
         }
+    } else if (first.data && typeof command === 'string' && command === stableCommand) {
+        result = 'unchanged';
     }
     return result;
 }
@@ -197,4 +219,4 @@ PY
 `;
 }
 
-module.exports = { PencilServer, PencilDoctor, toWslPath, pencilEntry, registerPencilServer, findWindowsPencil };
+module.exports = { PencilServer, PencilDoctor, toWslPath, pencilEntry, repairPencilCommand, findWindowsPencil };

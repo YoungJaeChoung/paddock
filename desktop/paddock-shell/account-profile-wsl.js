@@ -1,5 +1,6 @@
 /** WSL prepares account folders itself so Linux links and permissions keep their native meaning. */
 const { execFile } = require('node:child_process');
+const { ClaudeConfig } = require('./account-claude-config');
 
 class WslScripts {
     static IDENTITY = 'set -eu; printf "%s\\0%s\\0" "$HOME" "${WSL_DISTRO_NAME:-}"';
@@ -121,6 +122,7 @@ printf '%s' "$browser_script" > "$browser_temp"
 chmod 700 "$browser_temp"
 mv -f "$browser_temp" "$browser_file"
 trap - EXIT
+sync_warning=""
 if [ "$provider" = claude ]; then
     # The Pencil diagnostic is installed like the browser helper.
     doctor_file="$browser_dir/$doctor_name"
@@ -131,34 +133,19 @@ if [ "$provider" = claude ]; then
     chmod 700 "$doctor_temp"
     mv -f "$doctor_temp" "$doctor_file"
     trap - EXIT
-    # Pencil's own registration goes to the host's ~/.claude.json, so only mcpServers.pencil is merged into this account's file.
-    # The file also holds sign-in state: a missing or unparsable file is left alone, and every other key is kept.
-    if [ -n "$pencil_command" ] && [ -f "$pencil_command" ] && [ -f "$config_dir/.claude.json" ] && [ ! -L "$config_dir/.claude.json" ] && command -v python3 >/dev/null 2>&1; then
-        python3 - "$config_dir/.claude.json" "$pencil_command" <<'PY' || true
-import json, os, sys
-path, command = sys.argv[1:]
-with open(path, encoding='utf-8') as handle:
-    text = handle.read()
-data = json.loads(text)
-entry = {'type': 'stdio', 'command': command, 'args': ['--app', 'paddock', '--agent', 'claudeCodeCLI'], 'env': {}}
-servers = data.get('mcpServers', {}) if isinstance(data, dict) else None
-if isinstance(servers, dict) and servers.get('pencil') != entry:
-    indent = '  '
-    for line in text.splitlines():
-        body = line.lstrip(' \\t')
-        if body.startswith('"') and body != line:
-            indent = line[:len(line) - len(body)]
-            break
-    data['mcpServers'] = dict(servers, pencil=entry)
-    temporary = path + '.paddock.tmp'
-    with open(temporary, 'w', encoding='utf-8') as handle:
-        handle.write(json.dumps(data, indent=indent, ensure_ascii=False) + ('\\n' if text.endswith('\\n') else ''))
-    os.chmod(temporary, os.stat(path).st_mode & 0o777)
-    os.replace(temporary, path)
-PY
+    # Pencil's own registration goes to the host's ~/.claude.json, so it is merged into this account's file together with the default's MCP servers
+    # and folder trust (the same algorithm as the native preparation: ClaudeConfig in account-claude-config.js).
+    # The file also holds sign-in state: an unparsable file is left alone and every other key is kept. A refusal is reported after the fixed output below.
+    if command -v python3 >/dev/null 2>&1 && [ ! -L "$config_dir/.claude.json" ]; then
+        sync_default="\${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json"
+        if [ -n "$pencil_command" ] && [ ! -f "$pencil_command" ]; then pencil_command=""; fi
+        sync_warning=$(python3 - "$sync_default" "$config_dir/.claude.json" "$config_dir/paddock-sync.json" "$pencil_command" <<'PY' || true
+${ClaudeConfig.PYTHON}PY
+)
     fi
 fi
 printf '%s\\0%s\\0' "$config_dir" "$browser_dir"
+if [ -n "$sync_warning" ]; then printf '%s\\0' "$sync_warning"; fi
 case "$provider" in
     claude) source_dir="\${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills" ;;
     codex) source_dir="\${CODEX_HOME:-$HOME/.codex}/skills" ;;

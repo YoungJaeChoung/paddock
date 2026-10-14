@@ -7,7 +7,7 @@ const { spawnSync } = require('node:child_process');
 const { AccountProfiles } = require('../account-profiles');
 const { WslScripts } = require('../account-profile-wsl');
 const { BrowserBridge } = require('../account-browser');
-const { PencilServer, PencilDoctor, toWslPath, pencilEntry, registerPencilServer, findWindowsPencil } = require('../account-pencil');
+const { PencilServer, PencilDoctor, toWslPath, pencilEntry, repairPencilCommand, findWindowsPencil } = require('../account-pencil');
 
 const hasPython = spawnSync('python3', ['--version']).status === 0;
 
@@ -35,35 +35,48 @@ test('P01 toWslPath maps a drive path to its /mnt form and rejects other shapes'
     assert.equal(toWslPath('/home/young'), null);
 });
 
-test('P02 registerPencilServer merges only mcpServers.pencil, keeps other keys and formatting, and is idempotent', context => {
-    const file = path.join(temporaryDirectory(context), '.claude.json');
-    fs.writeFileSync(file, '{\n    "oauthAccount": {"email": "kept"},\n    "mcpServers": {"other": {"command": "x"}}\n}\n', { mode: 0o600 });
-    assert.equal(registerPencilServer(file, '/mnt/c/p.exe'), 'updated');
+test('P02 repairPencilCommand replaces only a command under the Paddock-deployed extension folder, keeping other keys, formatting, and permissions', context => {
+    const directory = temporaryDirectory(context);
+    const deployed = path.join(directory, 'config', 'deployedPlugins');
+    const stable = fakePencil(directory);
+    const file = path.join(directory, '.claude.json');
+    const versioned = path.join(deployed, 'highagency.pencildev@0.6.75', 'out', 'mcp-server-windows-x64.exe');
+    fs.writeFileSync(file, `{\n    "oauthAccount": {"email": "kept"},\n    "mcpServers": {"other": {"command": "x"}, "pencil": ${JSON.stringify({ ...pencilEntry(versioned), env: { KEEP: '1' } })}}\n}\n`, { mode: 0o600 });
+    assert.equal(repairPencilCommand(file, deployed, stable), 'updated');
     const written = fs.readFileSync(file, 'utf8');
-    assert.deepEqual(JSON.parse(written), { oauthAccount: { email: 'kept' }, mcpServers: { other: { command: 'x' }, pencil: pencilEntry('/mnt/c/p.exe') } });
+    const data = JSON.parse(written);
+    assert.equal(data.mcpServers.pencil.command, stable);
+    assert.deepEqual(data.mcpServers.pencil.env, { KEEP: '1' });
+    assert.deepEqual(data.oauthAccount, { email: 'kept' });
+    assert.deepEqual(data.mcpServers.other, { command: 'x' });
     assert.match(written, /^\{\n    "oauthAccount"/);
     assert.ok(written.endsWith('}\n'));
     assert.equal(fs.statSync(file).mode & 0o777, 0o600);
-    assert.equal(registerPencilServer(file, '/mnt/c/p.exe'), 'unchanged');
-    assert.equal(fs.readFileSync(file, 'utf8'), written);
-    assert.equal(registerPencilServer(file, '/mnt/c/moved.exe'), 'updated');
-    assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).mcpServers.pencil.command, '/mnt/c/moved.exe');
-    assert.deepEqual(fs.readdirSync(path.dirname(file)), ['.claude.json']);
+    assert.equal(repairPencilCommand(file, deployed, stable), 'unchanged');
+    assert.deepEqual(fs.readdirSync(directory).filter(name => name.includes('tmp')), []);
 });
 
-test('P03 registerPencilServer adds mcpServers when absent and never creates or rewrites unusable files', context => {
+test('P03 repairPencilCommand leaves another app\'s Pencil, a missing fixed program, and unusable files alone', context => {
     const directory = temporaryDirectory(context);
+    const deployed = path.join(directory, 'deployedPlugins');
+    const stable = fakePencil(directory);
     const file = path.join(directory, '.claude.json');
-    assert.equal(registerPencilServer(file, '/p.exe'), 'skipped');
-    assert.equal(fs.existsSync(file), false);
-    fs.writeFileSync(file, '{"a":1}');
-    assert.equal(registerPencilServer(file, '/p.exe'), 'updated');
-    assert.equal(fs.readFileSync(file, 'utf8'), JSON.stringify({ a: 1, mcpServers: { pencil: pencilEntry('/p.exe') } }, null, 2));
-    for (const broken of ['{not json', '[]', '{"mcpServers": []}']) {
+    const versioned = path.join(deployed, 'highagency.pencildev@0.6.75', 'x.exe');
+    const other = '{"mcpServers":{"pencil":{"command":"/cursor/extensions/pencil/x"}}}';
+    fs.writeFileSync(file, other);
+    assert.equal(repairPencilCommand(file, deployed, stable), 'skipped');
+    assert.equal(fs.readFileSync(file, 'utf8'), other);
+    const versionedText = JSON.stringify({ mcpServers: { pencil: { command: versioned } } });
+    fs.writeFileSync(file, versionedText);
+    assert.equal(repairPencilCommand(file, deployed, path.join(directory, 'missing.exe')), 'skipped');
+    assert.equal(repairPencilCommand(file, deployed, null), 'skipped');
+    assert.equal(fs.readFileSync(file, 'utf8'), versionedText);
+    for (const broken of ['{not json', '[]']) {
         fs.writeFileSync(file, broken);
-        assert.equal(registerPencilServer(file, '/p.exe'), 'skipped');
+        assert.equal(repairPencilCommand(file, deployed, stable), 'skipped');
         assert.equal(fs.readFileSync(file, 'utf8'), broken);
     }
+    assert.equal(repairPencilCommand(path.join(directory, 'absent.json'), deployed, stable), 'skipped');
 });
 
 test('P04 findWindowsPencil returns the first Windows user folder holding the server', context => {
@@ -88,26 +101,30 @@ test('P05 a native WSL Claude profile registers Pencil on every prepare and gets
     const claude = await accounts.create({ provider: 'claude' });
     const first = await accounts.prepare(claude.id);
     const claudeFile = path.join(first.configDir, '.claude.json');
-    assert.equal(fs.existsSync(claudeFile), false);
+    // Pencil is registered even when the account has no sign-in file yet; the CLI fills in the rest when it first runs.
+    assert.deepEqual(JSON.parse(fs.readFileSync(claudeFile, 'utf8')), { mcpServers: { pencil: pencilEntry(command) } });
+    if (process.platform !== 'win32') assert.equal(fs.statSync(claudeFile).mode & 0o777, 0o600);
     assert.deepEqual(fs.readdirSync(first.browserDirectory).sort(), [BrowserBridge.NAME, PencilDoctor.NAME].sort());
     assert.equal(fs.readFileSync(path.join(first.browserDirectory, PencilDoctor.NAME), 'utf8'), PencilDoctor.SCRIPT);
     fs.writeFileSync(claudeFile, '{"userID":"kept"}\n');
     await accounts.prepare(claude.id);
     assert.deepEqual(JSON.parse(fs.readFileSync(claudeFile, 'utf8')), { userID: 'kept', mcpServers: { pencil: pencilEntry(command) } });
+    await accounts.prepare(claude.id);
+    assert.equal(fs.readFileSync(claudeFile, 'utf8').endsWith('}\n'), true);
     const codex = await accounts.create({ provider: 'codex' });
     const prepared = await accounts.prepare(codex.id);
     assert.deepEqual(fs.readdirSync(prepared.browserDirectory), [BrowserBridge.NAME]);
 });
 
-test('P06 the WSL preparation script merges the /mnt command into an existing Claude file only', { skip: process.platform === 'win32' || !hasPython }, context => {
+test('P06 the WSL preparation script registers the /mnt command in the account file, keeping its other keys and formatting', { skip: process.platform === 'win32' || !hasPython }, context => {
     const home = temporaryDirectory(context);
     const id = '00000000-0000-4000-8000-000000000003';
     const configDir = path.join(home, '.paddock', 'agent-profiles', id, 'claude');
     const command = fakePencil(home);
-    const run = (provider, pencilCommand) => spawnSync('sh', ['-c', WslScripts.PREPARE, 'paddock-accounts', id, provider, BrowserBridge.NAME, BrowserBridge.SCRIPT, PencilDoctor.NAME, PencilDoctor.SCRIPT, pencilCommand], { encoding: 'utf8', env: { ...process.env, HOME: home } });
+    const run = (provider, pencilCommand) => spawnSync('sh', ['-c', WslScripts.PREPARE, 'paddock-accounts', id, provider, BrowserBridge.NAME, BrowserBridge.SCRIPT, PencilDoctor.NAME, PencilDoctor.SCRIPT, pencilCommand], { encoding: 'utf8', env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: '', CODEX_HOME: '' } });
     let result = run('claude', command);
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(fs.existsSync(path.join(configDir, '.claude.json')), false);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(configDir, '.claude.json'), 'utf8')), { mcpServers: { pencil: pencilEntry(command) } });
     assert.equal(fs.readFileSync(path.join(configDir, 'paddock-bin', PencilDoctor.NAME), 'utf8'), PencilDoctor.SCRIPT);
     fs.writeFileSync(path.join(configDir, '.claude.json'), '{\n    "userID": "kept"\n}\n');
     result = run('claude', command);

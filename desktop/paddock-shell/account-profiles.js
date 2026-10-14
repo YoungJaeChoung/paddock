@@ -9,7 +9,8 @@ const { randomUUID } = require('node:crypto');
 const { WslScripts, runWsl } = require('./account-profile-wsl');
 const { BrowserBridge } = require('./account-browser');
 const { flagSettingsPath } = require('./claude-flag-settings');
-const { PencilServer, PencilDoctor, toWslPath, registerPencilServer, findWindowsPencil } = require('./account-pencil');
+const { PencilServer, PencilDoctor, toWslPath, repairPencilCommand, findWindowsPencil } = require('./account-pencil');
+const { ClaudeConfig, syncClaudeConfig } = require('./account-claude-config');
 const { inspectDirectories, repairDirectory, storageAccessResult, openFolderSettings } = require('./account-storage-access');
 
 class AccountProfile {
@@ -284,12 +285,16 @@ function installBrowserBridge(
 class AccountProfiles {
     /** Config locations come from the host application; frontend requests never choose filesystem roots. */
     constructor(
-        { configDirectory, homeDirectory, claudeDirectory, codexDirectory, windowsUsersDirectory } = {},
+        { configDirectory, homeDirectory, claudeDirectory, claudeConfigFile, codexDirectory, windowsUsersDirectory } = {},
     ) {
         this.homeDirectory = path.resolve(homeDirectory || os.homedir());
         this.configDirectory = path.resolve(configDirectory || process.env.THEIA_CONFIG_DIR || path.join(this.homeDirectory, '.paddock', 'config'));
         this.claudeDirectory = path.resolve(claudeDirectory || process.env.CLAUDE_CONFIG_DIR || path.join(this.homeDirectory, '.claude'));
         this.codexDirectory = path.resolve(codexDirectory || process.env.CODEX_HOME || path.join(this.homeDirectory, '.codex'));
+        // The default environment's sign-in file (MCP servers, folder trust). The CLI keeps it inside CLAUDE_CONFIG_DIR when that is set, otherwise beside ~/.claude.
+        // An explicitly given Claude folder (tests, embedding hosts) is not combined with this process's CLAUDE_CONFIG_DIR.
+        this.claudeConfigFile = path.resolve(claudeConfigFile || (claudeDirectory ? path.join(this.homeDirectory, '.claude.json')
+            : process.env.CLAUDE_CONFIG_DIR ? path.join(process.env.CLAUDE_CONFIG_DIR, '.claude.json') : path.join(this.homeDirectory, '.claude.json')));
         // Where Windows user folders appear inside WSL; used to find the Pencil server installed by the Windows app.
         this.windowsUsersDirectory = windowsUsersDirectory || '/mnt/c/Users';
         this.metadataFile = path.join(this.configDirectory, AccountProfile.METADATA_FILE);
@@ -678,7 +683,15 @@ class AccountProfiles {
         const browserDirectory = process.platform === 'linux' && process.env.WSL_DISTRO_NAME ? installBrowserBridge(configDir, profile.provider) : null;
         if (profile.provider === 'claude') {
             const command = this.pencilCommand();
-            if (command) registerPencilServer(path.join(configDir, '.claude.json'), command);
+            // Pencil's own registration in the default file points at the extension's versioned folder on Windows; the fixed path survives extension updates.
+            if (command && process.platform === 'win32') repairPencilCommand(this.claudeConfigFile, path.join(this.configDirectory, 'deployedPlugins'), command);
+            const synced = syncClaudeConfig({
+                defaultFile: this.claudeConfigFile,
+                profileFile: path.join(configDir, '.claude.json'),
+                syncFile: path.join(configDir, ClaudeConfig.SYNC_FILE),
+                pencilCommand: command,
+            });
+            warnings.push(...synced.warnings);
         }
         return { configDir, warnings, ...(browserDirectory ? { browserDirectory } : {}) };
     }
