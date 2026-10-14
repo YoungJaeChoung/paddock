@@ -5,6 +5,9 @@ const os = require('node:os');
 const path = require('node:path');
 const hook = require('../memory-hook-settings');
 
+// 훅은 가용 메모리를 /proc/meminfo에서 읽는다. 이 파일이 없는 macOS·Windows에서는 부족 안내가 나오지 않으므로, 안내가 나와야 하는 검사를 건너뛴다.
+const MEMINFO_SKIP = fs.existsSync('/proc/meminfo') ? false : '/proc/meminfo가 없는 플랫폼';
+
 const SCRIPT = '/home/me/.paddock/config/usage/memory-hook.sh';
 const COMMAND = hook.memoryHookCommand(SCRIPT, 4096);
 // 사용자가 직접 만든 훅(이름이 다르다).
@@ -149,7 +152,7 @@ test('C-memhook-set.13: 켠 적 없는 곳에서 끄면 스크립트·꺼짐 표
     assert.equal(fs.existsSync(settingsPath), false);
 });
 
-test('C-memhook-set.14: 꺼짐 표시를 둔 스크립트는 메모리가 부족해도 아무것도 출력하지 않는다', () => {
+test('C-memhook-set.14: 꺼짐 표시를 둔 스크립트는 메모리가 부족해도 아무것도 출력하지 않는다', { skip: MEMINFO_SKIP }, () => {
     const { execFileSync } = require('node:child_process');
     const folder = tempFolder();
     const scriptFile = path.join(folder, 'memory-hook.sh');

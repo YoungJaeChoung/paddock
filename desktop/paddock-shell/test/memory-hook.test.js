@@ -6,6 +6,8 @@ const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 
 const HOOK = path.join(__dirname, '..', 'memory-hook.sh');
+// 훅은 가용 메모리를 /proc/meminfo에서 읽는다. 이 파일이 없는 macOS·Windows에서는 부족 안내가 나오지 않으므로, 안내가 나와야 하는 검사를 건너뛴다.
+const MEMINFO_SKIP = fs.existsSync('/proc/meminfo') ? false : '/proc/meminfo가 없는 플랫폼';
 
 /** 훅을 실행해 stdout을 돌려준다. 기준값은 사용자 설정(PADDOCK_MEMORY_MIN_MB)으로만 바꾼다. */
 function run(
@@ -18,7 +20,7 @@ function run(
     return execFileSync('sh', [HOOK], { input: JSON.stringify({ tool_name: toolName, tool_input: {} }), env, encoding: 'utf8' });
 }
 
-test('C-memhook.1: 가용 메모리가 기준보다 적으면 문맥 안내 한 줄을 출력하고 실행은 막지 않는다', () => {
+test('C-memhook.1: 가용 메모리가 기준보다 적으면 문맥 안내 한 줄을 출력하고 실행은 막지 않는다', { skip: MEMINFO_SKIP }, () => {
     const output = run('Bash', 999999999);
     const parsed = JSON.parse(output);
     assert.equal(parsed.hookSpecificOutput.hookEventName, 'PreToolUse');
@@ -26,7 +28,7 @@ test('C-memhook.1: 가용 메모리가 기준보다 적으면 문맥 안내 한 
     assert.equal(parsed.hookSpecificOutput.permissionDecision, undefined);
 });
 
-test('C-memhook.2: 부족한 동안은 메모리를 쓰는 도구(Bash·Agent·Task)를 쓸 때마다 안내한다', () => {
+test('C-memhook.2: 부족한 동안은 메모리를 쓰는 도구(Bash·Agent·Task)를 쓸 때마다 안내한다', { skip: MEMINFO_SKIP }, () => {
     for (const tool of ['Bash', 'Agent', 'Task']) {
         assert.notEqual(run(tool, 999999999), '', tool);
     }
@@ -47,7 +49,7 @@ test('C-memhook.5: 기준값이 숫자가 아니면 조용히 넘어간다', () 
     assert.equal(run('Bash', 'abc'), '');
 });
 
-test('C-memhook.6: 같은 폴더에 꺼짐 표시 파일이 있으면 부족해도 아무것도 출력하지 않고, 지우면 다시 안내한다', () => {
+test('C-memhook.6: 같은 폴더에 꺼짐 표시 파일이 있으면 부족해도 아무것도 출력하지 않고, 지우면 다시 안내한다', { skip: MEMINFO_SKIP }, () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'memhook-off-'));
     const script = path.join(directory, 'memory-hook.sh');
     fs.copyFileSync(HOOK, script);
