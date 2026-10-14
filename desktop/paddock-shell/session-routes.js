@@ -6,11 +6,15 @@ const express = require('express');
 const { ProcessManager } = require('@theia/process/lib/node/process-manager');
 const { TerminalProcess } = require('@theia/process/lib/node/terminal-process');
 const { sharedEnvironment, note } = require('./backend-session');
+const { terminalHistoryService } = require('./terminal-history-service');
 
 /**
  * `GET /paddock/session` → `{ terminals }` 열려 있는(끝나지 않은) 터미널 수.
  * `POST /paddock/session/environment` 본문 `{ env }` → 허용된 변수만 이 백엔드의 환경에 덮어쓴다. 이후 새로 여는 터미널이 새 값을 받는다.
  *   이미 열려 있는 터미널의 환경은 바뀌지 않는다.
+ * `GET /paddock/session/terminals/:id/history` → 저장해 둔 터미널 기록 `{ savedAt, launcher, cwdNow, agent, output }`. 없으면 404.
+ *   앱이 터미널 프로세스째 사라진 뒤 그 터미널을 되살릴 때 화면이 읽는다.
+ * `DELETE /paddock/session/terminals/:id/history` → 그 기록을 지운다(되살린 뒤·되살리지 않기로 한 뒤). 없어도 204.
  * `POST /paddock/session/stop` 본문 `{ reason }`(없으면 `unknown`)을 `backend.log`에 `Stop requested: <reason>`으로 남기고 202를 돌려준 뒤 일반 종료 절차(터미널 정리 포함)로 백엔드를 끝낸다.
  */
 class PaddockSessionRoutes {
@@ -26,6 +30,18 @@ class PaddockSessionRoutes {
         });
         app.post('/paddock/session/environment', express.json({ limit: '256kb' }), (request, response) => {
             Object.assign(process.env, sharedEnvironment((request.body || {}).env));
+            response.status(204).end();
+        });
+        app.get('/paddock/session/terminals/:id/history', (request, response) => {
+            const record = /^\d+$/.test(request.params.id) ? terminalHistoryService().history.read(request.params.id) : null;
+            if (record) {
+                response.json(record);
+            } else {
+                response.status(404).json({ error: 'No saved terminal.' });
+            }
+        });
+        app.delete('/paddock/session/terminals/:id/history', (request, response) => {
+            if (/^\d+$/.test(request.params.id)) terminalHistoryService().history.remove(request.params.id);
             response.status(204).end();
         });
         app.post('/paddock/session/stop', express.json({ limit: '4kb' }), (request, response) => {

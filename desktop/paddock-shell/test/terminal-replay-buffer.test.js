@@ -216,3 +216,14 @@ test('작은 링에 무작위로 쓰고 읽어도 깨진 글자·역행·중복�
     }
     assert.deepEqual({ n_fffd, n_disorder, n_mismatch }, { n_fffd: 0, n_disorder: 0, n_mismatch: 0 });
 });
+
+test('쓰기 알림: 쓸 때마다 쓴 문자열을 받고, dispose하면 받지 않는다', () => {
+    const ring = new PaddockReplayBuffer({ size: RING_SIZE });
+    const received = [];
+    const listener = ring.addWriteListener(text => received.push(text));
+    ring.enq('a');
+    ring.enq('한글');
+    listener.dispose();
+    ring.enq('c');
+    assert.deepEqual(received, ['a', '한글']);
+});

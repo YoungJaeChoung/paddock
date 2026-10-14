@@ -26,7 +26,9 @@ const wsl = require('./wsl-terminals');
 const { PaddockSessionRoutes } = require('./session-routes');
 const { PaddockServiceOverrides } = require('./service-overrides');
 const windowsProcesses = require('./windows-processes');
-const { attributeAccount, parseEnviron } = require('./agent-account');
+const { attributeAccount } = require('./agent-account');
+const { foregroundProcess } = require('./terminal-inspector');
+const { terminalHistoryService } = require('./terminal-history-service');
 const { trustWslRepositories } = require('./git-environment');
 
 const accounts = new AccountProfiles();
@@ -44,43 +46,6 @@ function claudeSettingsPath() {
 /** 앱에 들어 있는 메모리 안내 훅 스크립트 원본. 백엔드는 하나의 번들로 묶이므로 앱 폴더의 paddock-shell에서 찾는다. */
 function memoryHookSource() {
     return path.join(process.env.THEIA_APP_PROJECT_PATH || process.cwd(), 'paddock-shell', MemoryHook.SCRIPT_NAME);
-}
-
-/**
- * 셸 프로세스의 지금 앞쪽 프로그램(터미널에서 실행 중인 명령)의 명령줄과 계정 환경: `{ argv, env }`. 셸만 떠 있으면 셸의 명령줄이다.
- * env는 그 프로세스의 CODEX_HOME·CLAUDE_CONFIG_DIR·HOME만 담고, 읽을 수 없으면 null(모름)이다.
- * Linux는 /proc, macOS는 ps로 읽는다(macOS는 env를 읽지 않는다). 명령줄을 읽을 수 없으면 null.
- * Windows는 WindowsProcessList와 windows-processes.js가 맡는다.
- */
-function foregroundProcess(
-    shellPid,
-) {
-    let result = null;
-    try {
-        if (process.platform === 'linux') {
-            // stat의 8번째 칸이 터미널 앞쪽 프로세스 그룹. 프로그램 이름에 공백·괄호가 있을 수 있어 마지막 ')' 뒤부터 센다.
-            const stat = fs.readFileSync(`/proc/${shellPid}/stat`, 'utf8');
-            const foreground = Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[5]);
-            const pid = foreground > 0 ? foreground : shellPid;
-            const argv = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean);
-            let env = null;
-            try {
-                env = parseEnviron(fs.readFileSync(`/proc/${pid}/environ`, 'utf8'));
-            } catch {
-                // 다른 사용자로 실행된 프로그램(sudo 등)은 환경을 읽을 수 없다. 계정은 모름으로 둔다.
-                env = null;
-            }
-            result = { argv, env };
-        } else if (process.platform === 'darwin') {
-            const group = spawnSync('ps', ['-o', 'tpgid=', '-p', String(shellPid)], { encoding: 'utf8' }).stdout.trim();
-            const pid = Number(group) > 0 ? group : String(shellPid);
-            const args = spawnSync('ps', ['-o', 'args=', '-p', pid], { encoding: 'utf8' }).stdout.trim();
-            result = args ? { argv: args.split(/\s+/), env: null } : null;
-        }
-    } catch {
-        result = null;
-    }
-    return result;
 }
 
 /** 실제 경로. 링크를 따라갈 수 없으면 입력 경로를 그대로 쓴다. */
@@ -396,6 +361,8 @@ class PaddockStatusRoutes {
                         const linked = found?.kind === 'default' && distribution ? await this.linkWslDefault(program, env, distribution) : null;
                         terminals[id] = { cwd, program, account: publicAccount(linked ? { ...found, profile: linked } : found) };
                     }
+                    // 터미널 화면 저장 장치가 저장할 때 WSL 터미널의 폴더·Claude 대화를 이 스캔 결과에서 읽는다.
+                    terminalHistoryService().inspector.noteWsl(Object.fromEntries(parsed.map(([id, { cwd, argv, sessionId }]) => [id, { cwd, program: argv.length ? agent.programName(argv) : null, sessionId }])));
                     response.json(terminals);
                 });
             }

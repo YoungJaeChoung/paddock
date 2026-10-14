@@ -3,8 +3,10 @@
 // 모든 모듈이 로드된 뒤 시작 기여(initialize)로 컨테이너를 받아 바꾼다.
 const { MultiRingBuffer } = require('@theia/process/lib/node/multi-ring-buffer');
 const { PluginPathsService } = require('@theia/plugin-ext/lib/main/common/plugin-paths-protocol');
+const { ShellProcessFactory } = require('@theia/terminal/lib/node/shell-process');
 const { PaddockReplayBuffer } = require('./terminal-replay-buffer');
 const { PaddockPluginPathsService } = require('./plugin-paths');
+const { terminalHistoryService } = require('./terminal-history-service');
 
 /**
  * 백엔드가 시작될 때 Theia 서비스 구현을 Paddock 것으로 교체한다.
@@ -15,6 +17,7 @@ const { PaddockPluginPathsService } = require('./plugin-paths');
  * |---|---|---|
  * | `MultiRingBuffer` | `PaddockReplayBuffer` | 터미널 지난 출력 재생이 링이 한 바퀴 돈 뒤 중복되고 한글이 깨진다 |
  * | `PluginPathsService` | `PaddockPluginPathsService` | 작업 공간을 열지 않으면 확장의 작업 공간 저장소가 저장되지 않는다 |
+ * | `ShellProcessFactory` | 같은 셸 프로세스를 만든 뒤 `TerminalHistory`에 추적을 맡기는 함수 | 앱이 터미널 프로세스째 사라져도 마지막 화면·폴더·대화를 파일에 남겨 되살린다 |
  */
 class PaddockServiceOverrides {
     constructor(
@@ -28,6 +31,17 @@ class PaddockServiceOverrides {
         this.container.rebind(MultiRingBuffer).to(PaddockReplayBuffer).inTransientScope();
         // 확장 저장소 경로는 확장 호스트가 뜰 때와 확장이 저장할 때 처음 쓰이므로 지금 바꿔도 이전 구현이 주입된 곳이 없다.
         this.container.rebind(PluginPathsService).to(PaddockPluginPathsService).inSingletonScope();
+        // 셸 터미널은 ShellProcessFactory로 만든다. 같은 프로세스를 돌려주되 화면 저장 장치에 추적을 맡긴다.
+        // 터미널 서버는 연결마다 만들어져 이 시점 뒤에 이 함수를 받는다.
+        const { history } = terminalHistoryService();
+        const createShellProcess = this.container.get(ShellProcessFactory);
+        this.container.rebind(ShellProcessFactory).toConstantValue(options => {
+            const shellProcess = createShellProcess(options);
+            history.track(shellProcess);
+            return shellProcess;
+        });
+        // 앱이 터미널을 끝내려는 중이면 그때 끝나는 터미널의 저장분을 남긴다(다시 열 때 되살린다). 사용자가 닫은 터미널과 구분하는 신호다.
+        for (const event of ['SIGTERM', 'SIGINT', 'exit']) process.on(event, () => history.beginStop());
     }
 }
 

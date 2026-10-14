@@ -43,6 +43,8 @@ class PaddockReplayBuffer extends MultiRingBuffer {
         this.readerStates = new Map();
         // 진행 중인 쓰기가 링보다 커서 앞이 잘렸는지. 잘린 쓰기는 글자 중간에서 시작할 수 있다.
         this.isTruncatingWrite = false;
+        // 쓰기가 끝날 때마다 쓴 문자열을 받는 함수들. 화면 출력을 파일에 남기는 쪽이 쓴다.
+        this.writeListeners = new Set();
     }
 
     enq(
@@ -52,6 +54,15 @@ class PaddockReplayBuffer extends MultiRingBuffer {
         this.isTruncatingWrite = Buffer.byteLength(str, encoding) > this.maxSize;
         super.enq(str, encoding);
         this.isTruncatingWrite = false;
+        for (const listener of this.writeListeners) listener(typeof str === 'string' ? str : String(str));
+    }
+
+    /** 쓰기가 끝날 때마다 쓴 문자열을 받을 함수를 등록한다. 돌려주는 `dispose()`로 해제한다. */
+    addWriteListener(
+        listener,
+    ) {
+        this.writeListeners.add(listener);
+        return { dispose: () => this.writeListeners.delete(listener) };
     }
 
     /**

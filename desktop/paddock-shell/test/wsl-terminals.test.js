@@ -1,6 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const wsl = require('../wsl-terminals');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const childProcess = require('node:child_process');
 
 test('C-wsl.1: wsl.exe 셸만 WSL 터미널로 본다', () => {
     assert.equal(wsl.isWslShell('C:\\Windows\\System32\\wsl.exe'), true);
@@ -12,15 +16,15 @@ test('C-wsl.1: wsl.exe 셸만 WSL 터미널로 본다', () => {
 test('C-wsl.2: 스크립트 출력에서 터미널별 현재 폴더와 명령줄을 읽고 깨진 줄은 버린다', () => {
     const output = 't1\t\\\\wsl.localhost\\Ubuntu\\home\\me\\app\tnode\x1f/usr/bin/claude\x1f\r\nt2\t\t-bash\x1f\nbroken line\n';
     assert.deepEqual(wsl.parse(output), {
-        t1: { cwd: '\\\\wsl.localhost\\Ubuntu\\home\\me\\app', argv: ['node', '/usr/bin/claude'], env: {}, distribution: '' },
-        t2: { cwd: '', argv: ['-bash'], env: {}, distribution: '' },
+        t1: { cwd: '\\\\wsl.localhost\\Ubuntu\\home\\me\\app', argv: ['node', '/usr/bin/claude'], env: {}, distribution: '', sessionId: '' },
+        t2: { cwd: '', argv: ['-bash'], env: {}, distribution: '', sessionId: '' },
     });
     assert.deepEqual(wsl.parse(''), {});
 });
 
 test('C-wsl.3: 넷째 칸의 계정 환경은 CODEX_HOME·CLAUDE_CONFIG_DIR·HOME만 받는다', () => {
     const output = 't1\t\tcodex\x1f\tHOME=/home/me\x1fCODEX_HOME=/home/me/.paddock/agent-profiles/a/codex\x1fOPENAI_API_KEY=secret\x1f\r\n';
-    assert.deepEqual(wsl.parse(output).t1, { cwd: '', argv: ['codex'], env: { HOME: '/home/me', CODEX_HOME: '/home/me/.paddock/agent-profiles/a/codex' }, distribution: '' });
+    assert.deepEqual(wsl.parse(output).t1, { cwd: '', argv: ['codex'], env: { HOME: '/home/me', CODEX_HOME: '/home/me/.paddock/agent-profiles/a/codex' }, distribution: '', sessionId: '' });
     // 스크립트는 앞쪽 프로그램의 환경에서 세 이름만 골라 출력한다.
     assert.match(wsl.script(), /grep -E '\^\(CLAUDE_CONFIG_DIR\|CODEX_HOME\|HOME\)='/);
     assert.match(wsl.script(), /\/proc\/\$fg\/environ/);
@@ -28,7 +32,7 @@ test('C-wsl.3: 넷째 칸의 계정 환경은 CODEX_HOME·CLAUDE_CONFIG_DIR·HOM
 
 test('C-wsl.4: 다섯째 칸은 셸의 WSL 배포판 이름이고, 계정 판정에서 배포판을 비교하는 데 쓴다', () => {
     const output = 't1\t\tcodex\x1f\tHOME=/home/me\x1f\tUbuntu-22.04\r\n';
-    assert.deepEqual(wsl.parse(output).t1, { cwd: '', argv: ['codex'], env: { HOME: '/home/me' }, distribution: 'Ubuntu-22.04' });
+    assert.deepEqual(wsl.parse(output).t1, { cwd: '', argv: ['codex'], env: { HOME: '/home/me' }, distribution: 'Ubuntu-22.04', sessionId: '' });
     assert.match(wsl.script(), /WSL_DISTRO_NAME=/);
 });
 
@@ -61,4 +65,22 @@ test('C-wsl.mem.3: 스크립트는 meminfo와 표지 프로세스의 statm을 �
     assert.match(wsl.script(), /\/proc\/meminfo/);
     assert.match(wsl.script(), /\/proc\/\$p\/statm/);
     assert.doesNotMatch(wsl.script(), /getconf/);
+});
+
+test('C-wsl.5: 여섯째 칸은 앞쪽 프로세스의 Claude 대화 식별자이고, 스크립트가 sessions 기록에서 읽는다', () => {
+    const output = 't1\t\tclaude\x1f\tHOME=/home/me\x1f\tUbuntu\t0b9f2f77-6a1e-4a4c-9d33-2f7a5d1c1a10\r\n';
+    assert.equal(wsl.parse(output).t1.sessionId, '0b9f2f77-6a1e-4a4c-9d33-2f7a5d1c1a10');
+
+    // 스크립트에서 대화 식별자를 읽는 세 줄만 떼어 실제 sh로 돌린다: 계정 폴더가 있으면 그 폴더, 없으면 HOME/.claude의 기록을 읽는다.
+    const lines = wsl.script().split('\n').filter(line => /^\s+(cfg|hm|sess)=/.test(line));
+    assert.equal(lines.length, 3);
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'paddock-wsl-sess-'));
+    fs.mkdirSync(path.join(home, '.claude', 'sessions'), { recursive: true });
+    fs.mkdirSync(path.join(home, 'account', 'sessions'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.claude', 'sessions', '55.json'), '{"pid":55,"sessionId":"11111111-1111-4111-8111-111111111111","kind":"interactive"}');
+    fs.writeFileSync(path.join(home, 'account', 'sessions', '55.json'), '{"pid":55,"sessionId":"22222222-2222-4222-8222-222222222222","kind":"interactive"}');
+    const read = env => childProcess.execFileSync('sh', ['-c', `fg=55; env='${env}'; ${lines.join('\n')}\nprintf %s "$sess"`], { encoding: 'utf8' });
+    assert.equal(read(`HOME=${home}\x1f`), '11111111-1111-4111-8111-111111111111');
+    assert.equal(read(`CLAUDE_CONFIG_DIR=${home}/account\x1fHOME=${home}\x1f`), '22222222-2222-4222-8222-222222222222');
+    assert.equal(read(`HOME=${home}/nowhere\x1f`), '');
 });
