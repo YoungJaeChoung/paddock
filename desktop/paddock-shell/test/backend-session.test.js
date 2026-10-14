@@ -35,14 +35,21 @@ test('clearState는 파일이 없어도 실패하지 않는다', () => {
     assert.equal(BackendSession.readState(directory), null);
 });
 
-test('fingerprintOf는 파일이 바뀌면 달라지고 없으면 0이다', () => {
+test('fingerprintOf는 내용이 같으면 수정 시각이 달라도 같고, 한 바이트가 다르면 달라지며, 폴더가 없으면 0이다', () => {
     const directory = temporaryDirectory();
     const file = path.join(directory, 'main.js');
-    assert.equal(BackendSession.fingerprintOf('1.0.0', file), '1.0.0:0');
+    assert.equal(BackendSession.fingerprintOf('1.0.0', path.join(directory, 'none', 'main.js')), '1.0.0:0');
     fs.writeFileSync(file, 'a');
     fs.utimesSync(file, 1000, 1000);
     const first = BackendSession.fingerprintOf('1.0.0', file);
     fs.utimesSync(file, 2000, 2000);
+    assert.equal(BackendSession.fingerprintOf('1.0.0', file), first);
+    fs.writeFileSync(file, 'b');
+    assert.notEqual(BackendSession.fingerprintOf('1.0.0', file), first);
+    fs.writeFileSync(file, 'a');
+    fs.writeFileSync(path.join(directory, 'main.js.map'), 'x');
+    assert.equal(BackendSession.fingerprintOf('1.0.0', file), first);
+    fs.writeFileSync(path.join(directory, 'other.js'), 'x');
     assert.notEqual(BackendSession.fingerprintOf('1.0.0', file), first);
 });
 

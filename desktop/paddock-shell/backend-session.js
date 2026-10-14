@@ -1,6 +1,7 @@
 // 앱을 닫아도 남는 백엔드(터미널 프로세스를 쥔 프로세스)의 접속 정보를 읽고 쓰며, 살아 있는지 확인하고 끝낸다.
 // Electron 메인 프로세스가 앱 시작 때 남은 백엔드에 다시 붙고, 종료 때 백엔드를 남길지 끝낼지 정하는 데 쓴다.
 const childProcess = require('node:child_process');
+const crypto = require('node:crypto');
 const http = require('node:http');
 const fs = require('node:fs');
 const net = require('node:net');
@@ -145,18 +146,39 @@ function freePort() {
 }
 
 /**
- * 백엔드 실행 파일이 바뀌었는지 알아보는 지문. 앱 버전과 진입 파일의 수정 시각을 묶는다.
+ * 백엔드 실행 파일이 바뀌었는지 알아보는 지문. 앱 버전과 백엔드 진입 파일이 있는 폴더의 `.js` 파일 내용 해시를 묶는다.
  * 버전을 올리지 않은 개발 빌드도 백엔드 코드가 달라지면 다른 지문이 된다.
+ * 수정 시각은 쓰지 않는다 — 같은 내용을 다시 설치하거나 복사해 시각만 바뀐 경우에는 옛 백엔드에 그대로 붙어야 한다.
+ * 폴더를 읽지 못하면 해시 자리가 `0`이다.
+ *
+ * Examples
+ * --------
+ * | 상황                               | 결과                |
+ * |------------------------------------|---------------------|
+ * | 같은 내용, 수정 시각만 다름        | 같은 지문           |
+ * | `.js` 파일 한 바이트 다름          | 다른 지문           |
+ * | `.map`·하위 폴더 파일만 다름       | 같은 지문           |
+ * | 폴더 없음                          | `<버전>:0`          |
  */
 function fingerprintOf(
     version,
     backendMainPath,
 ) {
-    let modified = 0;
+    let digest = '0';
     try {
-        modified = Math.floor(fs.statSync(backendMainPath).mtimeMs);
-    } catch { /* 파일을 못 읽으면 수정 시각 0으로 둔다. */ }
-    return `${version}:${modified}`;
+        const directory = path.dirname(backendMainPath);
+        const hash = crypto.createHash('sha256');
+        const names = fs.readdirSync(directory, { withFileTypes: true })
+            .filter((entry) => entry.isFile() && entry.name.endsWith('.js'))
+            .map((entry) => entry.name)
+            .sort();
+        for (const name of names) {
+            hash.update(`${name}\0`);
+            hash.update(fs.readFileSync(path.join(directory, name)));
+        }
+        digest = hash.digest('hex').slice(0, 16);
+    } catch { /* 폴더를 못 읽으면 해시 0으로 둔다. */ }
+    return `${version}:${digest}`;
 }
 
 /** 백엔드에 넘겨 새 터미널이 받게 할 환경 변수 이름. 앱을 다시 열 때 바뀌었을 수 있는 것만 둔다. */
