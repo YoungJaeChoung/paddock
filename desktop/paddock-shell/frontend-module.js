@@ -37,6 +37,7 @@ const { withFolderSearchService, withScopeNotice, withFolderSearchView } = requi
 const { WINDOW_ROLE, windowRole } = require('./window-role');
 const { MainPluginApiProvider } = require('@theia/plugin-ext/lib/common/plugin-ext-api-contribution');
 const { PaddockPluginApiOverrides } = require('./plugin-api-overrides');
+const { PaddockReconnectGuard } = require('./reconnect-guard');
 require('./controls.css');
 
 // Paddock 설정. 설정 화면(Preferences)에서 "paddock"로 찾을 수 있다.
@@ -186,4 +187,6 @@ exports.default = new ContainerModule((bind, unbind, isBound, rebind, unbindAsyn
     bind(PreferenceContribution).toConstantValue({ schema: PaddockPreferenceSchema });
     // 확장의 오류 모달을 알림으로 바꾸고 Git 출력 채널의 오류를 로그에 남긴다(plugin-api-overrides.js).
     bind(MainPluginApiProvider).toConstantValue(new PaddockPluginApiOverrides());
+    // 백엔드 연결 복구에 실패하면 화면을 새로 고치되, 저장하지 않은 편집 내용이 있으면 막고 알린다(reconnect-guard.js).
+    bind(FrontendApplicationContribution).toDynamicValue(({ container }) => new PaddockReconnectGuard(container)).inSingletonScope();
 });

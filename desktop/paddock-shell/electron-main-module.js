@@ -15,6 +15,7 @@ const BackendSession = require('./backend-session');
 const QuitPreference = require('./quit-preference');
 const { startPerformanceProbe } = require('./performance-probe');
 const { attachWindowEventLog, attachAppEventLog } = require('./window-events');
+const { rotateIfLarge } = require('./log-rotation');
 const { clearInheritedSession } = require('./terminal-environment');
 const { WINDOW_ROLE } = require('./window-role');
 
@@ -231,7 +232,14 @@ class PaddockMainApplication extends ElectronMainApplication {
         const options = await this.getForkOptions();
         // `theia start`가 넣어 둔 부모 PID를 백엔드가 감시하다 부모가 사라지면 스스로 끝나므로, 분리한 백엔드에는 넘기지 않는다.
         delete options.env.THEIA_PARENT_PID;
-        const logFd = fs.openSync(path.join(directory, 'backend.log'), 'a');
+        const logPath = path.join(directory, 'backend.log');
+        // 크게 불어난 기록(예전 판은 상한이 없어 수백 MB가 된 적이 있다)은 열기 전에 옛 기록으로 넘긴다. 넘기지 못해도 백엔드는 띄운다.
+        try {
+            if (rotateIfLarge(logPath)) BackendSession.note(directory, 'backend.log was large; the previous one is now backend.log.1');
+        } catch (error) {
+            console.warn('Could not rotate backend.log:', error);
+        }
+        const logFd = fs.openSync(logPath, 'a');
         const child = childProcess.spawn(process.execPath, [this.globals.THEIA_BACKEND_MAIN_PATH, ...args], {
             env: { ...options.env, ELECTRON_RUN_AS_NODE: '1' },
             // Windows에서 detached는 새 프로세스 그룹을 만들어 터미널의 Ctrl+C를 막으므로 Unix에서만 쓴다.

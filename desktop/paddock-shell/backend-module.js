@@ -28,6 +28,7 @@ const { WorkPresenceRegistry } = require('./work-presence');
 const wsl = require('./wsl-terminals');
 const { PaddockSessionRoutes } = require('./session-routes');
 const { PaddockServiceOverrides } = require('./service-overrides');
+const { installLogSquelch } = require('./log-squelch');
 const windowsProcesses = require('./windows-processes');
 const { attributeAccount } = require('./agent-account');
 const { foregroundProcess } = require('./terminal-inspector');
@@ -787,6 +788,8 @@ decorate(injectable(), PaddockStatusRoutes);
 decorate(inject(ProcessManager), PaddockStatusRoutes.prototype, 'processManager');
 
 exports.default = new ContainerModule((bind) => {
+    // 같은 오류가 쏟아져도 backend.log가 불어나지 않게 반복 출력과 세션 총량에 상한을 둔다(log-squelch.js).
+    bind(BackendApplicationContribution).toConstantValue({ initialize: () => { installLogSquelch([process.stdout, process.stderr]); } });
     // Theia 서비스 교체는 그 서비스를 묶는 모듈이 모두 로드된 뒤여야 하므로, 컨테이너를 받는 시작 기여로 둔다.
     bind(BackendApplicationContribution).toDynamicValue(context => new PaddockServiceOverrides(context.container)).inSingletonScope();
     bind(PaddockStatusRoutes).toSelf().inSingletonScope();
