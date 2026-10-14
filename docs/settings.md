@@ -10,18 +10,28 @@ Open settings with `Ctrl+,` (macOS `Cmd+,`) and search for `paddock`.
 
 Keep several Claude and Codex accounts, each signed in through its own CLI. After an account's first reply, its 5-hour and weekly usage shows in the status bar. The numbers are what each CLI reports — Claude Code through its status line, Codex through its own limit query — not read from your login. In a terminal where Claude Code is running, choosing another Claude account from **Accounts** stops that Claude and reopens the same conversation under the new account in the same tab; the saved conversation is reloaded, so a request Claude was still answering has to be sent again. Windows terminals outside WSL ask you to exit Claude first. Choosing **New conversation…** starts a fresh one instead. Codex isn't supported yet: in our tests an ordinary conversation resumed under another account, but its sub-agents did not carry over. A Codex account opens a new terminal in the same folder; go back to the old conversation with `codex resume`.
 
+### What accounts share
+
+A Paddock account is a separate sign-in, not a separate setup. Each time you open an account terminal Paddock brings its folder in line with your default Claude Code or Codex folder:
+
+- **Linked:** `settings.json` (Claude) and `config.toml` (Codex), plus `commands`, `agents`, `hooks`, `rules`, `skills`, `CLAUDE.md`, `keybindings.json` (Claude) and `prompts`, `rules`, `AGENTS.md`, `hooks.json` (Codex). `/model`, `/theme` and permission answers made in any account land in one file. If your own settings file already is a link into a dotfiles repository, accounts link straight to the repository file. An account's earlier `settings.json` or `config.toml` is kept next to it as `*.paddock-backup`.
+- **Merged by name:** the MCP servers and folder trust answers in `~/.claude.json`. Servers you add in the default appear in every account; servers an account adds stay in that account; a server you remove from the default disappears from accounts that never changed it. Sign-in state and everything else in that file is left alone.
+- **Not shared:** sign-in, conversations, caches and plugins stay with each account.
+- **Windows without developer mode** cannot make file links, so Paddock copies `settings.json` and `config.toml` again at each launch and says so.
+- **Paddock's own settings** (the usage status line and the memory notice) are not part of any of these files. They live in `claude/flag-settings.json` in Paddock's config folder and reach Claude Code with `--settings`, so they never travel between computers with your settings. In ordinary terminals a small launcher in front of `claude` adds the flag; on Windows with WSL, Paddock asks once whether it may add one marked line to the WSL `~/.bashrc` for the same effect (`paddock.wsl.claudeLauncher`).
+
 ## Memory
 
 The status bar's **Memory** gauge shows the fuller of Windows and WSL memory. The first time it passes 90% a warning names the terminal using the most (with a button to go to it); it re-arms after use falls below 80%. Paddock only warns: it never stops an agent or blocks a command. Hover the gauge to see the largest terminal and WSL's swap use. When WSL leaves Windows under 8 GB or has no swap, the hover text points at the `memory=` and `swap=` lines of `.wslconfig` to fix. Hide the gauge in Quick settings.
 
 ### Telling agents when memory is low
 
-Turn on `paddock.agents.memoryNotice` and Paddock adds one `PreToolUse` hook to Claude Code's settings: the default `settings.json` and each Claude account Paddock manages. While available memory is below `paddock.agents.memoryNoticeMinimumMb` (default 4096), the hook adds one sentence to the agent's context asking it to postpone heavy work such as builds, test runners and browsers, or to tell you first. It never blocks a command or stops an agent.
+Turn on `paddock.agents.memoryNotice` and Paddock adds one `PreToolUse` hook to its own Claude Code settings file, `claude/flag-settings.json` in Paddock's config folder. Paddock hands that file to Claude Code with `--settings` in its account terminals and, through a small `claude` launcher placed first in `PATH`, in other terminals it opens. While available memory is below `paddock.agents.memoryNoticeMinimumMb` (default 4096), the hook adds one sentence to the agent's context asking it to postpone heavy work such as builds, test runners and browsers, or to tell you first. It never blocks a command or stops an agent.
 
 - **When it arrives:** with the result of a `Bash`, `Agent` or `Task` call, so it shapes the agent's next step, not the call that triggered it.
 - **Where it works:** WSL, Linux, and accounts that run in WSL. The hook reads `/proc/meminfo`, so macOS and Windows-native Claude are not covered.
-- **Your own hooks stay:** Paddock adds and removes only its own entry. The first time it changes a settings file it keeps the original next to it as `settings.json.paddock-backup`.
-- **Turning it off** removes the entry and quiets agents that are already running. Turning it on reaches agents started afterwards.
+- **Your own settings stay:** Paddock never writes to your `settings.json`; Claude Code merges the hook with your own hooks when it starts. (Older Paddock versions did write entries there; the first start of a newer one removes exactly those entries and tells you which file changed.)
+- **Turning it off** removes the entry from Paddock's settings file and quiets agents that are already running. Turning it on reaches agents started afterwards.
 - **Codex:** not covered yet.
 
 ## Stop alerts
