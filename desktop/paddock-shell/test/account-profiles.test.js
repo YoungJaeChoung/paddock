@@ -526,6 +526,26 @@ test('A30 an unreadable default sign-in file never stops an account from opening
     assert.equal(fs.existsSync(path.join(prepared.configDir, '.claude.json')), false);
 });
 
+test('A32 a sharing step that fails becomes a warning and the account still opens with its other links', async context => {
+    const setup = fixture(context);
+    fs.mkdirSync(path.join(setup.claudeDirectory, 'commands'), { recursive: true });
+    fs.mkdirSync(path.join(setup.claudeDirectory, 'agents'));
+    fs.writeFileSync(path.join(setup.claudeDirectory, 'settings.json'), '{}\n');
+    const profile = await setup.accounts.create({ provider: 'claude' });
+    const symlink = fs.symlinkSync;
+    context.mock.method(fs, 'symlinkSync', (source, target, type) => {
+        if (String(target).endsWith(`${path.sep}commands`) || type === 'file') throw Object.assign(new Error(`fixture denied ${type === 'file' ? 'settings.json' : 'commands'}`), { code: 'EACCES' });
+        return symlink(source, target, type);
+    });
+    // Recreate the account folder so the links are attempted again under the failing symlink.
+    fs.rmSync(path.join(setup.configDirectory, 'agent-profiles'), { recursive: true, force: true });
+    const prepared = await setup.accounts.prepare(profile.id);
+    assert.deepEqual(prepared.warnings.sort(), ['commands could not be shared: fixture denied commands', 'settings.json could not be shared: fixture denied settings.json'].sort());
+    assert.equal(fs.lstatSync(path.join(prepared.configDir, 'agents')).isSymbolicLink(), true);
+    assert.equal(fs.existsSync(path.join(prepared.configDir, 'commands')), false);
+    assert.deepEqual(fs.readdirSync(prepared.configDir).filter(name => name.startsWith('.settings.json')), [], 'no temporary link is left behind');
+});
+
 test('A21 keeps an account-owned commands folder and reports it', async context => {
     const setup = fixture(context);
     fs.mkdirSync(path.join(setup.claudeDirectory, 'commands'), { recursive: true });

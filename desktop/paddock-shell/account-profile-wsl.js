@@ -192,7 +192,7 @@ link_shared() {
                 printf 'An existing %s %s was kept.\\0' "$shared_name" "$shared_kind"
             fi
         else
-            ln -s "$shared_source" "$shared_target"
+            ln -s "$shared_source" "$shared_target" || printf '%s could not be shared: the link was refused.\\0' "$shared_name"
         fi
     fi
 }
@@ -210,12 +210,14 @@ for settings_name in $settings_names; do
     settings_source="$shared_root/$settings_name"
     settings_target="$config_dir/$settings_name"
     if [ -f "$settings_source" ]; then
-        settings_real=$(readlink -f "$settings_source")
-        if [ -L "$settings_target" ]; then
+        settings_real=$(readlink -f "$settings_source" || true)
+        if [ -z "$settings_real" ]; then
+            printf '%s could not be shared: its location could not be resolved.\\0' "$settings_name"
+        elif [ -L "$settings_target" ]; then
             if [ "$(readlink -f "$settings_target")" != "$settings_real" ]; then
                 printf 'An existing %s link was kept.\\0' "$settings_name"
             elif [ "$(readlink "$settings_target")" != "$settings_real" ]; then
-                ln -sfn "$settings_real" "$settings_target"
+                ln -sfn "$settings_real" "$settings_target" || printf '%s could not be shared: the link was refused.\\0' "$settings_name"
             fi
         elif [ -e "$settings_target" ] && [ ! -f "$settings_target" ]; then
             printf 'An existing %s entry was kept.\\0' "$settings_name"
@@ -224,11 +226,14 @@ for settings_name in $settings_names; do
             if [ -f "$settings_target" ] && ! cmp -s "$settings_source" "$settings_target"; then
                 settings_backup="$settings_target.paddock-backup"
                 if [ -e "$settings_backup" ] || [ -L "$settings_backup" ]; then settings_backup="$settings_backup-$(date +%Y%m%d-%H%M%S)"; fi
-                mv "$settings_target" "$settings_backup"
+                mv "$settings_target" "$settings_backup" || { printf '%s could not be shared: the account file could not be backed up.\\0' "$settings_name"; continue; }
             fi
-            ln -sf "$settings_real" "$settings_target"
-            if [ -n "$settings_backup" ]; then
-                printf 'The %s of this account was moved to %s; the account now follows the shared %s.\\0' "$settings_name" "\${settings_backup##*/}" "$settings_name"
+            if ln -sf "$settings_real" "$settings_target"; then
+                if [ -n "$settings_backup" ]; then
+                    printf 'The %s of this account was moved to %s; the account now follows the shared %s.\\0' "$settings_name" "\${settings_backup##*/}" "$settings_name"
+                fi
+            else
+                printf '%s could not be shared: the link was refused.\\0' "$settings_name"
             fi
         fi
     fi

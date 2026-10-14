@@ -252,6 +252,33 @@ function shareSettingsFile(
 }
 
 /**
+ * Runs one account sharing step and turns its failure into a warning, so a link or file that cannot be shared never keeps the account from opening.
+ * `step` returns a warning text, a list of warning texts, or nothing. Returns the warnings as a list (empty when the step had nothing to report).
+ *
+ * Examples
+ * --------
+ * | step                          | result                                                   |
+ * | ----------------------------- | -------------------------------------------------------- |
+ * | returns `null`                | `[]`                                                     |
+ * | returns `'kept'`              | `['kept']`                                               |
+ * | throws `EACCES: denied`       | `['commands could not be shared: EACCES: denied']`       |
+ */
+function sharingStep(
+    label,
+    step,
+) {
+    let warnings = [];
+    try {
+        const result = step();
+        if (typeof result === 'string') warnings = [result];
+        else if (Array.isArray(result)) warnings = result;
+    } catch (error) {
+        warnings = [`${label} could not be shared: ${error instanceof Error ? error.message : String(error)}`];
+    }
+    return warnings;
+}
+
+/**
  * Keeps the fixed helper commands (browser opener, and for Claude the Pencil diagnostic) beside their account
  * without following a replaced helper into another file.
  */
@@ -670,28 +697,29 @@ class AccountProfiles {
             }
         }
         const hostDirectory = profile.provider === 'claude' ? this.claudeDirectory : this.codexDirectory;
+        // Each sharing step fails on its own: a refused link or an unreadable default file becomes a warning and the account still opens.
+        // Structure checks (the account folders above) and the browser helper keep throwing because an account on a redirected folder must not start.
         for (const [names, kind] of [[AccountProfile.SHARED_FOLDERS[profile.provider], 'folder'], [AccountProfile.SHARED_FILES[profile.provider], 'file']]) {
             for (const name of names) {
-                const warning = linkSharedEntry(path.join(hostDirectory, name), path.join(configDir, name), name, kind);
-                if (warning) warnings.push(warning);
+                warnings.push(...sharingStep(name, () => linkSharedEntry(path.join(hostDirectory, name), path.join(configDir, name), name, kind)));
             }
         }
         for (const name of AccountProfile.SETTINGS_FILES[profile.provider]) {
-            const warning = shareSettingsFile(path.join(hostDirectory, name), path.join(configDir, name), name);
-            if (warning) warnings.push(warning);
+            warnings.push(...sharingStep(name, () => shareSettingsFile(path.join(hostDirectory, name), path.join(configDir, name), name)));
         }
         const browserDirectory = process.platform === 'linux' && process.env.WSL_DISTRO_NAME ? installBrowserBridge(configDir, profile.provider) : null;
         if (profile.provider === 'claude') {
             const command = this.pencilCommand();
             // Pencil's own registration in the default file points at the extension's versioned folder on Windows; the fixed path survives extension updates.
-            if (command && process.platform === 'win32') repairPencilCommand(this.claudeConfigFile, path.join(this.configDirectory, 'deployedPlugins'), command);
-            const synced = syncClaudeConfig({
+            if (command && process.platform === 'win32') {
+                warnings.push(...sharingStep('Pencil', () => { repairPencilCommand(this.claudeConfigFile, path.join(this.configDirectory, 'deployedPlugins'), command); }));
+            }
+            warnings.push(...sharingStep('MCP servers', () => syncClaudeConfig({
                 defaultFile: this.claudeConfigFile,
                 profileFile: path.join(configDir, '.claude.json'),
                 syncFile: path.join(configDir, ClaudeConfig.SYNC_FILE),
                 pencilCommand: command,
-            });
-            warnings.push(...synced.warnings);
+            }).warnings));
         }
         return { configDir, warnings, ...(browserDirectory ? { browserDirectory } : {}) };
     }
