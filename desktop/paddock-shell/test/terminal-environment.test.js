@@ -23,8 +23,8 @@ test('adding a distribution preserves other options and removes duplicate distri
 });
 
 test('an app started from a Claude Code terminal drops that session\'s markers but keeps the user\'s Claude settings', () => {
-    const env = { CLAUDECODE: '1', CLAUDE_CODE_CHILD_SESSION: '1', CLAUDE_CODE_SESSION_ID: 'x', CLAUDE_CONFIG_DIR: '/home/me/.claude', CLAUDE_CODE_USE_BEDROCK: '1', PATH: '/bin' };
-    assert.deepEqual(clearInheritedSession(env), ['CLAUDECODE', 'CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_CODE_SESSION_ID']);
+    const env = { CLAUDECODE: '1', CLAUDE_CODE_CHILD_SESSION: '1', CLAUDE_CODE_SESSION_ID: 'x', CLAUDE_PID: '97804', CLAUDE_EFFORT: 'medium', CLAUDE_CONFIG_DIR: '/home/me/.claude', CLAUDE_CODE_USE_BEDROCK: '1', PATH: '/bin' };
+    assert.deepEqual(clearInheritedSession(env), ['CLAUDECODE', 'CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_PID', 'CLAUDE_EFFORT']);
     assert.deepEqual(env, { CLAUDE_CONFIG_DIR: '/home/me/.claude', CLAUDE_CODE_USE_BEDROCK: '1', PATH: '/bin' });
     assert.deepEqual(clearInheritedSession({ PADDOCK_TERMINAL: 'terminal-outer', PATH: '/bin' }), ['PADDOCK_TERMINAL']);
     assert.deepEqual(clearInheritedSession({ PATH: '/bin' }), []);
