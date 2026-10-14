@@ -3,6 +3,7 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { prepareLinuxIme } = require('./linux-ime.cjs');
 const { ensurePlugins } = require('./ensure-plugins.cjs');
+const { buildGitShim } = require('./build-git-shim.cjs');
 
 // 확장·설정 폴더는 paddock-shell/electron-main-module.js가 앱 시작 시 정한다. 설치본도 같은 경로를 쓴다.
 const desktopDirectory = path.join(__dirname, '..');
@@ -15,6 +16,10 @@ if (!fs.existsSync(cli) || !fs.existsSync(path.join(desktopDirectory, 'lib', 'fr
 // 코드를 새로 받은 뒤 setup을 안 돌렸어도 새로 추가된 확장(언어 색·미리보기)이 빠지지 않게 채운다. 오프라인이면 경고만 하고 계속한다.
 const missingPlugins = ensurePlugins();
 if (missingPlugins.length) console.warn(`확장 ${missingPlugins.length}개를 받지 못했습니다(네트워크 확인). 코드 색·이미지 미리보기 같은 기능이 빠질 수 있습니다: ${missingPlugins.join(', ')}`);
+
+// Windows에서 WSL 폴더의 저장소를 WSL 안의 git으로 실행하는 분배기(paddock-shell/bin/git.exe)를 만든다. 실패해도 앱은 뜬다(Git 보기가 Windows git으로 돌아간다).
+const gitShim = buildGitShim();
+if (gitShim.status === 'failed') console.warn(`WSL 폴더용 git 분배기를 만들지 못했습니다. Git 보기는 Windows git으로 동작합니다: ${gitShim.message}`);
 
 const ime = prepareLinuxIme();
 if (ime.message) console.log(ime.message);

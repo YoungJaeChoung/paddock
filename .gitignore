@@ -8,3 +8,4 @@ desktop/gen-esbuild.*.mjs
 out/
 desktop/dist/
 desktop/plugins/
+desktop/paddock-shell/bin/

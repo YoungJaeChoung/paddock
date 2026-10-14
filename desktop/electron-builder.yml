@@ -16,6 +16,9 @@ files:
   - lib
   - src-gen
   - paddock-shell
+  # Windows: WSL 폴더의 저장소를 WSL 안의 git으로 실행하는 분배기(paddock-shell/bin/git.exe). 위 paddock-shell 항목이 포함하지만
+  # 저장소에는 없고(.gitignore) scripts/package.cjs가 제작 전에 만든다. 빠지면 package.cjs가 멈추므로 여기서는 명시만 한다.
+  - paddock-shell/bin/**
   # VS Code 내장 확장(Source control용 git, 언어별 코드 색, 이미지·오디오·영상 미리보기). 설치 파일에 넣어 두므로 사용자는 설치할 때 따로 받지 않는다.
   # 만드는 쪽은 setup 단계의 download:plugins가 받고, 빠졌으면 scripts/package.cjs가 제작 전에 받거나 멈춘다.
   - plugins

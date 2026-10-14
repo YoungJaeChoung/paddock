@@ -3,6 +3,7 @@
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { ensurePlugins } = require('./ensure-plugins.cjs');
+const { buildGitShim } = require('./build-git-shim.cjs');
 
 const TARGET = {
     mac: { platform: 'darwin', name: 'macOS', builderFlag: '--mac' },
@@ -35,6 +36,12 @@ function runNode(
 const missingPlugins = ensurePlugins();
 if (missingPlugins.length) {
     console.error(`확장 ${missingPlugins.length}개를 받지 못해 설치 파일을 만들지 않습니다: ${missingPlugins.join(', ')}`);
+    process.exit(1);
+}
+// Step 0.5: Windows 설치본에는 WSL 폴더용 git 분배기(paddock-shell/bin/git.exe)를 넣는다. 없는 채로 만들면 WSL 저장소의 Git 보기가 다시 mmap 오류를 낸다.
+const gitShim = buildGitShim();
+if (gitShim.status === 'failed') {
+    console.error(`git 분배기를 만들지 못해 설치 파일을 만들지 않습니다: ${gitShim.message}`);
     process.exit(1);
 }
 // Step 1: 설치본에는 압축된 배포용 번들을 넣는다.
