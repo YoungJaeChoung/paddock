@@ -1,12 +1,13 @@
 /**
- * Claude Code 설정 파일에 "메모리가 부족할 때 에이전트에게 알리는 훅"을 넣거나 뺀다.
+ * "메모리가 부족할 때 에이전트에게 알리는 훅"의 명령·스크립트·설정 항목을 다룬다.
  *
- * 사용자가 직접 만든 훅은 건드리지 않는다. 이 모듈이 넣은 항목은 명령에 `memory-hook.sh`가 들어 있는 것으로 알아본다.
+ * 이 훅은 사용자 설정 파일이 아니라 Paddock 전용 플래그 설정 파일(claude-flag-settings.js)에 들어간다.
+ * 이 모듈이 넣은 항목은 명령에 `memory-hook.sh`가 들어 있는 것으로 알아본다. 사용자가 직접 만든 훅과 구분하는 기준이다.
+ * 예전 판이 사용자 설정 파일에 넣어 둔 항목을 걷어 낼 때도 같은 기준을 쓴다.
  */
 const fs = require('node:fs');
 const path = require('node:path');
-const { assertPlainPath, usageError } = require('./usage-files');
-const { writeJson } = require('./claude-usage-settings');
+const { assertPlainPath } = require('./usage-files');
 
 class MemoryHook {
     // 에이전트가 메모리를 쓰는 도구에만 반응한다(memory-hook.sh가 같은 목록을 한 번 더 거른다).
@@ -108,57 +109,21 @@ function hasMemoryHook(
 }
 
 /**
- * Claude Code 설정 파일 하나에 훅을 넣거나 빼고 결과 상태('on'|'off')를 돌려준다.
- * 이미 원하는 상태면 파일을 다시 쓰지 않는다(사용자 파일의 서식이 바뀌고 백업이 생기는 것을 막는다).
- * 처음 바꿀 때 한 번만 원본을 `.paddock-backup`으로 남긴다. 설정 파일이 없고 끄려는 경우엔 아무것도 만들지 않는다.
- */
-function applyMemoryHook(
-    { settingsPath, command, enabled },
-) {
-    for (const file of [settingsPath, `${settingsPath}.paddock-backup`]) assertPlainPath(file, 'file');
-    let settings = {};
-    if (fs.existsSync(settingsPath)) {
-        try {
-            settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-        } catch {
-            throw usageError('Claude settings contain invalid JSON. Repair the settings before changing the memory notice.');
-        }
-        if (!settings || typeof settings !== 'object' || Array.isArray(settings)) throw usageError('Claude settings must be a JSON object.');
-    }
-    const next = enabled ? installMemoryHook(settings, command) : removeMemoryHook(settings);
-    const isUnchanged = enabled
-        ? Array.isArray(settings.hooks?.PreToolUse) && JSON.stringify(settings.hooks.PreToolUse) === JSON.stringify(next.hooks.PreToolUse)
-        : next === settings;
-    if (!isUnchanged) {
-        fs.mkdirSync(path.dirname(settingsPath), { recursive: true, mode: 0o700 });
-        if (fs.existsSync(settingsPath) && !fs.existsSync(`${settingsPath}.paddock-backup`)) {
-            fs.copyFileSync(settingsPath, `${settingsPath}.paddock-backup`, fs.constants.COPYFILE_EXCL);
-        }
-        writeJson(settingsPath, next);
-    }
-    return enabled ? 'on' : 'off';
-}
-
-/**
- * 한 Claude Code 설정 위치에 메모리 안내를 켜거나 끄고 결과 상태('on'|'off')를 돌려준다.
+ * 메모리 안내의 스크립트 복사와 꺼짐 표시 파일을 맞추고 결과 상태('on'|'off')를 돌려준다.
  *
- * 설정 화면의 켜기·끄기가 이 함수 하나로 이어지게 하려고 있다. 설정 파일 수정(applyMemoryHook)에 더해
- * 스크립트 복사와 꺼짐 표시 파일을 함께 맞춘다. 설정에서 훅을 지워도 이미 떠 있는 세션이 스크립트를 계속 부를 수 있어
- * 끌 때는 꺼짐 표시 파일을 먼저 둔다.
- *
- * `scriptFile`은 이 앱이 파일을 쓰는 경로, `commandScript`는 Claude Code가 훅을 실행할 때 보는 같은 파일의 경로다
- * (WSL 안의 Claude Code는 Windows 쪽 UNC 경로가 아니라 Linux 경로로 부른다).
+ * 설정 화면의 켜기·끄기가 이 함수로 이어지게 하려고 있다. 설정(훅 항목)은 플래그 설정 파일을 다시 쓰는 쪽이 맡는다.
+ * 훅 항목이 플래그 파일에서 사라져도 이미 떠 있는 세션이 스크립트를 계속 부를 수 있어 끌 때는 꺼짐 표시 파일을 먼저 둔다.
  *
  * Examples
  * --------
- * | enabled | scriptFile 있음 | 하는 일                                                         |
- * | ------- | --------------- | --------------------------------------------------------------- |
- * | true    | 상관없음        | 스크립트 복사 → 꺼짐 표시 삭제 → 설정에 훅 한 줄 추가           |
- * | false   | 있음            | 꺼짐 표시 생성 → 설정에서 훅 한 줄 제거                         |
- * | false   | 없음            | 설정에서 훅 한 줄 제거(켠 적 없으면 아무 파일도 만들지 않는다)  |
+ * | enabled | scriptFile 있음 | 하는 일                                                   |
+ * | ------- | --------------- | --------------------------------------------------------- |
+ * | true    | 상관없음        | 스크립트 복사 → 꺼짐 표시 삭제                            |
+ * | false   | 있음            | 꺼짐 표시 생성                                            |
+ * | false   | 없음            | 아무 파일도 만들지 않는다(켠 적 없는 곳에 흔적을 두지 않음) |
  */
 function setMemoryNotice(
-    { settingsPath, scriptFile, commandScript, source, enabled, minimumMb },
+    { scriptFile, source, enabled },
 ) {
     const offMarker = path.join(path.dirname(scriptFile), MemoryHook.OFF_MARKER);
     for (const file of [scriptFile, offMarker]) assertPlainPath(file, 'file');
@@ -170,7 +135,7 @@ function setMemoryNotice(
     } else if (fs.existsSync(scriptFile)) {
         fs.writeFileSync(offMarker, '');
     }
-    return applyMemoryHook({ settingsPath, command: memoryHookCommand(commandScript, minimumMb), enabled });
+    return enabled ? 'on' : 'off';
 }
 
 module.exports = {
@@ -180,6 +145,5 @@ module.exports = {
     installMemoryHook,
     removeMemoryHook,
     hasMemoryHook,
-    applyMemoryHook,
     setMemoryNotice,
 };

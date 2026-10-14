@@ -306,6 +306,16 @@ test('A23 WSL preparation script links the same shared names as the native prepa
     }
 });
 
+test('A24 Claude accounts report where Paddock settings are passed with --settings, native and WSL, and Codex does not', async context => {
+    const setup = fixture(context);
+    const claude = await setup.accounts.prepare((await setup.accounts.create({ provider: 'claude' })).id);
+    const codex = await setup.accounts.prepare((await setup.accounts.create({ provider: 'codex' })).id);
+    assert.equal(claude.flagSettingsFile, path.join(setup.configDirectory, 'claude', 'flag-settings.json'));
+    assert.equal(Object.hasOwn(codex, 'flagSettingsFile'), false);
+    const wslProfile = { id: '00000000-0000-4000-8000-000000000001', provider: 'claude', runtime: 'wsl', wslDistribution: 'Ubuntu' };
+    assert.equal(setup.accounts.flagSettingsFile(wslProfile, `/home/me/.paddock/agent-profiles/${wslProfile.id}/claude`), '/home/me/.paddock/config/claude/flag-settings.json');
+});
+
 test('A21 keeps an account-owned commands folder and reports it', async context => {
     const setup = fixture(context);
     fs.mkdirSync(path.join(setup.claudeDirectory, 'commands'), { recursive: true });

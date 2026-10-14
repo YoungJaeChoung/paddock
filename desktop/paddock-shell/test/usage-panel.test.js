@@ -131,7 +131,7 @@ test('C-account-usage-isolation: renaming updates the source label; removing it 
     assert.equal(data.selected.codex.id, account.id);
 });
 
-test('C-account-usage-settings: global off restores every registered Claude and Default even if GET fails', async () => {
+test('C-account-usage-settings: global off removes the status line once through the default environment even if GET fails; accounts never write', async () => {
     const posts = [];
     const data = new UsageData({
         listProfiles: async () => [{ id: 'c1', provider: 'claude' }, { id: 'c2', provider: 'claude' }, { id: 'x', provider: 'codex' }],
@@ -143,7 +143,7 @@ test('C-account-usage-settings: global off restores every registered Claude and 
         },
     });
     await data.refresh({ settings: true });
-    assert.deepEqual(posts.sort(), ['?enabled=false', '?enabled=false&accountId=c1', '?enabled=false&accountId=c2']);
+    assert.deepEqual(posts, ['?enabled=false']);
 });
 
 test('C-account-usage-settings: a slow enable finishes before the newer global off and cannot turn collection back on', async () => {
@@ -468,12 +468,11 @@ test('C-account-usage-age: old or recorded values carry their age next to the va
     }
 });
 
-test('C-account-usage-launch: a new Claude account gets the status line before its terminal starts', async () => {
-    const fresh = { id: 'n', provider: 'claude', label: 'New' };
+test('C-account-usage-launch: a registered Claude account only reads its usage; the shared Paddock settings are written through the default environment', async () => {
+    const account = { id: 'n', provider: 'claude', label: 'New' };
     const calls = [];
-    let profiles = [];
     const data = new UsageData({
-        listProfiles: async () => profiles,
+        listProfiles: async () => [account],
         isEnabled: () => true,
         fetchJson: async (path, method, query) => {
             calls.push(`${method} ${path}${query}`);
@@ -481,12 +480,11 @@ test('C-account-usage-launch: a new Claude account gets the status line before i
         },
     });
     await data.refresh();
-    profiles = [fresh];
-    await data.prepareLaunch(fresh);
-    assert.ok(calls.includes('POST /paddock/usage/claude?enabled=true&accountId=n&automatic=true'));
-    calls.length = 0;
-    await data.prepareLaunch({ id: 'x', provider: 'codex', label: 'Codex' });
-    assert.deepEqual(calls, []);
+    await data.read(account);
+    assert.equal(calls.filter(call => call.startsWith('POST')).length, 1);
+    assert.ok(calls.includes('POST /paddock/usage/claude?enabled=true'));
+    assert.ok(calls.includes('GET /paddock/usage?accountId=n'));
+    assert.equal(calls.some(call => call.includes('accountId=n') && call.startsWith('POST')), false);
 });
 
 test('C-account-usage-restore: the last account per tool survives a restart without inventing or reviving accounts', async () => {

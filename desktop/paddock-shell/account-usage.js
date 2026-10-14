@@ -5,8 +5,6 @@ const { AccountProfile } = require('./account-profiles');
 const { CodexUsage } = require('./codex-usage');
 const usage = require('./usage-model');
 const { assertPlainPath, usageError, readJson, codexUsage } = require('./usage-files');
-const { applyStatusLine, writeJson } = require('./claude-usage-settings');
-const { MemoryHook, setMemoryNotice } = require('./memory-hook-settings');
 
 /** Converts only Linux absolute paths on the selected distribution, keeping its home mapping intact. */
 function wslFileMapping(
@@ -158,14 +156,11 @@ class AccountUsage {
     static LOGIN_CACHE_MS = 10000;
 
     constructor(
-        { accounts, readWslInfo, sourceScript, commandForNative, liveCodexUsage = new CodexUsage() },
+        { accounts, readWslInfo, liveCodexUsage = new CodexUsage() },
     ) {
         this.accounts = accounts;
         this.readWslInfo = readWslInfo;
-        this.sourceScript = sourceScript;
-        this.commandForNative = commandForNative;
         this.liveCodexUsage = liveCodexUsage;
-        this.pendingWrites = Promise.resolve();
         /** 등록 계정 id별 로그인 식별자 읽기 결과 `{ readAt, pending }`. savedLogins가 LOGIN_CACHE_MS 동안 다시 쓴다. */
         this.savedLoginCache = new Map();
     }
@@ -179,13 +174,11 @@ class AccountUsage {
         if (!profile) throw usageError('This account is no longer available. Refresh the account list.', 404);
         let configDir;
         let toLocal = file => file;
-        let node = null;
         let managedDirectories;
         if (profile.runtime === 'wsl') {
             const information = await this.readWslInfo(profile.wslDistribution);
             const mapping = wslFileMapping(information, profile.wslDistribution);
             toLocal = mapping.toLocal;
-            node = information.node || null;
             const profileRoot = path.posix.join(mapping.linuxHome, '.paddock', 'agent-profiles');
             configDir = path.posix.join(profileRoot, profile.id, profile.provider);
             managedDirectories = [path.posix.join(mapping.linuxHome, '.paddock'), profileRoot, path.posix.join(profileRoot, profile.id), configDir];
@@ -197,11 +190,10 @@ class AccountUsage {
         for (const directory of managedDirectories) assertPlainPath(toLocal(directory), 'directory');
         const join = profile.runtime === 'wsl' ? path.posix.join : path.join;
         const usageDirectory = join(configDir, 'paddock-usage');
-        const settingsPath = join(configDir, 'settings.json');
         const sessionsDirectory = join(configDir, 'sessions');
         assertPlainPath(toLocal(usageDirectory), 'directory');
         assertPlainPath(toLocal(sessionsDirectory), 'directory');
-        return { profile, configDir, usageDirectory, settingsPath, sessionsDirectory, toLocal, node, join };
+        return { profile, configDir, usageDirectory, sessionsDirectory, toLocal, join };
     }
 
     async read(
@@ -210,7 +202,8 @@ class AccountUsage {
         const scope = await this.resolve(accountId);
         const result = { claude: { state: 'unset', windows: [], updatedAt: null }, codex: { windows: [], updatedAt: null } };
         if (scope.profile.provider === 'claude') {
-            const stateFile = scope.toLocal(scope.join(scope.usageDirectory, 'state.json'));
+            // 사용량 표시 설정(켜짐 여부)은 계정마다 두지 않고 이 Paddock의 하나뿐인 설정을 따른다 — 계정 터미널도 같은 Paddock 전용 설정 파일을 읽는다.
+            const stateFile = path.join(this.accounts.configDirectory, 'usage', 'state.json');
             const usageFile = scope.toLocal(scope.join(scope.usageDirectory, 'claude.json'));
             for (const file of [stateFile, usageFile]) assertPlainPath(file, 'file');
             const record = readJson(usageFile, null);
@@ -314,69 +307,6 @@ class AccountUsage {
             match = null;
         }
         return match;
-    }
-
-    /** Serializes setting changes so checkbox updates cannot overwrite another account's saved command. */
-    async setClaude(
-        accountId,
-        enabled,
-        isAutomatic = false,
-    ) {
-        const operation = this.pendingWrites.then(async () => {
-            const scope = await this.resolve(accountId);
-            if (scope.profile.provider !== 'claude') throw usageError('Claude usage settings require a Claude account.', 400);
-            const script = scope.join(scope.usageDirectory, 'claude-statusline.cjs');
-            const usageFile = scope.join(scope.usageDirectory, 'claude.json');
-            const previousFile = scope.join(scope.usageDirectory, 'previous-statusline.json');
-            const stateFile = scope.join(scope.usageDirectory, 'state.json');
-            for (const file of [scope.settingsPath, `${scope.settingsPath}.paddock-backup`, script, usageFile, previousFile, stateFile]) assertPlainPath(scope.toLocal(file), 'file');
-            let command = scope.profile.runtime === 'wsl'
-                ? scope.node && [scope.node, script, usageFile, previousFile].map(file => usage.quoteStatusLineArgument(file)).join(' ')
-                : this.commandForNative(script, usageFile, previousFile);
-            if (enabled && !command) throw usageError('Node.js is needed to show Claude usage in this account. Install it in the selected environment and try again.', 503);
-            if (!enabled) {
-                const current = readJson(scope.toLocal(scope.settingsPath), {}).statusLine?.command;
-                const files = usage.paddockStatusLineFiles(current);
-                if (files?.script === script && files?.previousFile === previousFile && files?.usageFile === usageFile) command = current;
-            }
-            if (!fs.existsSync(scope.toLocal(scope.usageDirectory))) fs.mkdirSync(scope.toLocal(scope.usageDirectory), { mode: 0o700 });
-            if (enabled) fs.copyFileSync(this.sourceScript, scope.toLocal(script));
-            const state = applyStatusLine({ settingsPath: scope.toLocal(scope.settingsPath), previousFile: scope.toLocal(previousFile), command, enabled, isAutomatic, toLocal: scope.toLocal, scoped: true });
-            writeJson(scope.toLocal(stateFile), { claude: state });
-            return { state };
-        });
-        this.pendingWrites = operation.catch(() => {});
-        return operation;
-    }
-    /**
-     * 등록 Claude 계정의 설정에 메모리 안내 훅을 켜거나 끈다.
-     * 훅 스크립트는 `sh`와 `/proc/meminfo`를 쓰므로 Linux 계정 폴더와 WSL 계정에서만 동작한다.
-     * Windows·macOS의 이 컴퓨터 계정은 `{ state: 'unsupported' }`를 돌려주고 파일을 건드리지 않는다.
-     */
-    async setMemoryNotice(
-        accountId,
-        { enabled, minimumMb, source },
-    ) {
-        const operation = this.pendingWrites.then(async () => {
-            const scope = await this.resolve(accountId);
-            if (scope.profile.provider !== 'claude') throw usageError('The memory notice requires a Claude account.', 400);
-            let result = { state: 'unsupported' };
-            if (scope.profile.runtime === 'wsl' || process.platform === 'linux') {
-                const commandScript = scope.join(scope.usageDirectory, MemoryHook.SCRIPT_NAME);
-                const state = setMemoryNotice({
-                    settingsPath: scope.toLocal(scope.settingsPath),
-                    scriptFile: scope.toLocal(commandScript),
-                    commandScript,
-                    source,
-                    enabled,
-                    minimumMb,
-                });
-                result = { state };
-            }
-            return result;
-        });
-        this.pendingWrites = operation.catch(() => {});
-        return operation;
     }
 }
 

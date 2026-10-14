@@ -23,13 +23,10 @@ function fixture(
 const CLAUDE = { id: 'aaaaaaaa-0000-4000-8000-000000000001', provider: 'claude' };
 const CODEX = { id: 'aaaaaaaa-0000-4000-8000-000000000002', provider: 'codex' };
 
-test('MN1 꺼져 있어도 시작 동기화는 기본 환경과 Claude 계정에만 끄기를 보낸다', async () => {
+test('MN1 꺼져 있어도 시작 동기화는 끄기를 한 번 보내고 등록 계정에는 따로 보내지 않는다', async () => {
     const { notice, requests } = fixture({}, [CLAUDE, CODEX]);
     await notice.syncAll();
-    assert.deepEqual(requests, [
-        'POST /paddock/memory-notice?enabled=false&minimumMb=4096',
-        `POST /paddock/memory-notice?enabled=false&minimumMb=4096&accountId=${CLAUDE.id}`,
-    ]);
+    assert.deepEqual(requests, ['POST /paddock/memory-notice?enabled=false&minimumMb=4096']);
 });
 
 test('MN2 켜면 기준값을 함께 보내고, 잘못된 기준값은 기본값으로 바꾼다', async () => {
@@ -42,30 +39,26 @@ test('MN2 켜면 기준값을 함께 보내고, 잘못된 기준값은 기본값
     }
 });
 
-test('MN3 계정 터미널을 띄울 때는 켜져 있고 Claude 계정일 때만 그 계정에 보낸다', async () => {
-    const off = fixture({});
-    await off.notice.prepareLaunch(CLAUDE);
-    assert.deepEqual(off.requests, []);
-    const on = fixture({ [MEMORY_NOTICE.ENABLED]: true });
-    await on.notice.prepareLaunch(CODEX);
-    await on.notice.prepareLaunch(CLAUDE);
-    assert.deepEqual(on.requests, [`POST /paddock/memory-notice?enabled=true&minimumMb=4096&accountId=${CLAUDE.id}`]);
-});
-
-test('MN4 한 곳이 실패해도 나머지를 계속하고 같은 오류는 한 번만 알린다', async () => {
+test('MN3 실패하면 첫 문장을 한 번만 알리고, 오류가 사라지면 다시 알릴 수 있다', async () => {
     const { notice, requests, warnings, workspace } = fixture({ [MEMORY_NOTICE.ENABLED]: true }, [CLAUDE]);
+    let isFailing = true;
     workspace.fetchJson = async (path, method, query) => {
         requests.push(query);
-        if (!query.includes('accountId')) throw new Error('Claude settings contain invalid JSON.');
+        if (isFailing) throw new Error('The Paddock settings file could not be written.');
         return { state: 'on' };
     };
     await notice.syncAll();
     await notice.syncAll();
-    assert.equal(requests.length, 4);
-    assert.deepEqual(warnings, ['Memory notice: Claude settings contain invalid JSON.']);
+    assert.equal(requests.length, 2);
+    assert.deepEqual(warnings, ['Memory notice: The Paddock settings file could not be written.']);
+    isFailing = false;
+    await notice.syncAll();
+    isFailing = true;
+    await notice.syncAll();
+    assert.equal(warnings.length, 2);
 });
 
-test('MN5 요청은 하나씩 차례로 보낸다', async () => {
+test('MN4 요청은 하나씩 차례로 보낸다', async () => {
     const { notice, workspace } = fixture({ [MEMORY_NOTICE.ENABLED]: true }, [CLAUDE]);
     let running = 0;
     let peak = 0;
@@ -76,6 +69,6 @@ test('MN5 요청은 하나씩 차례로 보낸다', async () => {
         running -= 1;
         return {};
     };
-    await Promise.all([notice.syncAll(), notice.syncAll(), notice.prepareLaunch(CLAUDE)]);
+    await Promise.all([notice.syncAll(), notice.syncAll(), notice.syncAll()]);
     assert.equal(peak, 1);
 });

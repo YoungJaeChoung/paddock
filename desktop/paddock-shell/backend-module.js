@@ -15,9 +15,10 @@ const { AccountProfile, AccountProfiles } = require('./account-profiles');
 const { AccountUsage, wslFileMapping, defaultLoginFile, readLogin } = require('./account-usage');
 const { CodexUsage } = require('./codex-usage');
 const { AccountSessions } = require('./account-session');
-const { readJson, usageError } = require('./usage-files');
-const { applyStatusLine, settingsTarget } = require('./claude-usage-settings');
-const { MemoryHook, setMemoryNotice } = require('./memory-hook-settings');
+const { readJson, writeJson, usageError } = require('./usage-files');
+const { MemoryHook, memoryHookCommand, setMemoryNotice } = require('./memory-hook-settings');
+const { flagSettingsPath, buildFlagSettings, writeFlagSettings } = require('./claude-flag-settings');
+const { ClaudeWrapper, installClaudeWrapper } = require('./claude-wrapper');
 const { memoryPercent, macUsedMemory, MemoryGuard, tightestMemory, memoryAdvice } = require('./work-model');
 const usage = require('./usage-model');
 const agent = require('./agent-model');
@@ -33,14 +34,16 @@ const { trustWslRepositories } = require('./git-environment');
 
 const accounts = new AccountProfiles();
 
-function usageDirectory() {
-    const directory = path.join(process.env.THEIA_CONFIG_DIR || path.join(os.homedir(), '.paddock', 'config'), 'usage');
-    fs.mkdirSync(directory, { recursive: true });
-    return directory;
+/** 이 Paddock의 설정 폴더. 개발 실행·설치본이 각자 `THEIA_CONFIG_DIR`로 구분한다. */
+function paddockConfigDirectory() {
+    return process.env.THEIA_CONFIG_DIR || path.join(os.homedir(), '.paddock', 'config');
 }
 
-function claudeSettingsPath() {
-    return path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'settings.json');
+/** 사용량 기록·스크립트 폴더. 없으면 만든다. */
+function usageDirectory() {
+    const directory = path.join(paddockConfigDirectory(), 'usage');
+    fs.mkdirSync(directory, { recursive: true });
+    return directory;
 }
 
 /** 앱에 들어 있는 메모리 안내 훅 스크립트 원본. 백엔드는 하나의 번들로 묶이므로 앱 폴더의 paddock-shell에서 찾는다. */
@@ -199,24 +202,12 @@ function readWslInfo(
 }
 
 /**
- * WSL 안 Linux 경로의 링크를 모두 따라간 Linux 경로. 기본 배포판에서 `readlink -f`로 읽고, 읽지 못하면 받은 경로를 돌려준다.
- * Windows 쪽에서 \\wsl.localhost 경로로는 WSL 심볼릭 링크를 따라가지 못하기 때문이다(lstat이 EISDIR, 읽기가 ENOENT로 실패한다).
+ * Claude Code 상태 줄 명령 문자열: `node 스크립트 기본사용량파일`. node를 찾지 못하면 null이다(macOS·Linux는 Electron을 node처럼 쓰는 방법으로 대신한다).
+ * 어느 계정의 사용량인지는 스크립트가 실행 환경의 CLAUDE_CONFIG_DIR로 정하므로 계정별 경로를 받지 않는다.
  */
-function resolveWslLink(
-    linuxPath,
-) {
-    return new Promise((resolve) => {
-        execFile('wsl.exe', ['-e', 'readlink', '-f', '--', linuxPath], { encoding: 'utf8', timeout: 10000, windowsHide: true }, (error, output) => {
-            const resolved = error ? '' : output.replace(/\r/g, '').trim();
-            resolve(resolved.startsWith('/') ? resolved : linuxPath);
-        });
-    });
-}
-
 function statusLineCommand(
     script,
     usageFile,
-    previousFile,
 ) {
     const finder = process.platform === 'win32' ? 'where' : 'which';
     const found = spawnSync(finder, ['node'], { encoding: 'utf8' }).stdout?.split(/\r?\n/)[0]?.trim();
@@ -224,7 +215,19 @@ function statusLineCommand(
     let runner = null;
     if (found) runner = quote(found);
     else if (process.platform !== 'win32') runner = `ELECTRON_RUN_AS_NODE=1 ${quote(process.execPath)}`;
-    return runner ? `${runner} ${quote(script)} ${quote(usageFile)} ${quote(previousFile)}` : null;
+    return runner ? `${runner} ${quote(script)} ${quote(usageFile)}` : null;
+}
+
+/**
+ * WSL 안 Paddock 설정 폴더(`~/.paddock/config`)의 Linux 경로와, Linux 경로를 Windows 앱이 읽는 \\wsl.localhost 경로로 바꾸는 함수.
+ * readWslInfo 결과(home·linuxHome이 있는 것)에서 만든다.
+ */
+function wslPaths(
+    wslInfo,
+) {
+    const root = wslInfo.home.slice(0, wslInfo.home.length - wslInfo.linuxHome.replace(/\//g, '\\').length);
+    const toLocal = file => (file.startsWith('/') ? `${root}${file.replace(/\//g, '\\')}` : file);
+    return { toLocal, configDirectory: `${wslInfo.linuxHome}/.paddock/config` };
 }
 
 const windowsProcessList = new WindowsProcessList();
@@ -237,7 +240,7 @@ const accountSessions = new AccountSessions({ accounts, readWslInfo, readWindows
  *   terminals는 WSL 터미널 id별 고유 상주 메모리(바이트), detached는 그중 셸이 이미 닫혀 남은 프로세스만 있는 id 목록이다.
  *   advice는 사용자가 고칠 설정 문제 코드(`wsl-share`·`no-swap`) 목록이다.
  * `GET /paddock/usage[?accountId=…|?provider=claude|codex]` → `{ claude: { state, windows, updatedAt }, codex: { windows, updatedAt } }`.
- * accountId가 있으면 등록된 그 계정만 읽고, 다른 도구의 값은 빈 목록이다. 생략하면 기본 CLI 환경을 읽는다.
+ * accountId가 있으면 등록된 그 계정만 읽고(`claude.state`는 기본 환경과 같은 사용량 표시 설정이다), 다른 도구의 값은 빈 목록이다. 생략하면 기본 CLI 환경을 읽는다.
  * 기본 Claude의 로그인이 등록 계정과 같으면 `claude.account`에 그 계정의 `{ id, label }`을 붙인다. 다르거나 확인할 수 없으면 빠진다.
  * 기본 Codex도 같다(`codex.account`): 로그인한 기본 환경(이 컴퓨터·WSL)이 모두 같은 등록 계정 하나와 맞을 때만 붙는다.
  * 대조는 같은 실행 환경(WSL은 같은 배포판)의 등록 계정끼리만 하고, 같은 로그인의 등록 계정이 둘 이상이면 붙이지 않는다.
@@ -252,11 +255,11 @@ const accountSessions = new AccountSessions({ accounts, readWslInfo, readWindows
  *   Windows가 아니거나 WSL을 읽지 못하면 `{}`다.
  * `GET /paddock/wsl-ready` → `{ ready, home }` 이 Windows에 WSL 배포판이 하나라도 설치돼 있는지와 기본 배포판의 홈 폴더(Windows 경로).
  *   wsl.exe만 있고 배포판이 없으면 `{ ready: false, home: '' }`다.
- * `POST /paddock/usage/claude?enabled=true|false[&automatic=true][&accountId=…]` → 해당 Claude Code 설정에 Paddock 상태 줄을 넣거나 원래대로 되돌린다.
- *   automatic이면(처음 실행의 자동 켜기) 다른 Paddock 설정 폴더의 상태 줄이 살아 있을 때 바꾸지 않고 `{ state: 'unset' }`을 돌려준다.
+ * `POST /paddock/usage/claude?enabled=true|false` → Paddock 전용 Claude 설정 파일(`--settings`로 덧붙이는 파일)에 상태 줄을 넣거나 뺀다.
+ *   사용자의 Claude 설정 파일은 쓰지 않으며, 계정 터미널·일반 터미널이 모두 같은 파일을 읽으므로 계정별 요청은 없다.
  * Claude의 `state`는 'unset'(아직 정한 적 없음)·'on'·'off'다.
- * `POST /paddock/memory-notice?enabled=true|false[&minimumMb=N][&accountId=…]` → 가용 메모리가 부족할 때 에이전트에게 알리는 훅을 해당 Claude Code 설정에 넣거나 뺀다.
- *   기본 환경은 Linux 앱이면 이 컴퓨터의 설정, Windows 앱이면 WSL 안의 설정이다. accountId가 있으면 등록된 그 계정만 다룬다.
+ * `POST /paddock/memory-notice?enabled=true|false[&minimumMb=N]` → 가용 메모리가 부족할 때 에이전트에게 알리는 훅을 같은 Paddock 전용 설정 파일에 넣거나 뺀다.
+ *   Linux 앱은 이 컴퓨터의 파일, Windows 앱은 WSL 안의 파일에 쓴다.
  *   훅이 `sh`와 `/proc/meminfo`를 쓰므로 macOS·Windows 이 컴퓨터 쪽은 `{ state: 'unsupported' }`다. 응답은 `{ state: 'on'|'off'|'unsupported' }`.
  */
 class PaddockStatusRoutes {
@@ -265,14 +268,10 @@ class PaddockStatusRoutes {
         this.windowsProcesses = windowsProcessList;
         // 마지막 WSL 스캔이 읽은 `{ total, available, swap, terminals, at }`. 아직 읽은 적 없으면 null.
         this.wslMemory = null;
-        // 기본 환경의 Claude 설정 파일을 읽고 고쳐 쓰는 작업(상태 줄·메모리 안내)을 한 줄로 세운다. 같은 파일을 동시에 고쳐 쓰면 한쪽 변경이 사라진다.
+        // Paddock 전용 Claude 설정 파일과 그 켜짐 기록(state.json)을 고쳐 쓰는 작업(상태 줄·메모리 안내)을 한 줄로 세운다. 같은 파일을 동시에 고쳐 쓰면 한쪽 변경이 사라진다.
         this.pendingDefaultWrites = Promise.resolve();
         this.liveCodexUsage = new CodexUsage();
-        this.accountUsage = new AccountUsage({
-            accounts, readWslInfo, liveCodexUsage: this.liveCodexUsage,
-            sourceScript: path.join(process.env.THEIA_APP_PROJECT_PATH || process.cwd(), 'paddock-shell', 'claude-statusline.cjs'),
-            commandForNative: statusLineCommand,
-        });
+        this.accountUsage = new AccountUsage({ accounts, readWslInfo, liveCodexUsage: this.liveCodexUsage });
     }
 
     configure(
@@ -427,10 +426,7 @@ class PaddockStatusRoutes {
                 // 값이 빠진 요청을 "끄기"로 오해해 사용자 설정을 바꾸지 않는다.
                 response.status(400).json({ error: 'enabled must be true or false' });
             } else {
-                const operation = Object.hasOwn(request.query, 'accountId')
-                    ? this.accountUsage.setClaude(request.query.accountId, enabled === 'true', request.query.automatic === 'true')
-                    : this.queueDefaultWrite(() => this.setClaude(enabled === 'true', request.query.automatic === 'true'));
-                operation
+                this.queueDefaultWrite(() => this.setClaude(enabled === 'true'))
                     .then(result => response.json(result))
                     .catch(error => response.status(error.statusCode || 500).json({ error: error instanceof Error ? error.message : String(error) }));
             }
@@ -445,17 +441,17 @@ class PaddockStatusRoutes {
                 response.status(400).json({ error: 'minimumMb must be a whole number of megabytes' });
             } else {
                 const options = { enabled: enabled === 'true', minimumMb: hasMinimum ? Number(minimumMb) : MemoryHook.DEFAULT_MINIMUM_MB, source: memoryHookSource() };
-                const operation = Object.hasOwn(request.query, 'accountId')
-                    ? this.accountUsage.setMemoryNotice(request.query.accountId, options)
-                    : this.queueDefaultWrite(() => this.setMemoryNotice(options));
-                operation
+                this.queueDefaultWrite(() => this.setMemoryNotice(options))
                     .then(result => response.json(result))
                     .catch(error => response.status(error.statusCode || 500).json({ error: error instanceof Error ? error.message : String(error) }));
             }
         });
+        // 시작할 때 한 번, 지난번 설정(usage/state.json)대로 Paddock 전용 설정 파일과 claude 실행 래퍼를 다시 만든다.
+        // 앱을 새 판으로 올리거나 설정 폴더를 옮겨도 경로가 맞게 되고, 실패해도 앱은 그대로 시작한다.
+        this.queueDefaultWrite(() => this.startFlagSettings()).catch(error => console.warn(`Paddock Claude settings could not be prepared: ${error instanceof Error ? error.message : String(error)}`));
     }
 
-    /** 기본 환경 설정 파일을 고치는 작업을 앞선 작업이 끝난 뒤에 실행한다. 앞선 작업이 실패해도 이어서 실행한다. */
+    /** Paddock 전용 설정 파일을 고치는 작업을 앞선 작업이 끝난 뒤에 실행한다. 앞선 작업이 실패해도 이어서 실행한다. */
     queueDefaultWrite(
         task,
     ) {
@@ -465,8 +461,8 @@ class PaddockStatusRoutes {
     }
 
     /**
-     * 기본 환경의 Claude Code 설정에 메모리 안내 훅을 켜거나 끈다.
-     * Linux 앱은 이 컴퓨터의 설정에, Windows 앱은 WSL 안의 설정에 쓴다(WSL에서 실행한 Claude는 WSL 쪽 설정만 읽고, Windows용 Claude는 `sh`가 없다).
+     * 메모리 안내 훅을 켜거나 끈다. 훅 스크립트를 놓고 켜짐 여부·기준값을 `usage/state.json`에 적은 뒤 Paddock 전용 설정 파일을 다시 쓴다.
+     * 사용자의 Claude 설정 파일은 건드리지 않는다. Linux 앱은 이 컴퓨터에, Windows 앱은 WSL 안에 적용한다(WSL에서 실행한 Claude는 WSL 쪽 설정만 읽고, Windows용 Claude는 `sh`가 없다).
      * 적용한 곳이 없으면(macOS·WSL이 없는 Windows) 'unsupported'다.
      */
     async setMemoryNotice(
@@ -474,23 +470,18 @@ class PaddockStatusRoutes {
     ) {
         let state = 'unsupported';
         if (process.platform === 'linux') {
-            const script = path.join(usageDirectory(), MemoryHook.SCRIPT_NAME);
-            state = setMemoryNotice({ settingsPath: settingsTarget(claudeSettingsPath()), scriptFile: script, commandScript: script, source, enabled, minimumMb });
+            state = setMemoryNotice({ scriptFile: path.join(usageDirectory(), MemoryHook.SCRIPT_NAME), source, enabled });
         }
         const wslInfo = await readWslInfo();
         if (wslInfo.home && wslInfo.linuxHome) {
-            const root = wslInfo.home.slice(0, wslInfo.home.length - wslInfo.linuxHome.replace(/\//g, '\\').length);
-            const toLocal = file => `${root}${file.replace(/\//g, '\\')}`;
-            const linuxScript = `${wslInfo.linuxHome}/.paddock/config/usage/${MemoryHook.SCRIPT_NAME}`;
-            // 설정 파일이 링크(예: dotfiles 저장소)면 WSL 안에서 링크를 따라가 실제 파일에 쓴다.
-            // 끄는데 켠 적이 없으면(스크립트가 없으면) 앱을 시작할 때마다 wsl.exe를 부르지 않도록 건드리지 않는다.
-            if (enabled || fs.existsSync(toLocal(linuxScript))) {
-                const wslSettings = await resolveWslLink(`${wslInfo.linuxHome}/.claude/settings.json`);
-                state = setMemoryNotice({ settingsPath: toLocal(wslSettings), scriptFile: toLocal(linuxScript), commandScript: linuxScript, source, enabled, minimumMb });
-            } else {
-                state = 'off';
-            }
+            const { toLocal, configDirectory } = wslPaths(wslInfo);
+            const script = toLocal(`${configDirectory}/usage/${MemoryHook.SCRIPT_NAME}`);
+            // 끄는데 켠 적이 없으면(스크립트가 없으면) 앱을 시작할 때마다 WSL 폴더를 만들지 않도록 건드리지 않는다.
+            if (enabled || fs.existsSync(script)) state = setMemoryNotice({ scriptFile: script, source, enabled });
+            else state = 'off';
         }
+        if (state !== 'unsupported') this.updateState({ memory: { enabled, minimumMb } });
+        await this.writeFlagFiles();
         return { state };
     }
 
@@ -551,45 +542,103 @@ class PaddockStatusRoutes {
     }
 
     /**
-     * 사용량 표시를 켜거나 끈다. 이 컴퓨터의 Claude Code 설정에 Paddock 상태 줄을 넣거나 원래대로 되돌린다.
-     * Windows 앱이면 WSL 안의 Claude Code 설정에도 같은 일을 한다 — WSL에서 실행한 Claude는 WSL 쪽 설정만 읽는다.
-     * 돌려주는 state는 이 컴퓨터 쪽 결과다('on'·'off', 자동 켜기를 건너뛰었으면 'unset').
+     * 사용량 표시를 켜거나 끈다. 상태 줄 스크립트를 놓고 켜짐 여부를 `usage/state.json`에 적은 뒤 Paddock 전용 설정 파일을 다시 쓴다.
+     * 사용자의 Claude 설정 파일은 건드리지 않는다. Windows 앱이면 WSL 안에도 같은 일을 한다 — WSL에서 실행한 Claude는 WSL 쪽 설정만 읽는다.
+     * 돌려주는 state는 이 컴퓨터 쪽 결과('on'·'off')다.
      */
     async setClaude(
         enabled,
-        isAutomatic = false,
     ) {
-        const directory = usageDirectory();
-        // 앱을 옮기거나 업데이트해도 Claude Code가 부르는 경로가 바뀌지 않게 스크립트를 사용량 폴더로 복사해 둔다.
-        // 백엔드는 하나의 번들로 묶이므로 원본은 앱 폴더의 paddock-shell에서 찾는다(설치 파일에도 포함된다).
-        const appPath = process.env.THEIA_APP_PROJECT_PATH || process.cwd();
-        const source = path.join(appPath, 'paddock-shell', 'claude-statusline.cjs');
-        const script = path.join(directory, 'claude-statusline.cjs');
-        fs.copyFileSync(source, script);
-        const previousFile = path.join(directory, 'previous-statusline.json');
-        const command = statusLineCommand(script, path.join(directory, 'claude.json'), previousFile);
-        if (enabled && !command) {
-            throw new Error('Node.js is needed to show Claude usage. Install Node.js and try again.');
-        }
-        // 설정 파일이 링크면 링크를 끊지 않도록 실제 파일에 쓴다.
-        const state = applyStatusLine({ settingsPath: settingsTarget(claudeSettingsPath()), previousFile, command, enabled, isAutomatic, toLocal: file => file });
-        fs.writeFileSync(path.join(directory, 'state.json'), JSON.stringify({ claude: state }));
+        const state = enabled ? 'on' : 'off';
+        if (enabled) await this.installStatusLineScripts();
+        this.updateState({ claude: state });
+        await this.writeFlagFiles();
+        return { state };
+    }
+
+    /**
+     * 상태 줄 스크립트를 사용량 폴더에 복사한다(Windows 앱이면 WSL 쪽에도).
+     * 앱을 옮기거나 업데이트해도 Claude Code가 부르는 경로가 바뀌지 않게 하려는 것이다.
+     * 백엔드는 하나의 번들로 묶이므로 원본은 앱 폴더의 paddock-shell에서 찾는다(설치 파일에도 포함된다).
+     */
+    async installStatusLineScripts() {
+        const source = path.join(process.env.THEIA_APP_PROJECT_PATH || process.cwd(), 'paddock-shell', 'claude-statusline.cjs');
+        fs.copyFileSync(source, path.join(usageDirectory(), 'claude-statusline.cjs'));
         const wslInfo = await readWslInfo();
         if (wslInfo.home && wslInfo.linuxHome && wslInfo.node) {
-            // WSL 쪽 파일은 Windows 경로(\\wsl.localhost\…)로 쓰고, 상태 줄 명령에는 WSL 안에서 읽을 Linux 경로를 넣는다.
-            // 사용량 기록은 WSL용 Paddock과 같은 자리(~/.paddock/config/usage)에 남아 어느 쪽 앱에서도 읽힌다.
-            const root = wslInfo.home.slice(0, wslInfo.home.length - wslInfo.linuxHome.replace(/\//g, '\\').length);
-            const toLocal = file => (file.startsWith('/') ? `${root}${file.replace(/\//g, '\\')}` : file);
-            const linuxDirectory = `${wslInfo.linuxHome}/.paddock/config/usage`;
-            fs.mkdirSync(toLocal(linuxDirectory), { recursive: true });
-            fs.copyFileSync(source, toLocal(`${linuxDirectory}/claude-statusline.cjs`));
-            const quote = value => usage.quoteStatusLineArgument(value);
-            const linuxCommand = [wslInfo.node, `${linuxDirectory}/claude-statusline.cjs`, `${linuxDirectory}/claude.json`, `${linuxDirectory}/previous-statusline.json`].map(quote).join(' ');
-            // WSL 설정 파일이 링크(예: dotfiles 저장소)면 WSL 안에서 링크를 따라가 실제 파일에 쓴다. Windows 쪽에서는 링크를 따라가지 못한다.
-            const wslSettings = await resolveWslLink(`${wslInfo.linuxHome}/.claude/settings.json`);
-            applyStatusLine({ settingsPath: toLocal(wslSettings), previousFile: toLocal(`${linuxDirectory}/previous-statusline.json`), command: linuxCommand, enabled, isAutomatic, toLocal });
+            const { toLocal, configDirectory } = wslPaths(wslInfo);
+            fs.mkdirSync(toLocal(`${configDirectory}/usage`), { recursive: true });
+            fs.copyFileSync(source, toLocal(`${configDirectory}/usage/claude-statusline.cjs`));
         }
-        return { state };
+    }
+
+    /** `usage/state.json`에 값을 합쳐 적는다. 이 파일이 사용량 표시·메모리 안내의 마지막 설정(켜짐 여부·기준값)이다. */
+    updateState(
+        changes,
+    ) {
+        const file = path.join(usageDirectory(), 'state.json');
+        writeJson(file, { ...readJson(file, {}), ...changes });
+    }
+
+    /**
+     * 지난번 설정대로 Paddock 전용 설정 파일을 다시 쓰고, claude 실행 래퍼를 놓는다. 백엔드가 시작될 때 부른다.
+     * 설정이 아직 없으면(처음 실행) 빈 설정 파일을 만든다. 사용량 표시를 켜는 요청이 오면 그때 상태 줄이 들어간다.
+     */
+    async startFlagSettings() {
+        const configDirectory = paddockConfigDirectory();
+        const state = readJson(path.join(configDirectory, 'usage', 'state.json'), {});
+        if (state.claude === 'on') await this.installStatusLineScripts();
+        // 켜져 있던 메모리 안내는 스크립트도 이 앱 판으로 다시 놓는다. 이 경로가 설정 파일도 함께 쓴다.
+        if (state.memory?.enabled === true) await this.setMemoryNotice({ enabled: true, minimumMb: state.memory.minimumMb, source: memoryHookSource() });
+        else await this.writeFlagFiles();
+        installClaudeWrapper({
+            directory: path.join(configDirectory, ClaudeWrapper.DIRECTORY),
+            kind: process.platform === 'win32' ? 'cmd' : 'sh',
+            flagFile: flagSettingsPath(configDirectory),
+            ownDirectory: path.join(configDirectory, ClaudeWrapper.DIRECTORY),
+        });
+    }
+
+    /**
+     * 이 컴퓨터(그리고 Windows 앱이면 WSL 안)의 Paddock 전용 Claude 설정 파일을 `usage/state.json`의 켜짐 여부대로 다시 쓴다.
+     * 켜진 기능만 담긴다. 쓰지 못한 곳이 있어도 나머지는 쓰고, 첫 오류를 마지막에 던진다.
+     */
+    async writeFlagFiles() {
+        const configDirectory = paddockConfigDirectory();
+        const state = readJson(path.join(configDirectory, 'usage', 'state.json'), {});
+        const failures = [];
+        const attempt = (action) => {
+            try {
+                action();
+            } catch (error) {
+                failures.push(error);
+            }
+        };
+        // 이 컴퓨터. 메모리 안내 훅은 `sh`와 /proc/meminfo가 필요해 Linux에서만 넣는다.
+        attempt(() => {
+            let statusLineCommandText = null;
+            if (state.claude === 'on') {
+                statusLineCommandText = statusLineCommand(path.join(configDirectory, 'usage', 'claude-statusline.cjs'), path.join(configDirectory, 'usage', 'claude.json'));
+                if (!statusLineCommandText) throw new Error('Node.js is needed to show Claude usage. Install Node.js and try again.');
+            }
+            const hookScript = path.join(configDirectory, 'usage', MemoryHook.SCRIPT_NAME);
+            const hook = process.platform === 'linux' && state.memory?.enabled === true ? memoryHookCommand(hookScript, state.memory.minimumMb) : null;
+            writeFlagSettings(flagSettingsPath(configDirectory), buildFlagSettings({ statusLineCommand: statusLineCommandText, memoryHookCommand: hook }));
+        });
+        const wslInfo = await readWslInfo();
+        if (wslInfo.home && wslInfo.linuxHome) {
+            // WSL 쪽 파일은 Windows 경로(\\wsl.localhost\…)로 쓰고, 명령에는 WSL 안에서 읽을 Linux 경로를 넣는다.
+            // 사용량 기록은 WSL용 Paddock과 같은 자리(~/.paddock/config/usage)에 남아 어느 쪽 앱에서도 읽힌다.
+            const { toLocal, configDirectory: wslConfigDirectory } = wslPaths(wslInfo);
+            attempt(() => {
+                const quote = value => usage.quoteStatusLineArgument(value);
+                const statusLineCommandText = state.claude === 'on' && wslInfo.node
+                    ? [wslInfo.node, `${wslConfigDirectory}/usage/claude-statusline.cjs`, `${wslConfigDirectory}/usage/claude.json`].map(quote).join(' ') : null;
+                const hook = state.memory?.enabled === true ? memoryHookCommand(`${wslConfigDirectory}/usage/${MemoryHook.SCRIPT_NAME}`, state.memory.minimumMb) : null;
+                writeFlagSettings(toLocal(flagSettingsPath(wslConfigDirectory, path.posix.join)), buildFlagSettings({ statusLineCommand: statusLineCommandText, memoryHookCommand: hook }));
+            });
+        }
+        if (failures.length) throw failures[0];
     }
 
 }

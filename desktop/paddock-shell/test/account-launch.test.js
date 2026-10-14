@@ -174,3 +174,41 @@ test('C-ACCOUNT-RESUME-L03 resuming in the same account folder passes only the c
     assert.equal(options.shellArgs.join('\n').includes('transcript'), false);
     assert.throws(() => accountTerminalOptions({ ...preparedAccount('claude', 'native', '/tmp/account'), resume: { ...resume, sessionId: '../x' } }, { cwd: '/tmp', isWindows: false }), /identifier/);
 });
+
+test('L10 Claude launch adds --settings only when the Paddock flag settings file exists, in the Bash, WSL, and PowerShell launchers', { skip: process.platform === 'win32' }, context => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'paddock flag launch '));
+    context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+    const flagFile = path.join(directory, "flag settings's.json");
+    const prepared = { ...preparedAccount('claude', 'native', directory), flagSettingsFile: flagFile };
+    const run = options => {
+        // An inherited command function reports the arguments the launcher gives the CLI.
+        const command = '() { case "$1" in claude) shift; printf "ARGS|%s\\n" "$*" ;; -v) if [ "$2" = claude ]; then printf "%s\\n" "$2"; else builtin command "$@"; fi ;; *) builtin command "$@" ;; esac; }';
+        const env = { ...process.env, HISTFILE: path.join(directory, 'history'), 'BASH_FUNC_command%%': command };
+        for (const [name, value] of Object.entries(options.env)) {
+            if (value === null) delete env[name];
+            else env[name] = value;
+        }
+        const result = spawnSync(options.shellPath, options.shellArgs, { env, cwd: directory, input: 'exit\n', encoding: 'utf8', timeout: 10000 });
+        assert.equal(result.status, 0, result.stderr);
+        return result.stdout.split('\n').find(line => line.startsWith('ARGS|'));
+    };
+    const options = accountTerminalOptions(prepared, { cwd: directory, isWindows: false });
+    assert.equal(options.paddockFlagSettingsFile, flagFile);
+    assert.equal(run(options), 'ARGS|');
+    fs.writeFileSync(flagFile, '{}');
+    assert.equal(run(options), `ARGS|--settings ${flagFile}`);
+    const refreshed = refreshAccountResume(options, { provider: 'claude', sessionId: '00000000-0000-4000-8000-000000000014', runtime: 'native', useSessionId: true });
+    assert.equal(refreshed.paddockFlagSettingsFile, flagFile);
+    assert.equal(run(refreshed), `ARGS|--settings ${flagFile} --resume 00000000-0000-4000-8000-000000000014`);
+    // WSL runs the same Bash launcher with a Linux path; PowerShell tests the path before adding the flag.
+    const wsl = accountTerminalOptions({ ...preparedAccount('claude', 'wsl', '/home/test/accounts/claude'), flagSettingsFile: '/home/test/.paddock/config/claude/flag-settings.json' }, { cwd: '/home/test/work', isWindows: true });
+    assert.ok(wsl.shellArgs.at(-1).includes('--settings') && wsl.shellArgs.at(-1).includes('/home/test/.paddock/config/claude/flag-settings.json'));
+    const windows = accountTerminalOptions({ ...preparedAccount('claude', 'native', 'C:\\accounts\\claude'), flagSettingsFile: 'C:\\Users\\O\'Brien\\.paddock\\config\\claude\\flag-settings.json' }, { cwd: 'C:\\work', isWindows: true });
+    const decoded = Buffer.from(windows.shellArgs.at(-1), 'base64').toString('utf16le');
+    assert.ok(decoded.includes("Test-Path -LiteralPath 'C:\\Users\\O''Brien\\.paddock\\config\\claude\\flag-settings.json'"));
+    assert.ok(decoded.includes('& $paddockCli.Source @paddockFlag'));
+    // Without a flag file nothing about --settings appears; Codex never takes one.
+    assert.equal(accountTerminalOptions(preparedAccount('claude', 'native', directory), { cwd: directory, isWindows: false }).shellArgs.at(-1).includes('--settings'), false);
+    assert.throws(() => accountTerminalOptions({ ...preparedAccount('codex', 'native', directory), flagSettingsFile: flagFile }, { cwd: directory, isWindows: false }), /settings path/);
+    assert.throws(() => accountTerminalOptions({ ...prepared, flagSettingsFile: '/tmp/a\nb' }, { cwd: directory, isWindows: false }), /settings path/);
+});

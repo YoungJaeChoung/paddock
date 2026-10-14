@@ -8,6 +8,7 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { WslScripts, runWsl } = require('./account-profile-wsl');
 const { BrowserBridge } = require('./account-browser');
+const { flagSettingsPath } = require('./claude-flag-settings');
 const { PencilServer, PencilDoctor, toWslPath, registerPencilServer, findWindowsPencil } = require('./account-pencil');
 const { inspectDirectories, repairDirectory, storageAccessResult, openFolderSettings } = require('./account-storage-access');
 
@@ -452,7 +453,26 @@ class AccountProfiles {
     ) {
         const result = profile.runtime === 'wsl' ? await this.prepareWsl(profile) : this.prepareNative(profile);
         const environmentName = profile.provider === 'claude' ? 'CLAUDE_CONFIG_DIR' : 'CODEX_HOME';
-        return { profile, configDir: result.configDir, env: { [environmentName]: result.configDir }, warnings: result.warnings, ...(result.browserDirectory ? { browserDirectory: result.browserDirectory } : {}), ...(profile.wslDistribution ? { wslDistribution: profile.wslDistribution } : {}) };
+        const flagSettingsFile = profile.provider === 'claude' ? this.flagSettingsFile(profile, result.configDir) : null;
+        return { profile, configDir: result.configDir, env: { [environmentName]: result.configDir }, warnings: result.warnings, ...(result.browserDirectory ? { browserDirectory: result.browserDirectory } : {}), ...(flagSettingsFile ? { flagSettingsFile } : {}), ...(profile.wslDistribution ? { wslDistribution: profile.wslDistribution } : {}) };
+    }
+
+    /**
+     * Returns where the account's Claude runtime finds Paddock's own settings file (status line and hooks passed with `--settings`).
+     * Native accounts use this Paddock's config folder; WSL accounts use `~/.paddock/config` inside the distribution,
+     * which is the folder the Windows app writes for WSL (the account folder sits at `~/.paddock/agent-profiles/<id>/claude`).
+     * The launcher adds the flag only when the file exists.
+     */
+    flagSettingsFile(
+        profile,
+        configDir,
+    ) {
+        let file;
+        if (profile.runtime === 'wsl') {
+            const paddockRoot = path.posix.dirname(path.posix.dirname(path.posix.dirname(configDir)));
+            file = flagSettingsPath(path.posix.join(paddockRoot, 'config'), path.posix.join);
+        } else file = flagSettingsPath(this.configDirectory);
+        return file;
     }
 
     /**

@@ -63,6 +63,7 @@ function storedLauncher(
         if (options.paddockAccount) result.paddockAccount = metadataFields(options.paddockAccount, TerminalReplacement.PROFILE_FIELDS);
         if (options.paddockResume) result.paddockResume = metadataFields(options.paddockResume, TerminalReplacement.RESUME_FIELDS);
         if (typeof options.paddockBrowserDirectory === 'string') result.paddockBrowserDirectory = options.paddockBrowserDirectory;
+        if (typeof options.paddockFlagSettingsFile === 'string') result.paddockFlagSettingsFile = options.paddockFlagSettingsFile;
     }
     return result;
 }

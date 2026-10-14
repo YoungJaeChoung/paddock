@@ -165,6 +165,7 @@ function describe(
 /**
  * 상태 줄 명령이 Paddock 상태 줄이면 그 명령이 쓰는 파일 경로를, 아니면 null을 돌려준다.
  * 설정 폴더가 다른 Paddock(시험용 설정·다른 설치본)이 등록한 명령도 Paddock 상태 줄로 알아본다.
+ * 예전 판이 사용자 설정 파일에 넣은 항목(`previousFile`까지 인자로 가진 꼴)을 걷어 낼 때 알아보는 기준이기도 하다.
  *
  * Examples
  * --------
@@ -194,36 +195,6 @@ function quoteStatusLineArgument(
     return `"${escaped}"`;
 }
 
-/**
- * Claude Code 설정에 Paddock 상태 줄 명령을 넣는다.
- * 원래 쓰던 상태 줄은 `previous`로 돌려주어 Paddock 명령이 이어 부르게 한다. 이미 Paddock 명령이면(설정 폴더가 다른 Paddock 포함)
- * `previous`는 null이다 — Paddock 명령끼리 이어 부르면 지워진 시험용 폴더의 스크립트까지 줄줄이 부른다.
- * 다른 Paddock 명령을 바꾸면 `replaced`에 그 명령의 파일 경로가 담긴다(그 명령이 이어 부르던 원래 상태 줄을 넘겨받는 데 쓴다).
- */
-function installStatusLine(
-    settings,
-    command,
-) {
-    const current = settings.statusLine;
-    const other = current?.command !== command ? paddockStatusLineFiles(current?.command) : null;
-    return {
-        settings: { ...settings, statusLine: { type: 'command', command } },
-        previous: current && current.command !== command && !other ? current : null,
-        replaced: other,
-    };
-}
-
-/** Paddock 상태 줄을 걷어 내고 원래 상태 줄(없으면 빈 상태)로 되돌린다. */
-function restoreStatusLine(
-    settings,
-    previous,
-) {
-    const restored = { ...settings };
-    if (previous) restored.statusLine = previous;
-    else delete restored.statusLine;
-    return restored;
-}
-
 module.exports = {
     windowLabel,
     windowName,
@@ -236,6 +207,4 @@ module.exports = {
     shortAge,
     paddockStatusLineFiles,
     quoteStatusLineArgument,
-    installStatusLine,
-    restoreStatusLine,
 };

@@ -38,6 +38,7 @@ function bashArguments(
     configDir,
     browserDirectory,
     cliArguments,
+    flagSettingsFile,
 ) {
     const variable = provider === 'claude' ? 'CLAUDE_CONFIG_DIR' : 'CODEX_HOME';
     // Bash reads the user's aliases and PATH before applying the selected account.
@@ -56,7 +57,10 @@ function bashArguments(
         'PROMPT_COMMAND=("${__paddock_account_prompt[@]}")',
         'unset __paddock_account_prompt',
         'unset -f __paddock_start_account',
-        `if command -v ${provider} >/dev/null 2>&1; then command ${provider}${cliArguments.map(argument => ` ${quotePosix(argument)}`).join('')}; else printf '%s\\n' ${quotePosix(`${AccountLaunch.PROVIDERS[provider]} CLI was not found. Install it in this environment, then run ${provider}.`)}; fi`,
+        // Paddock's status line and hooks ride on --settings so no user settings file holds a machine-specific path.
+        // A missing file (feature never written on this machine) is skipped instead of making the CLI refuse to start.
+        ...(flagSettingsFile ? [`__paddock_flag=(); if [ -f ${quotePosix(flagSettingsFile)} ]; then __paddock_flag=(--settings ${quotePosix(flagSettingsFile)}); fi`] : []),
+        `if command -v ${provider} >/dev/null 2>&1; then command ${provider}${flagSettingsFile ? ' "${__paddock_flag[@]}"' : ''}${cliArguments.map(argument => ` ${quotePosix(argument)}`).join('')}; else printf '%s\\n' ${quotePosix(`${AccountLaunch.PROVIDERS[provider]} CLI was not found. Install it in this environment, then run ${provider}.`)}; fi`,
         '}',
         'PROMPT_COMMAND=__paddock_start_account',
     ].join('\n');
@@ -69,6 +73,7 @@ function powerShellArguments(
     configDir,
     shellPath,
     cliArguments,
+    flagSettingsFile,
 ) {
     const variable = provider === 'claude' ? 'CLAUDE_CONFIG_DIR' : 'CODEX_HOME';
     const report = cwdReportOptions(shellPath);
@@ -82,7 +87,9 @@ function powerShellArguments(
         `$env:${variable} = ${quotePowerShell(configDir)}`,
         `Write-Host ${quotePowerShell(`${AccountLaunch.PROVIDERS[provider]} account environment. Sign in through the official CLI if prompted.`)}`,
         `$paddockCli = Get-Command ${provider} -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1`,
-        `if ($paddockCli) { & $paddockCli.Source${cliArguments.map(argument => ` ${quotePowerShell(argument)}`).join('')} } else { Write-Host ${quotePowerShell(`${AccountLaunch.PROVIDERS[provider]} CLI was not found. Install it in this environment, then run ${provider}.`)} }`,
+        // Same rule as the Bash launchers: Paddock's --settings file is added only when it exists.
+        ...(flagSettingsFile ? [`$paddockFlag = @(); if (Test-Path -LiteralPath ${quotePowerShell(flagSettingsFile)}) { $paddockFlag = @('--settings', ${quotePowerShell(flagSettingsFile)}) }`] : []),
+        `if ($paddockCli) { & $paddockCli.Source${flagSettingsFile ? ' @paddockFlag' : ''}${cliArguments.map(argument => ` ${quotePowerShell(argument)}`).join('')} } else { Write-Host ${quotePowerShell(`${AccountLaunch.PROVIDERS[provider]} CLI was not found. Install it in this environment, then run ${provider}.`)} }`,
     ].join('; ');
     return ['-NoLogo', '-NoExit', '-EncodedCommand', encodePowerShell(script)];
 }
@@ -95,10 +102,11 @@ function accountTerminalOptions(
     prepared,
     { cwd, isWindows, wslEnv = '' },
 ) {
-    const { profile, configDir, browserDirectory, resume, permissions = 'ask' } = prepared;
+    const { profile, configDir, browserDirectory, flagSettingsFile, resume, permissions = 'ask' } = prepared;
     if (!Object.hasOwn(AccountLaunch.PROVIDERS, profile.provider)) throw new Error('Choose a Claude or Codex account.');
     if (typeof configDir !== 'string' || !configDir || /[\u0000-\u001f\u007f]/.test(configDir)) throw new Error('The account configuration path is invalid.');
     if (browserDirectory !== undefined && (typeof browserDirectory !== 'string' || !browserDirectory.startsWith('/') || /[\u0000-\u001f\u007f]/.test(browserDirectory))) throw new Error('The account browser path is invalid.');
+    if (flagSettingsFile !== undefined && (profile.provider !== 'claude' || typeof flagSettingsFile !== 'string' || !flagSettingsFile || /[\u0000-\u001f\u007f]/.test(flagSettingsFile))) throw new Error('The account settings path is invalid.');
     if (!Object.hasOwn(AccountLaunch.PERMISSION_FLAGS, permissions)) throw new Error('Choose ask, allowSkip, or skip for agent permissions.');
     const cliArguments = [...AccountLaunch.PERMISSION_FLAGS[permissions][profile.provider]];
     if (resume) {
@@ -124,20 +132,21 @@ function accountTerminalOptions(
         cwd, title: `${AccountLaunch.PROVIDERS[profile.provider]} · ${profile.label}`,
         paddockAccount: { ...profile }, paddockPermissions: permissions, env,
         ...(browserDirectory ? { paddockBrowserDirectory: browserDirectory } : {}),
+        ...(flagSettingsFile ? { paddockFlagSettingsFile: flagSettingsFile } : {}),
         ...(resume ? { paddockResume: { ...resume } } : {}),
     };
     if (profile.runtime === 'wsl') {
         if (!isWindows || !profile.wslDistribution) throw new Error('Open this WSL account on its Windows device.');
         options.shellPath = 'C:\\Windows\\System32\\wsl.exe';
-        options.shellArgs = ['-d', profile.wslDistribution, '--cd', cwd, '-e', '/bin/bash', ...bashArguments(profile.provider, configDir, browserDirectory, cliArguments)];
+        options.shellArgs = ['-d', profile.wslDistribution, '--cd', cwd, '-e', '/bin/bash', ...bashArguments(profile.provider, configDir, browserDirectory, cliArguments, flagSettingsFile)];
         // Keep existing WSL forwarding rules; Linux startup clears auth selectors and reapplies the chosen account.
         options.env = { ...env, WSLENV: wslEnv };
     } else if (isWindows) {
         options.shellPath = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
-        options.shellArgs = powerShellArguments(profile.provider, configDir, options.shellPath, cliArguments);
+        options.shellArgs = powerShellArguments(profile.provider, configDir, options.shellPath, cliArguments, flagSettingsFile);
     } else {
         options.shellPath = '/bin/bash';
-        options.shellArgs = bashArguments(profile.provider, configDir, browserDirectory, cliArguments);
+        options.shellArgs = bashArguments(profile.provider, configDir, browserDirectory, cliArguments, flagSettingsFile);
     }
     return options;
 }
@@ -150,7 +159,7 @@ function refreshAccountResume(
     const profile = options.paddockAccount;
     const variable = profile?.provider === 'claude' ? 'CLAUDE_CONFIG_DIR' : 'CODEX_HOME';
     // A restored terminal keeps the permission mode it was opened with, even if the preference changed since.
-    const prepared = { profile, configDir: options.env?.[variable], browserDirectory: options.paddockBrowserDirectory, permissions: options.paddockPermissions ?? 'ask', ...(resume ? { resume } : {}) };
+    const prepared = { profile, configDir: options.env?.[variable], browserDirectory: options.paddockBrowserDirectory, flagSettingsFile: options.paddockFlagSettingsFile, permissions: options.paddockPermissions ?? 'ask', ...(resume ? { resume } : {}) };
     const cwd = profile?.runtime === 'wsl' ? options.shellArgs?.[3] : options.cwd;
     const refreshed = accountTerminalOptions(prepared, { cwd, isWindows: /^[a-z]:[\\/]/i.test(options.shellPath || ''), wslEnv: options.env?.WSLENV || '' });
     return { ...options, ...refreshed, cwd: options.cwd, env: { ...options.env, ...refreshed.env }, paddockResume: resume ? { ...resume } : undefined };

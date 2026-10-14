@@ -1,6 +1,7 @@
 /** Reads CLI usage summaries without exposing conversation text or credential files to callers. */
 const fs = require('node:fs');
 const path = require('node:path');
+const { randomUUID } = require('node:crypto');
 const usage = require('./usage-model');
 
 class UsageFiles {
@@ -29,6 +30,21 @@ function assertPlainPath(
         }
     } catch (error) {
         if (error.code !== 'ENOENT') throw error;
+    }
+}
+
+/** Writes a JSON file through a temporary file and rename so a reader never sees a half-written record. */
+function writeJson(
+    file,
+    value,
+) {
+    assertPlainPath(file, 'file');
+    const temporary = `${file}.${randomUUID()}.tmp`;
+    try {
+        fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
+        fs.renameSync(temporary, file);
+    } finally {
+        fs.rmSync(temporary, { force: true });
     }
 }
 
@@ -110,4 +126,4 @@ function codexUsage(
     return result;
 }
 
-module.exports = { assertPlainPath, usageError, readJson, latestCodexSession, codexUsage };
+module.exports = { assertPlainPath, usageError, readJson, writeJson, latestCodexSession, codexUsage };

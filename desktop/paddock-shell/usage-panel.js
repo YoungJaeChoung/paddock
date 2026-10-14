@@ -236,9 +236,10 @@ class UsageData {
     }
 
     /**
-     * Claude 표시 설정과 계정별 상태 줄 등록을 맞추고, 바뀌면 사용량을 다시 읽는다.
-     * 켜면 상태 줄을 넣고 끄면 원래 명령을 복원한다. 이전 버전에서 기본 환경만 꺼 둔 설정도 보존한다.
-     * 같은 목표는 계정마다 한 번 시도하여 Node.js가 없어 실패해도 주기마다 다시 설정하지 않는다.
+     * Claude 표시 설정과 Paddock 전용 설정 파일(상태 줄)을 맞추고, 바뀌면 사용량을 다시 읽는다.
+     * 켜면 상태 줄을 넣고 끄면 뺀다. 이전 버전에서 기본 환경만 꺼 둔 설정도 보존한다.
+     * 설정 파일은 이 Paddock에 하나뿐이고 계정 터미널도 같은 파일을 읽으므로 기본 환경만 요청하고 등록 계정은 요청하지 않는다.
+     * 같은 목표는 한 번 시도하여 Node.js가 없어 실패해도 주기마다 다시 설정하지 않는다.
      * 설정이 실패하면 받은 `data`에 한도 값이 있을 때만 그대로 돌려주고, 없으면 오류를 던진다(행은 Unavailable).
      */
     async syncClaude(
@@ -248,48 +249,31 @@ class UsageData {
         if (!profile.id && data.state === 'off' && !this.isClaudeChosen()) await this.onLegacyDisabled();
         const key = scopeKey(profile);
         const wants = this.isEnabled('claude');
-        // An earlier enable may still be finishing, so a global disable is always queued once per account.
+        // An earlier enable may still be finishing, so a global disable is always queued once.
         const needsChange = wants ? data.state !== 'on' : true;
         let next = data;
         if (needsChange && this.attemptedHooks.get(key) !== wants) {
             this.attemptedHooks.set(key, wants);
             const action = this.hookQueue.catch(() => {}).then(async () => {
                 const enabled = this.isEnabled('claude');
-                const query = `?enabled=${enabled}${profile.id ? `&accountId=${encodeURIComponent(profile.id)}` : ''}${enabled && data.state === 'unset' ? '&automatic=true' : ''}`;
-                const result = await this.fetchJson('/paddock/usage/claude', 'POST', query);
-                // Another Paddock may own the default status line; a skipped automatic setup must not claim success.
+                const result = await this.fetchJson('/paddock/usage/claude', 'POST', `?enabled=${enabled}`);
                 if (!profile.id && enabled && data.state === 'unset' && result.state === 'on') this.onAutomaticSetup();
             });
             this.hookQueue = action;
             try {
                 await action;
                 this.failedHooks.delete(key);
-                const response = await this.fetchJson('/paddock/usage', 'GET', profile.id ? `?accountId=${encodeURIComponent(profile.id)}` : '?provider=claude');
+                const response = await this.fetchJson('/paddock/usage', 'GET', '?provider=claude');
                 next = response.claude;
             } catch (error) {
                 this.failedHooks.add(key);
-                // 설정 쓰기가 실패해도 이미 읽은 기록이 있으면 그 값은 보인다. 다른 Paddock의 상태 줄이 같은 기록을 쓰고 있을 수 있다.
+                // 설정 쓰기가 실패해도 이미 읽은 기록이 있으면 그 값은 보인다.
                 if (!data.windows?.length) throw error;
             }
         } else if (needsChange && this.failedHooks.has(key) && !data.windows?.length) {
             throw new Error('Usage setup is unavailable.');
         }
         return next;
-    }
-
-    /**
-     * 등록 Claude 계정의 터미널을 띄우기 전에 Paddock 상태 줄을 그 계정 설정에 넣어 둔다.
-     * Claude Code는 시작할 때 읽은 상태 줄 설정만 쓰므로, 주기 갱신이 뒤늦게 넣으면 그 터미널의 대화는 사용량을 남기지 않는다.
-     * 방금 만든 계정은 아직 목록에 없어 지운 계정으로 보이므로 목록을 먼저 다시 읽는다.
-     * Claude 표시가 꺼져 있거나 다른 도구의 계정이면 아무것도 하지 않는다. 설정에 실패해도 터미널은 그대로 띄우도록 오류를 던지지 않는다.
-     */
-    async prepareLaunch(
-        profile,
-    ) {
-        if (profile.provider === 'claude' && profile.id && this.isEnabled('claude')) {
-            if (!this.profiles.some(item => item.id === profile.id)) await this.updateProfiles();
-            await this.read(profile);
-        }
     }
 
     async read(
@@ -317,13 +301,14 @@ class UsageData {
                 let snapshot;
                 try {
                     let data;
-                    if (profile.provider === 'claude' && !this.isEnabled('claude')) {
-                        // Turning the feature off must restore hooks even when a usage record cannot be read.
+                    if (profile.provider === 'claude' && !profile.id && !this.isEnabled('claude')) {
+                        // Turning the feature off must remove the status line even when a usage record cannot be read.
                         data = await this.syncClaude(profile, { state: 'unset', windows: [], updatedAt: null });
                     } else {
                         const response = await this.fetchJson('/paddock/usage', 'GET', profile.id ? `?accountId=${encodeURIComponent(profile.id)}` : `?provider=${profile.provider}`);
                         data = response[profile.provider];
-                        if (profile.provider === 'claude' && this.n_revision === n_revision) data = await this.syncClaude(profile, data);
+                        // Registered accounts follow the default setting (their terminals read the same Paddock settings file), so only the default environment writes it.
+                        if (profile.provider === 'claude' && !profile.id && this.n_revision === n_revision) data = await this.syncClaude(profile, data);
                     }
                     if (!data || !Array.isArray(data.windows)) throw new Error('Usage data is unavailable.');
                     snapshot = data.error ? { status: 'unavailable', message: data.error } : { status: 'ready', data };

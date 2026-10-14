@@ -1,12 +1,15 @@
 // Paddock이 Theia 백엔드 서비스를 바꿔 끼우는 지점.
 // Paddock의 백엔드 모듈은 Theia 터미널·확장 모듈보다 먼저 로드돼, 모듈 안에서 rebind하면 바꿀 대상이 아직 없어 시작이 실패한다.
 // 모든 모듈이 로드된 뒤 시작 기여(initialize)로 컨테이너를 받아 바꾼다.
+const os = require('node:os');
+const path = require('node:path');
 const { MultiRingBuffer } = require('@theia/process/lib/node/multi-ring-buffer');
 const { PluginPathsService } = require('@theia/plugin-ext/lib/main/common/plugin-paths-protocol');
 const { ShellProcessFactory } = require('@theia/terminal/lib/node/shell-process');
 const { PaddockReplayBuffer } = require('./terminal-replay-buffer');
 const { PaddockPluginPathsService } = require('./plugin-paths');
 const { terminalHistoryService } = require('./terminal-history-service');
+const { ClaudeWrapper, withWrapperPath } = require('./claude-wrapper');
 
 /**
  * 백엔드가 시작될 때 Theia 서비스 구현을 Paddock 것으로 교체한다.
@@ -18,6 +21,9 @@ const { terminalHistoryService } = require('./terminal-history-service');
  * | `MultiRingBuffer` | `PaddockReplayBuffer` | 터미널 지난 출력 재생이 링이 한 바퀴 돈 뒤 중복되고 한글이 깨진다 |
  * | `PluginPathsService` | `PaddockPluginPathsService` | 작업 공간을 열지 않으면 확장의 작업 공간 저장소가 저장되지 않는다 |
  * | `ShellProcessFactory` | 같은 셸 프로세스를 만든 뒤 `TerminalHistory`에 추적을 맡기는 함수 | 앱이 터미널 프로세스째 사라져도 마지막 화면·폴더·대화를 파일에 남겨 되살린다 |
+ *
+ * `ShellProcessFactory` 교체는 셸의 PATH 맨 앞에 Paddock의 `claude` 실행 래퍼 폴더도 붙인다(claude-wrapper.js).
+ * 일반 터미널에서 친 `claude`에도 Paddock 전용 설정이 붙게 하려는 것이다. `wsl.exe`가 띄우는 셸은 WSL 안의 PATH와 무관하고, 환경을 그대로 쓰라고 한 셸(`strictEnv`)은 환경을 보태지 않아야 하므로 붙이지 않는다.
  */
 class PaddockServiceOverrides {
     constructor(
@@ -35,8 +41,10 @@ class PaddockServiceOverrides {
         // 터미널 서버는 연결마다 만들어져 이 시점 뒤에 이 함수를 받는다.
         const { history } = terminalHistoryService();
         const createShellProcess = this.container.get(ShellProcessFactory);
+        const wrapperDirectory = path.join(process.env.THEIA_CONFIG_DIR || path.join(os.homedir(), '.paddock', 'config'), ClaudeWrapper.DIRECTORY);
         this.container.rebind(ShellProcessFactory).toConstantValue(options => {
-            const shellProcess = createShellProcess(options);
+            const isWslShell = /(?:^|[\\/])wsl(?:\.exe)?$/i.test(options.shell || '');
+            const shellProcess = createShellProcess(isWslShell || options.strictEnv === true ? options : { ...options, env: withWrapperPath(options.env, wrapperDirectory) });
             history.track(shellProcess);
             return shellProcess;
         });
