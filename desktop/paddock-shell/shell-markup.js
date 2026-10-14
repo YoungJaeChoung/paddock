@@ -54,11 +54,19 @@ module.exports = {
             <div class="work-toolbar">
                 <button type="button" class="section-header work-toggle" aria-expanded="true" aria-controls="work-list"><span class="codicon codicon-chevron-down"></span><span class="section-label">WORK</span></button>
                 <div class="work-actions">
+                    <button type="button" class="work-search" aria-label="Search in files" aria-pressed="false" title="Search in files (Ctrl+Shift+F)" hidden><span class="codicon codicon-search"></span></button>
                     <button type="button" class="work-add" aria-label="Start work in a new terminal" title="New terminal in the default environment"><span class="codicon codicon-add"></span></button>
                     <button type="button" class="shell-picker" aria-label="Choose environment for a new terminal" title="Choose environment for a new terminal" popovertarget="shell-menu" aria-haspopup="menu" aria-expanded="false"><span class="codicon codicon-chevron-down"></span></button>
                 </div>
             </div>
             <div class="work-content"></div>
+            <div class="files-search" hidden>
+                <div class="files-search-bar">
+                    <span class="section-label">SEARCH</span>
+                    <button type="button" class="file-create files-search-close" aria-label="Close search and show the file list" title="Close search"><span class="codicon codicon-close"></span></button>
+                </div>
+                <div class="files-search-body"></div>
+            </div>
         </div>
         <div id="shell-menu" class="paddock-menu" popover role="menu" aria-label="Environment for a new terminal"></div>
         <div class="view-host" data-host="scm" hidden></div>

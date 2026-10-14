@@ -135,6 +135,20 @@ body {
 .paddock-shell .work-actions { display: flex; flex: none; gap: 2px; padding-right: 8px; }
 .paddock-shell .work-actions button, .paddock-shell .work-close { display: grid; place-items: center; flex: none; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--p-fg-muted); }
 .paddock-shell .work-actions button:hover, .paddock-shell .work-close:hover { background: var(--p-hover-bg); color: var(--p-fg-strong); }
+/* 파일 검색: 검색하는 동안 파일 목록 자리를 Theia 검색 위젯이 대신한다. 켜진 버튼은 바탕색으로 표시한다. */
+.paddock-shell .work-actions button[hidden] { display: none; }
+.paddock-shell .file-create[aria-pressed="true"], .paddock-shell .work-actions button[aria-pressed="true"] { background: var(--p-current-bg); color: var(--p-accent); }
+.paddock-shell .file-create:disabled, .paddock-shell .work-actions button:disabled { opacity: .4; cursor: default; }
+.paddock-shell .view-host.is-searching { display: flex; flex-direction: column; }
+.paddock-shell .view-host.is-searching .work-content { flex: none; }
+.paddock-shell .view-host.is-searching .file-list, .paddock-shell .view-host.is-searching .files-toolbar .file-create:not(.file-search) { display: none; }
+.paddock-shell .files-search { display: flex; flex: 1 0 320px; flex-direction: column; min-height: 0; }
+.paddock-shell .files-search[hidden] { display: none; }
+.paddock-shell .files-search-bar { display: flex; align-items: center; gap: 4px; padding: 0 6px 0 8px; height: 28px; color: var(--p-fg-muted); font-size: 11px; font-weight: 700; letter-spacing: .3px; }
+.paddock-shell .files-search-bar .section-label { flex: 1; }
+.paddock-shell .files-search-body { position: relative; flex: 1; min-height: 0; }
+.paddock-shell .files-search-body > #search-in-workspace { position: absolute; inset: 0; height: 100%; }
+.paddock-shell .paddock-search-scope { padding: 2px 12px 4px; overflow: hidden; color: var(--p-fg-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .paddock-shell .unassigned-heading { padding: 10px 14px 4px; color: var(--p-fg-muted); font-size: 11px; }
 .paddock-shell .row-label { display: flex; flex: 1; flex-direction: column; justify-content: center; gap: 2px; min-width: 0; }
 .paddock-shell .row-title { display: flex; align-items: center; gap: 5px; min-width: 0; }

@@ -29,6 +29,10 @@ const { withQueuedCopy } = require('./terminal-copy');
 const { LocalFileLinkProvider } = require('@theia/terminal/lib/browser/terminal-file-link-provider');
 const { withoutBarePathLinks } = require('./terminal-links');
 const { LocalStorageService } = require('@theia/core/lib/browser/storage-service');
+const { SearchInWorkspaceService } = require('@theia/search-in-workspace/lib/browser/search-in-workspace-service');
+const { SearchInWorkspaceWidget } = require('@theia/search-in-workspace/lib/browser/search-in-workspace-widget');
+const { SearchInWorkspaceFrontendContribution } = require('@theia/search-in-workspace/lib/browser/search-in-workspace-frontend-contribution');
+const { withFolderSearchService, withScopeNotice, withFolderSearchView } = require('./search-in-folder');
 const { WINDOW_ROLE, windowRole } = require('./window-role');
 require('./controls.css');
 
@@ -132,6 +136,15 @@ exports.default = new ContainerModule((bind, unbind, isBound, rebind, unbindAsyn
         return service;
     });
     bind(PaddockWorkspace).toDynamicValue(({ container }) => new PaddockWorkspace(container)).inSingletonScope();
+    // 파일 검색(Ctrl+Shift+F)은 작업 공간 없이도 사이드바 파일 영역의 폴더(없으면 선택한 터미널의 폴더)를 훑는다(search-in-folder.js).
+    // Theia 검색 모듈이 이 모듈보다 먼저 묶여 rebind할 대상이 없으므로, 만들어지는 순간 감싼다.
+    onActivation(SearchInWorkspaceService, (context, service) => withFolderSearchService(service, () => context.container.get(PaddockWorkspace).searchRoots()));
+    onActivation(SearchInWorkspaceWidget, (context, widget) => withScopeNotice(widget, () => context.container.get(PaddockWorkspace).searchScopeName()));
+    onActivation(SearchInWorkspaceFrontendContribution, (context, contribution) => withFolderSearchView(
+        contribution,
+        () => context.container.get(PaddockWorkspace).searchRoots(),
+        options => context.container.get(PaddockWorkspace).workSidebar.showFilesSearch(options),
+    ));
     bind(FrontendApplicationContribution).toService(PaddockWorkspace);
     bind(CommandContribution).toService(PaddockWorkspace);
     bind(KeybindingContribution).toService(PaddockWorkspace);

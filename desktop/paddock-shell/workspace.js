@@ -30,7 +30,9 @@ const { RemoteStatusService } = require('@theia/remote/lib/electron-common/remot
 const { PreferenceService } = require('@theia/core/lib/common/preferences/preference-service');
 const { PreferencesWidget } = require('@theia/preferences/lib/browser/views/preference-widget');
 const { ThemeService } = require('@theia/core/lib/browser/theming');
+const { WorkspaceService } = require('@theia/workspace/lib/browser/workspace-service');
 const model = require('./work-model');
+const { searchRoots } = require('./search-scope');
 const { fileRootFor } = require('./file-owner');
 const layoutModel = require('./layout-model');
 const tabOverflow = require('./tab-overflow');
@@ -45,7 +47,7 @@ const { STORAGE, STATUS_ITEMS, MARKDOWN_PREVIEW, element, button, attachMenuKeys
 const { RootSwitcher } = require('./workspace/root-switcher');
 const { AgentActivity } = require('./workspace/agent-activity');
 const { AccountTerminals } = require('./workspace/account-terminals');
-const { WorkSidebar, VIEW_CONTAINER } = require('./workspace/work-sidebar');
+const { WorkSidebar, VIEW_CONTAINER, SEARCH_WIDGET_ID } = require('./workspace/work-sidebar');
 const { FileTree } = require('./workspace/file-tree');
 const { MarkdownPreview } = require('./workspace/markdown-preview');
 const { FolderTabs } = require('./workspace/folder-tabs');
@@ -374,10 +376,17 @@ class PaddockWorkspace {
         this.shell.beforeActivate = id => this.rootSwitcher.showRootOf(this.shell.getWidgetById(id));
         // 사이드바가 품는 보기(Source control·Extensions)는 Theia 명령이 열어도 본문이 아니라 사이드바에 보인다.
         // 시작 때 배치를 되살리며 넣는 보기는 사이드바 보기 선택을 바꾸지 않도록 사이드바에 붙이기만 하고, 배치가 준비된 뒤의 명령은 그 보기로 전환한다.
-        this.shell.sidebarViewOf = widget => Object.keys(VIEW_CONTAINER).find(view => VIEW_CONTAINER[view] === widget.id) ?? null;
+        // 검색 위젯도 사이드바 파일 영역이 품는 보기다. 보기 줄의 전환 대상이 아니라 'search'라는 이름으로 따로 다룬다.
+        this.shell.sidebarViewOf = widget => (widget.id === SEARCH_WIDGET_ID ? 'search' : Object.keys(VIEW_CONTAINER).find(view => VIEW_CONTAINER[view] === widget.id) ?? null);
         this.shell.showSidebarView = async (view) => {
-            if (this.layoutReady) await this.workSidebar.showView(view);
-            else await this.workSidebar.hostView(view);
+            if (view === 'search') {
+                if (this.layoutReady) await this.workSidebar.showFilesSearch();
+                else await this.workSidebar.hostSearch();
+            } else if (this.layoutReady) {
+                await this.workSidebar.showView(view);
+            } else {
+                await this.workSidebar.hostView(view);
+            }
         };
         // 닫기 확인창이 셸 제목(bash 등) 대신 탭·Work에 보이는 이름으로 대상을 밝힌다.
         this.shell.terminalName = terminal => this.terminalDisplayName(terminal);
@@ -527,6 +536,9 @@ class PaddockWorkspace {
             if (target) this.run(() => this.workSidebar.showView(target.dataset.view));
         });
         sidebar.querySelector('.work-add').addEventListener('click', () => this.run(() => this.startWork()));
+        // 파일 영역이 없을 때 Work 보기 줄 옆의 검색 버튼과, 검색 자리의 닫기 버튼. 파일 영역 제목 줄의 버튼은 renderWork가 만든다.
+        sidebar.querySelector('.work-search').addEventListener('click', () => this.run(() => this.workSidebar.showFilesSearch({ toggle: true })));
+        sidebar.querySelector('.files-search-close').addEventListener('click', () => this.run(() => this.workSidebar.hideFilesSearch()));
         sidebar.querySelector('.work-toggle').addEventListener('click', () => {
             this.workExpanded = !this.workExpanded;
             this.refreshSoon();
@@ -1291,6 +1303,28 @@ class PaddockWorkspace {
         const current = this.currentWidget();
         const root = this.shownFolder() ? null : this.topTerminalOf(current) || this.selectedTopTerminal;
         return root && !model.folderOf(this.state, root) && this.terminals.all.some(terminal => terminal.id === root) ? root : null;
+    }
+
+    /**
+     * 파일 검색이 훑을 폴더 주소 목록. 작업 공간이 열려 있으면 그 루트, 아니면 사이드바 파일 영역의 폴더, 그것도 없으면 선택한 터미널의 현재 폴더다.
+     * 검색을 시작할 때마다 새로 읽어, 폴더를 바꾼 뒤의 검색은 새 폴더를 훑는다. 비어 있으면 검색할 폴더가 없다.
+     */
+    searchRoots() {
+        // 시작 때 메뉴·명령 활성 판정이 화면 준비(`this.shell`)보다 먼저 올 수 있다. 그때는 작업 공간 루트만 본다.
+        const isStarted = Boolean(this.shell);
+        const top = isStarted ? this.shownTopTerminal() : null;
+        return searchRoots({
+            workspaceRoots: this.container.get(WorkspaceService).tryGetRoots().map(root => root.resource.toString()),
+            filesFolder: isStarted ? this.workSidebar.filesFolder() : null,
+            topTerminalCwd: top ? this.cwdCache.get(top) ?? null : null,
+        });
+    }
+
+    /** 검색 범위를 사용자에게 보일 이름. 폴더가 하나면 그 이름, 여럿(작업 공간 루트)이면 첫 이름과 나머지 수, 없으면 빈 문자열이다. */
+    searchScopeName() {
+        const roots = this.searchRoots();
+        const n_more = roots.length - 1;
+        return roots.length ? `${this.folderName(roots[0])}${n_more > 0 ? ` +${n_more}` : ''}` : '';
     }
 
     /** 셸 프로필의 실행 파일이 절대 경로로 적혀 있는데 그 파일이 없으면 true. 이름만 적힌 셸은 PATH에서 찾으므로 false다. */

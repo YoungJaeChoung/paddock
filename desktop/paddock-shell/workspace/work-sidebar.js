@@ -14,6 +14,9 @@ const VIEW_CONTAINER = {
     extensions: 'vsx-extensions-view-container',
 };
 
+// Theia 검색 위젯 id. 파일 영역의 파일 목록 자리에 붙는다.
+const SEARCH_WIDGET_ID = 'search-in-workspace';
+
 /**
  * 사이드바의 보기 줄과 Work 목록(작업 폴더·Unassigned 행)을 그리고, 행에서 여는 메뉴를 맡는다.
  */
@@ -25,6 +28,8 @@ class WorkSidebar {
         this.showAll = new Set();
         this.n_sidebarRevision = 0;
         this.remoteWorkRows = new Map();
+        // 파일 목록 자리를 검색 위젯이 대신하고 있는지.
+        this.filesSearchOpen = false;
     }
 
     async showView(
@@ -67,6 +72,65 @@ class WorkSidebar {
             Widget.attach(widget, host);
         }
         return widget;
+    }
+
+    /**
+     * 검색 위젯을 Theia가 넣어 둔 자리에서 떼어 파일 영역의 검색 자리에 붙이고 그 위젯을 돌려준다.
+     * 보이기는 바꾸지 않는다(`hostView`와 같은 까닭으로, 시작 때 배치를 되살리며 들어온 위젯도 먼저 옮겨 둔다).
+     */
+    async hostSearch() {
+        const body = this.workspace.shell.sidebar.node.querySelector('.files-search-body');
+        const widget = await this.workspace.widgets.getOrCreateWidget(SEARCH_WIDGET_ID);
+        if (!body.contains(widget.node)) {
+            // 검색 보기 컨테이너가 이 위젯을 화면에 없는 왼쪽 패널에 먼저 품고 있을 수 있어, 그 부모에서 떼어 옮긴다.
+            if (widget.parent) widget.parent = null;
+            if (widget.isAttached) Widget.detach(widget);
+            Widget.attach(widget, body);
+            if (!this.filesSearchOpen) widget.hide();
+            // 사이드바 폭을 끌어 바꿀 때도 검색 결과 목록이 크기를 다시 맞추도록 알려 준다.
+            new ResizeObserver(() => MessageLoop.sendMessage(widget, Widget.ResizeMessage.UnknownSize)).observe(body);
+        }
+        return widget;
+    }
+
+    /**
+     * 파일 목록 자리를 검색 위젯으로 바꿔 보이고 검색창에 초점을 둔다. 사이드바가 접혀 있으면 펼친다.
+     * `toggle`이고 이미 보이는 중이면 닫고 파일 목록으로 돌아간다.
+     * 검색 범위는 이 시점이 아니라 검색을 시작할 때 읽는다(`PaddockWorkspace.searchRoots`).
+     */
+    async showFilesSearch({ toggle = false } = {}) {
+        const { shell } = this.workspace;
+        if (toggle && this.filesSearchOpen && this.workspace.view === 'work' && !shell.sidebar.isHidden) {
+            await this.hideFilesSearch();
+        } else {
+            shell.setSidebarVisible(true);
+            const widget = await this.hostSearch();
+            this.filesSearchOpen = true;
+            if (this.workspace.view !== 'work') await this.showView('work');
+            this.syncFilesSearch();
+            widget.show();
+            MessageLoop.sendMessage(widget, Widget.ResizeMessage.UnknownSize);
+            // 범위 안내("Searching in …")가 지금 폴더를 가리키도록 다시 그린다.
+            widget.update();
+            widget.activate();
+            await this.workspace.refresh();
+        }
+    }
+
+    /** 검색 자리를 접고 파일 목록으로 돌아간다. 검색어와 결과는 위젯이 쥐고 있어 다시 열면 그대로다. */
+    async hideFilesSearch() {
+        this.filesSearchOpen = false;
+        this.syncFilesSearch();
+        const widget = this.workspace.widgets.tryGetWidget(SEARCH_WIDGET_ID);
+        if (widget?.isAttached) widget.hide();
+        await this.workspace.refresh();
+    }
+
+    /** 검색 자리와 호스트의 표시 상태를 `filesSearchOpen`에 맞춘다. 파일 목록을 가리는 일은 CSS(`.is-searching`)가 맡는다. */
+    syncFilesSearch() {
+        const sidebar = this.workspace.shell.sidebar.node;
+        sidebar.querySelector('.files-search').hidden = !this.filesSearchOpen;
+        sidebar.querySelector('[data-host="work"]').classList.toggle('is-searching', this.filesSearchOpen);
     }
 
     renderViewBadge() {
@@ -112,7 +176,7 @@ class WorkSidebar {
         const directory = filesFolder && this.workspace.filesExpanded ? await this.workspace.fileTree.readDirectory(new URI(filesFolder)) : null;
         // 표시할 내용이 같으면 기존 행을 유지한다. 큰 파일 목록의 재생성·배치가 터미널 입력을 막지 않게 한다.
         const key = JSON.stringify([
-            merged.state.folders, rows, currentId, this.workspace.workExpanded, this.workspace.filesExpanded, filesFolder, directory,
+            merged.state.folders, rows, currentId, this.workspace.workExpanded, this.workspace.filesExpanded, filesFolder, directory, this.filesSearchOpen, this.workspace.searchRoots(),
             current?.getResourceUri?.()?.toString(), this.workspace.quickSettings.sidebarIndent(),
             [...this.workspace.doneIds], selectedRoot, [...new Set(this.workspace.terminals.all.map(terminal => this.workspace.terminalEnvironment(terminal)))], filesFolder && this.workspace.filesExpanded ? this.workspace.fileTree.gitChanges() : [], unassigned.map(terminal => [terminal.id, this.workspace.unassignedName(terminal), this.workspace.programOf(terminal), this.workspace.agentActivity.runningAccountLabel(terminal), this.workspace.terminalEnvironment(terminal),
                 this.workspace.cwdCache.get(terminal.id), this.workspace.doneIds.has(terminal.id), this.workspace.innerTabIds(terminal.id).length,
@@ -129,6 +193,11 @@ class WorkSidebar {
             const toggle = this.workspace.shell.sidebar.node.querySelector('.work-toggle');
             toggle.setAttribute('aria-expanded', String(this.workspace.workExpanded));
             toggle.querySelector('.codicon').className = `codicon codicon-chevron-${this.workspace.workExpanded ? 'down' : 'right'}`;
+            // 파일 영역 제목 줄이 없을 때만 Work 보기 줄 옆에 검색 버튼을 보인다. 검색할 폴더가 없으면 끈다.
+            const workSearch = this.workspace.shell.sidebar.node.querySelector('.work-search');
+            workSearch.hidden = Boolean(filesFolder);
+            workSearch.disabled = this.workspace.searchRoots().length === 0;
+            workSearch.setAttribute('aria-pressed', String(this.filesSearchOpen));
             if (this.workspace.workExpanded) {
                 const list = element('div', 'work-list');
                 list.id = 'work-list';
@@ -205,6 +274,13 @@ class WorkSidebar {
                 reload.title = 'Refresh';
                 reload.setAttribute('aria-label', 'Refresh file list');
                 toolbar.append(reload);
+                // 파일 목록 자리를 검색으로 바꾼다. 검색할 폴더가 없으면 끈다.
+                const search = button([codicon('search')], 'file-create file-search', () => this.workspace.run(() => this.showFilesSearch({ toggle: true })));
+                search.title = 'Search in files (Ctrl+Shift+F)';
+                search.setAttribute('aria-label', 'Search in files');
+                search.setAttribute('aria-pressed', String(this.filesSearchOpen));
+                search.disabled = this.workspace.searchRoots().length === 0;
+                toolbar.append(search);
                 node.append(toolbar);
                 if (this.workspace.filesExpanded) {
                     const files = element('div', 'file-list');
@@ -526,4 +602,4 @@ class WorkSidebar {
     }
 }
 
-module.exports = { WorkSidebar, VIEW_CONTAINER };
+module.exports = { WorkSidebar, VIEW_CONTAINER, SEARCH_WIDGET_ID };
