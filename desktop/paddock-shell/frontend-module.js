@@ -11,6 +11,9 @@ const { PaddockShell } = require('./shell');
 const { PaddockAboutDialog } = require('./about-dialog');
 const { PaddockWorkspace } = require('./workspace');
 const { PaddockExtensionOpen } = require('./extension-open');
+const { withLocalReadme } = require('./extension-readme');
+const { VSXExtensionsModel } = require('@theia/vsx-registry/lib/browser/vsx-extensions-model');
+const { Endpoint } = require('@theia/core/lib/browser/endpoint');
 const { PaddockBackendStop } = require('./backend-stop');
 const { PaddockQuitPrompt } = require('./quit-prompt');
 const { PaddockReviewNotes } = require('./review-notes-contribution');
@@ -122,6 +125,8 @@ exports.default = new ContainerModule((bind, unbind, isBound, rebind, unbindAsyn
     bind(KeybindingContribution).toService(PaddockWorkspace);
     // 확장이 알림 버튼에서 부르는 VS Code의 `extension.open`(확장 페이지 열기·업데이트)을 제공한다.
     bind(CommandContribution).toDynamicValue(({ container }) => new PaddockExtensionOpen(container)).inSingletonScope();
+    // 설치한 확장의 README를 앱 백엔드에서 화면이 직접 받아 확장 페이지 본문에 보인다(extension-readme.js).
+    onActivation(VSXExtensionsModel, (context, model) => withLocalReadme(model, new Endpoint().getRestUrl().toString()));
     bind(CommandContribution).toDynamicValue(({ container }) => new PaddockBackendStop(container)).inSingletonScope();
     // 마지막 창을 닫을 때 남은 터미널을 계속 실행할지 창 안에서 묻는다(quit-prompt.js).
     bind(FrontendApplicationContribution).toDynamicValue(({ container }) => new PaddockQuitPrompt(container)).inSingletonScope();
