@@ -12,6 +12,7 @@ const BACKEND_CONFIG = new AccountProfiles().configDirectory;
 
 function fixture(
     context,
+    seed = () => {},
 ) {
     let Contribution;
     backend.default.registry(token => {
@@ -30,10 +31,16 @@ function fixture(
         }
     };
     assign(isolated);
-    context.after(() => { assign(previous); fs.rmSync(root, { recursive: true, force: true }); });
+    seed(root);
     const contribution = new Contribution();
     const routes = new Map();
-    contribution.configure({ get: (url, route) => routes.set(url, route), post() {}, delete() {} });
+    contribution.configure({ get: (url, route) => routes.set(url, route), post: (url, route) => routes.set(`POST ${url}`, route), delete() {} });
+    // 시작 때 비동기로 이어지는 작업(설정 파일 쓰기·예전 항목 걷어 내기)이 끝난 뒤에 환경을 되돌리고 임시 폴더를 지운다.
+    context.after(async () => {
+        await contribution.pendingDefaultWrites;
+        assign(previous);
+        fs.rmSync(root, { recursive: true, force: true });
+    });
     const call = async query => {
         let value;
         let status = 200;
@@ -208,4 +215,88 @@ test('UR08 an environment with the same sign-in but no saved account in its runt
     assert.equal(await contribution.linkDefault('claude', sources), null, 'a different sign-in without a saved account still blocks the link');
     write('wsl.json', { oauthAccount: { accountUuid: 'login-b' } });
     assert.equal(await contribution.linkDefault('claude', sources), null, 'no environment matched a saved account');
+});
+
+const OLD_STATUS_LINE = { type: 'command', command: '"/usr/local/bin/node" "/Users/me/.paddock/config/usage/claude-statusline.cjs" "/Users/me/.paddock/config/usage/claude.json" "/Users/me/.paddock/config/usage/previous-statusline.json"' };
+
+function respond() {
+    const reply = { status: 200, value: undefined };
+    return { reply, response: { json: data => { reply.value = data; }, status: code => { reply.status = code; return { json: data => { reply.value = data; } }; } } };
+}
+
+test('UR09 at start the old Paddock entries are removed from the default Claude settings once, through a link, and the notice is delivered until acknowledged', { skip: process.platform === 'win32' }, async context => {
+    const { root, contribution, routes } = fixture(context, home => {
+        fs.mkdirSync(path.join(home, 'repo'));
+        fs.writeFileSync(path.join(home, 'repo', 'settings.json'), JSON.stringify({ statusLine: OLD_STATUS_LINE, theme: 'dark' }, null, 2));
+        fs.mkdirSync(path.join(home, '.claude'));
+        fs.symlinkSync(path.join(home, 'repo', 'settings.json'), path.join(home, '.claude', 'settings.json'));
+    });
+    await contribution.pendingDefaultWrites;
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'repo', 'settings.json'), 'utf8')), { theme: 'dark' });
+    assert.equal(fs.lstatSync(path.join(root, '.claude', 'settings.json')).isSymbolicLink(), true);
+    const first = respond();
+    routes.get('/paddock/legacy-cleanup')({}, first.response);
+    assert.equal(first.reply.value.notice.length, 1);
+    assert.match(first.reply.value.notice[0], /Removed the old Paddock status line from .*settings\.json \(a link to .*repo.*settings\.json\)\. That repository file changed/);
+    const ack = respond();
+    routes.get('POST /paddock/legacy-cleanup/ack')({}, ack.response);
+    assert.deepEqual(ack.reply.value, { acknowledged: true });
+    const second = respond();
+    routes.get('/paddock/legacy-cleanup')({}, second.response);
+    assert.deepEqual(second.reply.value, { notice: [] });
+    // A later start in the same Paddock folder does not look at the files again.
+    fs.writeFileSync(path.join(root, 'repo', 'settings.json'), JSON.stringify({ statusLine: OLD_STATUS_LINE }));
+    const again = new (contribution.constructor)();
+    again.configure({ get() {}, post() {}, delete() {} });
+    await again.pendingDefaultWrites;
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'repo', 'settings.json'), 'utf8')).statusLine.command, OLD_STATUS_LINE.command);
+});
+
+test('UR10 the Paddock settings file is written at start and follows the usage and memory toggles without touching the user settings', async context => {
+    const { root, contribution, routes } = fixture(context, home => {
+        fs.mkdirSync(path.join(home, '.claude'));
+        fs.writeFileSync(path.join(home, '.claude', 'settings.json'), '{"theme":"dark"}\n');
+    });
+    await contribution.pendingDefaultWrites;
+    const flagFile = path.join(root, 'claude', 'flag-settings.json');
+    const userFile = path.join(root, '.claude', 'settings.json');
+    const userModified = fs.statSync(userFile).mtimeMs;
+    assert.deepEqual(JSON.parse(fs.readFileSync(flagFile, 'utf8')), {});
+    assert.equal(fs.statSync(path.join(root, 'bin', process.platform === 'win32' ? 'claude.cmd' : 'claude')).isFile(), true);
+    const post = async (route, query) => {
+        const { reply, response } = respond();
+        routes.get(`POST ${route}`)({ query }, response);
+        await contribution.pendingDefaultWrites;
+        return reply;
+    };
+    assert.deepEqual((await post('/paddock/usage/claude', { enabled: 'true' })).value, { state: 'on' });
+    assert.match(JSON.parse(fs.readFileSync(flagFile, 'utf8')).statusLine.command, /claude-statusline\.cjs/);
+    if (process.platform === 'linux') {
+        assert.deepEqual((await post('/paddock/memory-notice', { enabled: 'true', minimumMb: '2048' })).value, { state: 'on' });
+        assert.match(JSON.parse(fs.readFileSync(flagFile, 'utf8')).hooks.PreToolUse[0].hooks[0].command, /^PADDOCK_MEMORY_MIN_MB=2048 sh /);
+    }
+    assert.deepEqual((await post('/paddock/usage/claude', { enabled: 'false' })).value, { state: 'off' });
+    assert.equal('statusLine' in JSON.parse(fs.readFileSync(flagFile, 'utf8')), false);
+    assert.equal((await post('/paddock/usage/claude', {})).status, 400);
+    assert.equal(fs.readFileSync(userFile, 'utf8'), '{"theme":"dark"}\n');
+    assert.equal(fs.statSync(userFile).mtimeMs, userModified);
+    // A restart in the same folder rebuilds the file from the saved choices.
+    const restarted = new (contribution.constructor)();
+    restarted.configure({ get() {}, post() {}, delete() {} });
+    await restarted.pendingDefaultWrites;
+    const restartedFlags = JSON.parse(fs.readFileSync(flagFile, 'utf8'));
+    assert.equal('statusLine' in restartedFlags, false);
+    if (process.platform === 'linux') assert.equal(restartedFlags.hooks.PreToolUse.length, 1);
+});
+
+test('UR11 the WSL launcher route reports unsupported without WSL and rejects a missing flag', async context => {
+    const { contribution, routes } = fixture(context);
+    await contribution.pendingDefaultWrites;
+    const missing = respond();
+    routes.get('POST /paddock/wsl-claude-path')({ query: {} }, missing.response);
+    assert.equal(missing.reply.status, 400);
+    const unsupported = respond();
+    routes.get('POST /paddock/wsl-claude-path')({ query: { enabled: 'true' } }, unsupported.response);
+    await contribution.pendingDefaultWrites;
+    assert.deepEqual(unsupported.reply.value, { state: 'unsupported', file: '', isLinked: false });
 });

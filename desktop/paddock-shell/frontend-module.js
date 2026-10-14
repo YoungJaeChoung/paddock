@@ -17,6 +17,7 @@ const { VSXExtensionsModel } = require('@theia/vsx-registry/lib/browser/vsx-exte
 const { Endpoint } = require('@theia/core/lib/browser/endpoint');
 const { PaddockBackendStop } = require('./backend-stop');
 const { PaddockQuitPrompt } = require('./quit-prompt');
+const { PaddockSetupNotices } = require('./setup-notices');
 const { PaddockLayoutAutosave } = require('./layout-autosave');
 const { PaddockReviewNotes } = require('./review-notes-contribution');
 const { PaddockPdfOpener } = require('./pdf-viewer');
@@ -79,13 +80,24 @@ const PaddockPreferenceSchema = {
         'paddock.agents.memoryNotice': {
             type: 'boolean',
             default: false,
-            description: 'Tell Claude Code agents when memory is low. Adds one PreToolUse hook to Claude Code settings (the default one and each Claude account Paddock manages) that, while available memory is below the limit, adds a short note to the agent\'s context after a Bash, Agent or Task tool call so it postpones heavy work. It never blocks or stops anything. Turning it off removes only that hook and quiets agents that are already running. Turning it on reaches agents started afterwards. Works for WSL, Linux and accounts that run in WSL; macOS and Windows-native Claude are not supported.',
+            description: 'Tell Claude Code agents when memory is low. Adds one PreToolUse hook to Paddock\'s own Claude Code settings file, which Paddock passes to Claude with --settings in its account terminals and in terminals where claude starts through Paddock\'s launcher; your own settings.json files are never changed. While available memory is below the limit, the hook adds a short note to the agent\'s context after a Bash, Agent or Task tool call so it postpones heavy work. It never blocks or stops anything. Turning it off removes only that hook and quiets agents that are already running. Turning it on reaches agents started afterwards. Works for WSL, Linux and accounts that run in WSL; macOS and Windows-native Claude are not supported.',
         },
         'paddock.agents.memoryNoticeMinimumMb': {
             type: 'number',
             default: 4096,
             minimum: 0,
             description: 'Available memory in MB below which the memory notice is added. 0 keeps the notice quiet.',
+        },
+        'paddock.wsl.claudeLauncher': {
+            type: 'string',
+            enum: ['ask', 'on', 'off'],
+            enumDescriptions: [
+                'Ask once when Paddock starts on Windows with WSL.',
+                'Keep one line in the WSL ~/.bashrc that puts Paddock\'s claude launcher first in PATH, so a claude you type in a WSL terminal also gets Paddock\'s status line and memory notice.',
+                'Do not change the WSL ~/.bashrc. Turning this off removes the line Paddock added.',
+            ],
+            default: 'ask',
+            description: 'Whether Paddock adds one line to the WSL ~/.bashrc so the claude you type in a WSL terminal opened from Paddock uses Paddock\'s launcher. The line ends with the comment "# paddock-claude-wrapper". Only used on Windows with WSL; Paddock account terminals do not need it.',
         },
         'paddock.interfaceFontFamily': {
             type: 'string',
@@ -157,6 +169,8 @@ exports.default = new ContainerModule((bind, unbind, isBound, rebind, unbindAsyn
     bind(CommandContribution).toDynamicValue(({ container }) => new PaddockBackendStop(container)).inSingletonScope();
     // 마지막 창을 닫을 때 남은 터미널을 계속 실행할지 창 안에서 묻는다(quit-prompt.js).
     bind(FrontendApplicationContribution).toDynamicValue(({ container }) => new PaddockQuitPrompt(container)).inSingletonScope();
+    // 시작한 뒤 한 번 알리거나 묻는 일: 예전 판의 Paddock 항목을 설정 파일에서 걷어 낸 결과 알림, WSL ~/.bashrc에 claude 실행 래퍼 PATH 줄을 넣어도 되는지 묻기(setup-notices.js).
+    bind(FrontendApplicationContribution).toDynamicValue(({ container }) => new PaddockSetupNotices(container)).inSingletonScope();
     // 작업 중에도 화면 배치를 주기적으로 저장해, 앱이 강제로 끝나도 그 터미널 탭이 되살아나게 한다(layout-autosave.js).
     bind(PaddockLayoutAutosave).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(PaddockLayoutAutosave);

@@ -19,6 +19,8 @@ const { readJson, writeJson, usageError } = require('./usage-files');
 const { MemoryHook, memoryHookCommand, setMemoryNotice } = require('./memory-hook-settings');
 const { flagSettingsPath, buildFlagSettings, writeFlagSettings } = require('./claude-flag-settings');
 const { ClaudeWrapper, installClaudeWrapper } = require('./claude-wrapper');
+const { LegacyCleanup, cleanSettingsFiles, describeCleanup } = require('./legacy-settings-cleanup');
+const { installWslLauncher, setWslLauncherPath } = require('./wsl-claude-launcher');
 const { memoryPercent, macUsedMemory, MemoryGuard, tightestMemory, memoryAdvice } = require('./work-model');
 const usage = require('./usage-model');
 const agent = require('./agent-model');
@@ -37,13 +39,6 @@ const accounts = new AccountProfiles();
 /** 이 Paddock의 설정 폴더. 개발 실행·설치본이 각자 `THEIA_CONFIG_DIR`로 구분한다. */
 function paddockConfigDirectory() {
     return process.env.THEIA_CONFIG_DIR || path.join(os.homedir(), '.paddock', 'config');
-}
-
-/** 사용량 기록·스크립트 폴더. 없으면 만든다. */
-function usageDirectory() {
-    const directory = path.join(paddockConfigDirectory(), 'usage');
-    fs.mkdirSync(directory, { recursive: true });
-    return directory;
 }
 
 /** 앱에 들어 있는 메모리 안내 훅 스크립트 원본. 백엔드는 하나의 번들로 묶이므로 앱 폴더의 paddock-shell에서 찾는다. */
@@ -202,6 +197,21 @@ function readWslInfo(
 }
 
 /**
+ * WSL 안 Linux 경로의 링크를 모두 따라간 Linux 경로. 기본 배포판에서 `readlink -f`로 읽고, 읽지 못하면 받은 경로를 돌려준다.
+ * Windows 쪽에서 \\wsl.localhost 경로로는 WSL 심볼릭 링크를 따라가지 못하기 때문이다(lstat이 EISDIR, 읽기가 ENOENT로 실패한다).
+ */
+function resolveWslLink(
+    linuxPath,
+) {
+    return new Promise((resolve) => {
+        execFile('wsl.exe', ['-e', 'readlink', '-f', '--', linuxPath], { encoding: 'utf8', timeout: 10000, windowsHide: true }, (error, output) => {
+            const resolved = error ? '' : output.replace(/\r/g, '').trim();
+            resolve(resolved.startsWith('/') ? resolved : linuxPath);
+        });
+    });
+}
+
+/**
  * Claude Code 상태 줄 명령 문자열: `node 스크립트 기본사용량파일`. node를 찾지 못하면 null이다(macOS·Linux는 Electron을 node처럼 쓰는 방법으로 대신한다).
  * 어느 계정의 사용량인지는 스크립트가 실행 환경의 CLAUDE_CONFIG_DIR로 정하므로 계정별 경로를 받지 않는다.
  */
@@ -264,6 +274,9 @@ const accountSessions = new AccountSessions({ accounts, readWslInfo, readWindows
  */
 class PaddockStatusRoutes {
     constructor() {
+        // 설정 폴더는 만들어질 때 한 번 정한다. 시작 때 비동기로 이어지는 작업(설정 파일 쓰기·예전 항목 걷어 내기)이 나중에 환경이 바뀐 뒤에도 같은 폴더를 다루게 하려는 것이다.
+        this.configDirectory = paddockConfigDirectory();
+        this.startupAccounts = new AccountProfiles();
         this.workPresence = new WorkPresenceRegistry();
         this.windowsProcesses = windowsProcessList;
         // 마지막 WSL 스캔이 읽은 `{ total, available, swap, terminals, at }`. 아직 읽은 적 없으면 null.
@@ -380,7 +393,7 @@ class PaddockStatusRoutes {
                     const wslInformation = await readWslInfo();
                     const wslHome = wslInformation.home;
                     if (provider !== 'codex') {
-                        const directory = usageDirectory();
+                        const directory = this.usageDirectory();
                         const state = readJson(path.join(directory, 'state.json'), {}).claude || 'unset';
                         // Windows 앱이면 WSL의 기본 Claude 수집 기록도 함께 보고 더 최근 것을 쓴다.
                         // 기록마다 그 환경의 로그인 정보 파일을 짝지어, 기록이 어느 계정의 것인지 확인한다(아래 linkDefault).
@@ -446,9 +459,46 @@ class PaddockStatusRoutes {
                     .catch(error => response.status(error.statusCode || 500).json({ error: error instanceof Error ? error.message : String(error) }));
             }
         });
+        // 예전 판이 사용자 설정 파일에 넣은 항목을 걷어 낸 결과 알림. 화면이 보인 뒤 한 번 알리고 확인 요청을 받으면 다시 알리지 않는다.
+        app.get('/paddock/legacy-cleanup', (request, response) => {
+            const record = readJson(path.join(this.configDirectory, 'usage', LegacyCleanup.MARKER_FILE), null);
+            response.json({ notice: record && !record.acknowledged && Array.isArray(record.notice) ? record.notice : [] });
+        });
+        app.post('/paddock/legacy-cleanup/ack', (request, response) => {
+            try {
+                const file = path.join(this.configDirectory, 'usage', LegacyCleanup.MARKER_FILE);
+                const record = readJson(file, null);
+                if (record) writeJson(file, { ...record, acknowledged: true });
+                response.json({ acknowledged: Boolean(record) });
+            } catch (error) {
+                response.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+            }
+        });
+        // Windows 앱의 WSL 일반 터미널에서도 Paddock의 claude 실행 래퍼가 앞서도록 WSL ~/.bashrc에 PATH 한 줄을 넣거나 뺀다(wsl-claude-launcher.js).
+        // 넣기 전에 사용자에게 묻는 일은 화면이 한다. Windows가 아니거나 WSL이 없으면 { state: 'unsupported' }다.
+        app.post('/paddock/wsl-claude-path', (request, response) => {
+            const { enabled } = request.query;
+            if (enabled !== 'true' && enabled !== 'false') {
+                response.status(400).json({ error: 'enabled must be true or false' });
+            } else {
+                this.queueDefaultWrite(async () => {
+                    const wslInfo = await readWslInfo();
+                    return wslInfo.home && wslInfo.linuxHome ? setWslLauncherPath(enabled === 'true') : { state: 'unsupported', file: '', isLinked: false };
+                })
+                    .then(result => response.json(result))
+                    .catch(error => response.status(500).json({ error: error instanceof Error ? error.message : String(error) }));
+            }
+        });
         // 시작할 때 한 번, 지난번 설정(usage/state.json)대로 Paddock 전용 설정 파일과 claude 실행 래퍼를 다시 만든다.
         // 앱을 새 판으로 올리거나 설정 폴더를 옮겨도 경로가 맞게 되고, 실패해도 앱은 그대로 시작한다.
         this.queueDefaultWrite(() => this.startFlagSettings()).catch(error => console.warn(`Paddock Claude settings could not be prepared: ${error instanceof Error ? error.message : String(error)}`));
+    }
+
+    /** 사용량 기록·스크립트 폴더. 없으면 만든다. */
+    usageDirectory() {
+        const directory = path.join(this.configDirectory, 'usage');
+        fs.mkdirSync(directory, { recursive: true });
+        return directory;
     }
 
     /** Paddock 전용 설정 파일을 고치는 작업을 앞선 작업이 끝난 뒤에 실행한다. 앞선 작업이 실패해도 이어서 실행한다. */
@@ -470,7 +520,7 @@ class PaddockStatusRoutes {
     ) {
         let state = 'unsupported';
         if (process.platform === 'linux') {
-            state = setMemoryNotice({ scriptFile: path.join(usageDirectory(), MemoryHook.SCRIPT_NAME), source, enabled });
+            state = setMemoryNotice({ scriptFile: path.join(this.usageDirectory(), MemoryHook.SCRIPT_NAME), source, enabled });
         }
         const wslInfo = await readWslInfo();
         if (wslInfo.home && wslInfo.linuxHome) {
@@ -563,7 +613,7 @@ class PaddockStatusRoutes {
      */
     async installStatusLineScripts() {
         const source = path.join(process.env.THEIA_APP_PROJECT_PATH || process.cwd(), 'paddock-shell', 'claude-statusline.cjs');
-        fs.copyFileSync(source, path.join(usageDirectory(), 'claude-statusline.cjs'));
+        fs.copyFileSync(source, path.join(this.usageDirectory(), 'claude-statusline.cjs'));
         const wslInfo = await readWslInfo();
         if (wslInfo.home && wslInfo.linuxHome && wslInfo.node) {
             const { toLocal, configDirectory } = wslPaths(wslInfo);
@@ -576,7 +626,7 @@ class PaddockStatusRoutes {
     updateState(
         changes,
     ) {
-        const file = path.join(usageDirectory(), 'state.json');
+        const file = path.join(this.usageDirectory(), 'state.json');
         writeJson(file, { ...readJson(file, {}), ...changes });
     }
 
@@ -585,7 +635,7 @@ class PaddockStatusRoutes {
      * 설정이 아직 없으면(처음 실행) 빈 설정 파일을 만든다. 사용량 표시를 켜는 요청이 오면 그때 상태 줄이 들어간다.
      */
     async startFlagSettings() {
-        const configDirectory = paddockConfigDirectory();
+        const configDirectory = this.configDirectory;
         const state = readJson(path.join(configDirectory, 'usage', 'state.json'), {});
         if (state.claude === 'on') await this.installStatusLineScripts();
         // 켜져 있던 메모리 안내는 스크립트도 이 앱 판으로 다시 놓는다. 이 경로가 설정 파일도 함께 쓴다.
@@ -597,6 +647,56 @@ class PaddockStatusRoutes {
             flagFile: flagSettingsPath(configDirectory),
             ownDirectory: path.join(configDirectory, ClaudeWrapper.DIRECTORY),
         });
+        // Windows 앱이면 WSL 안에도 같은 실행 래퍼를 놓는다(WSL 일반 터미널의 PATH에 앞세우는 일은 사용자가 허락했을 때만 한다).
+        const wslInfo = await readWslInfo();
+        if (wslInfo.home && wslInfo.linuxHome) await installWslLauncher(flagSettingsPath(wslPaths(wslInfo).configDirectory, path.posix.join));
+        await this.runLegacyCleanup();
+    }
+
+    /**
+     * 예전 판이 사용자 Claude 설정 파일에 넣은 Paddock 상태 줄·메모리 훅 항목을 이 Paddock 설정 폴더에서 처음 시작할 때 한 번 걷어 낸다.
+     * 기본 환경(Windows 앱이면 WSL 기본 배포판 포함)과 등록된 이 컴퓨터 Claude 계정의 settings.json을 다루고, 그 밖의 키는 건드리지 않는다.
+     * 링크인 파일(dotfiles 저장소)은 실제 위치에 쓰고 링크는 남긴다. 결과는 `usage/legacy-cleanup.json`에 적어 두고 화면이 알린다.
+     * WSL 계정의 settings.json은 계정 폴더를 준비할 때 백업 뒤 기본 파일로 링크되므로 따로 걷어 내지 않는다.
+     */
+    async runLegacyCleanup() {
+        const file = path.join(this.configDirectory, 'usage', LegacyCleanup.MARKER_FILE);
+        if (readJson(file, null)?.done !== true) {
+            const readRecord = candidate => {
+                let value = null;
+                try {
+                    value = readJson(candidate, null);
+                } catch {
+                    value = null;
+                }
+                return value;
+            };
+            // 계정 폴더 위치도 이 객체를 만들 때의 환경으로 정한 값이다(모듈을 불러올 때 정한 전역 값이 아니다).
+            const current = this.startupAccounts;
+            const entries = [{ file: path.join(current.claudeDirectory, 'settings.json'), readPrevious: readRecord }];
+            let profiles = [];
+            try {
+                profiles = await current.list();
+            } catch {
+                profiles = [];
+            }
+            for (const profile of profiles) {
+                if (profile.provider === 'claude' && profile.runtime === 'native') {
+                    entries.push({ file: path.join(current.configDirectory, 'agent-profiles', profile.id, 'claude', 'settings.json'), readPrevious: readRecord });
+                }
+            }
+            const results = cleanSettingsFiles(entries);
+            const wslInfo = await readWslInfo();
+            if (wslInfo.home && wslInfo.linuxHome) {
+                const { toLocal } = wslPaths(wslInfo);
+                const linuxFile = `${wslInfo.linuxHome}/.claude/settings.json`;
+                const resolvedLinux = await resolveWslLink(linuxFile);
+                const [result] = cleanSettingsFiles([{ file: toLocal(resolvedLinux), readPrevious: candidate => readRecord(toLocal(candidate)) }]);
+                if (result) results.push({ ...result, file: toLocal(linuxFile), isLinked: resolvedLinux !== linuxFile });
+            }
+            fs.mkdirSync(path.dirname(file), { recursive: true });
+            writeJson(file, { version: LegacyCleanup.MARKER_VERSION, done: true, at: new Date().toISOString(), notice: describeCleanup(results), acknowledged: false });
+        }
     }
 
     /**
@@ -604,7 +704,7 @@ class PaddockStatusRoutes {
      * 켜진 기능만 담긴다. 쓰지 못한 곳이 있어도 나머지는 쓰고, 첫 오류를 마지막에 던진다.
      */
     async writeFlagFiles() {
-        const configDirectory = paddockConfigDirectory();
+        const configDirectory = this.configDirectory;
         const state = readJson(path.join(configDirectory, 'usage', 'state.json'), {});
         const failures = [];
         const attempt = (action) => {
