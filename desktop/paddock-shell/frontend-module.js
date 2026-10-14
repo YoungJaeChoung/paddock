@@ -35,6 +35,8 @@ const { SearchInWorkspaceWidget } = require('@theia/search-in-workspace/lib/brow
 const { SearchInWorkspaceFrontendContribution } = require('@theia/search-in-workspace/lib/browser/search-in-workspace-frontend-contribution');
 const { withFolderSearchService, withScopeNotice, withFolderSearchView } = require('./search-in-folder');
 const { WINDOW_ROLE, windowRole } = require('./window-role');
+const { MainPluginApiProvider } = require('@theia/plugin-ext/lib/common/plugin-ext-api-contribution');
+const { PaddockPluginApiOverrides } = require('./plugin-api-overrides');
 require('./controls.css');
 
 // Paddock 설정. 설정 화면(Preferences)에서 "paddock"로 찾을 수 있다.
@@ -182,4 +184,6 @@ exports.default = new ContainerModule((bind, unbind, isBound, rebind, unbindAsyn
     bind(OpenHandler).toDynamicValue(({ container }) => new PaddockPdfOpener(container)).inSingletonScope();
     bind(OpenHandler).toDynamicValue(({ container }) => new PaddockBinaryNoticeOpener(container)).inSingletonScope();
     bind(PreferenceContribution).toConstantValue({ schema: PaddockPreferenceSchema });
+    // 확장의 오류 모달을 알림으로 바꾸고 Git 출력 채널의 오류를 로그에 남긴다(plugin-api-overrides.js).
+    bind(MainPluginApiProvider).toConstantValue(new PaddockPluginApiOverrides());
 });
