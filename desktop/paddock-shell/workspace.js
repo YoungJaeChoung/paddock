@@ -469,13 +469,6 @@ class PaddockWorkspace {
                     }
                 }
             }
-            this.refreshSoon();
-        });
-        this.shell.onDidRemoveWidget(widget => this.forgetClosedWidget(widget));
-        this.shell.mainPanel.onDidChangeCurrent(title => {
-            const widget = title?.owner;
-            if (!this.isSwitchingRoot && widget && widget.id !== PreferencesWidget.ID && this.rootSwitcher.rootOf(widget)) {
-                this.preferencesReturnWidget = widget;
             // 파일 화면은 어떤 길로 열렸든(Paddock 열기·Theia 열기·Git 변경 열기·확장 명령) 여기서 묶음을 받아야 위쪽 줄에 오른다.
             const fileRoot = this.layoutReady && this.shell.getAreaFor(widget) === 'main' ? fileRootFor({
                 state: this.state,
@@ -488,6 +481,13 @@ class PaddockWorkspace {
                 this.fileRoots.set(widget.id, fileRoot);
                 void this.saveInnerTabs();
             }
+            this.refreshSoon();
+        });
+        this.shell.onDidRemoveWidget(widget => this.forgetClosedWidget(widget));
+        this.shell.mainPanel.onDidChangeCurrent(title => {
+            const widget = title?.owner;
+            if (!this.isSwitchingRoot && widget && widget.id !== PreferencesWidget.ID && this.rootSwitcher.rootOf(widget)) {
+                this.preferencesReturnWidget = widget;
             }
             this.refreshSoon();
         });
