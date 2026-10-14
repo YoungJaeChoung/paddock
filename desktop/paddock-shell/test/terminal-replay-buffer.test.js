@@ -119,3 +119,100 @@ test('closeReader는 독자의 읽기 상태를 지운다', () => {
     ring.closeReader(reader);
     assert.equal(ring.readerStates.has(reader), false);
 });
+
+test('재생을 멈춘 사이 쓰기가 쌓여도 읽지 않은 구간이 덮일 때만 독자를 밀고 중복·역행이 없다', async () => {
+    // 링을 채우고 첫 조각을 받은 뒤 멈춘 상태에서 64 KiB를 세 번 쓴다. 독자가 읽은 구간만 덮이다가 읽지 않은 구간이 덮이기 시작한다.
+    const { ring, input } = filled(30000);
+    let next = 30000;
+    let written = '';
+    const text = await new Promise(resolve => {
+        const stream = ring.getStream();
+        const chunks = [];
+        let timer;
+        let isStalled = false;
+        stream.on('data', chunk => {
+            chunks.push(chunk);
+            if (!isStalled) {
+                isStalled = true;
+                stream.pause();
+                for (let n_bursts = 0; n_bursts < 3; n_bursts += 1) {
+                    let burst = '';
+                    while (Buffer.byteLength(burst) < 65536) { burst += line(next); next += 1; }
+                    written += burst;
+                    ring.enq(burst);
+                }
+                setImmediate(() => stream.resume());
+            }
+            clearTimeout(timer);
+            timer = setTimeout(() => { stream.destroy(); resolve(chunks.join('')); }, 150);
+        });
+    });
+    assertClean(text);
+    const numbers = [...text.matchAll(/줄 (\d+) ✅/g)].map(match => Number(match[1]));
+    for (let i = 1; i < numbers.length; i += 1) assert.ok(numbers[i] > numbers[i - 1], `줄 번호가 역행하거나 중복됨: ${numbers[i - 1]} → ${numbers[i]}`);
+    assert.ok(text.endsWith(line(next - 1)));
+    // 재생 길이는 링 크기에 쓰기로 덮인 만큼 더한 값을 넘지 않고, 읽던 구간이 이미 보내진 만큼은 유지된다.
+    assert.ok(Buffer.byteLength(text) <= RING_SIZE + Buffer.byteLength(written));
+    assert.ok(Buffer.byteLength(text) > RING_SIZE);
+});
+
+test('한 번의 쓰기가 링보다 커서 앞이 잘려도 읽던 독자는 글자 경계부터 읽는다', () => {
+    const ring = new PaddockReplayBuffer({ size: 10 });
+    ring.enq('ab');
+    const reader = ring.getReader();
+    assert.equal(ring.deq(reader), 'ab');
+    // 12바이트 중 마지막 10바이트만 남는데, 시작이 '글'의 중간이다.
+    ring.enq('한글다라');
+    const text = ring.deq(reader);
+    assert.equal(/�/.test(text), false);
+    assert.equal(text, '글다라');
+});
+
+test('작은 링에 무작위로 쓰고 읽어도 깨진 글자·역행·중복이 없고 재생은 링에 남은 입력의 꼬리와 일치한다', () => {
+    let seed = 20261014;
+    const random = n => {
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+        return seed % n;
+    };
+    const decorations = ['', '한', '✅', '😀', 'é'];
+    const n_trials = 3000;
+    let n_fffd = 0;
+    let n_disorder = 0;
+    let n_mismatch = 0;
+    for (let trial = 0; trial < n_trials; trial += 1) {
+        const size = 24 + random(200);
+        const ring = new PaddockReplayBuffer({ size });
+        const reader = ring.getReader();
+        let n_tokens = 0;
+        let input = '';
+        const chunks = [];
+        for (let step = 0; step < 80; step += 1) {
+            let write = '';
+            for (let i = 0, n_in_write = 1 + random(6); i < n_in_write; i += 1) {
+                write += `[${n_tokens}/${n_tokens}${decorations[random(decorations.length)]}|`;
+                n_tokens += 1;
+            }
+            // 링보다 큰 쓰기는 앞이 잘려 토큰 검사가 어려우니 이 시험에서는 건너뛴다(별도 시험이 있다).
+            if (Buffer.byteLength(write) <= size) {
+                input += write;
+                ring.enq(write);
+                // 가끔 몇 조각만 읽고 멈춘다. 읽은 조각은 버리지 않고 모두 모은다.
+                if (random(3) === 0) {
+                    let chunk = ring.deq(reader, random(2) ? -1 : 1 + random(30));
+                    while (chunk !== undefined) {
+                        chunks.push(chunk);
+                        chunk = random(4) === 0 ? undefined : ring.deq(reader, 1 + random(30));
+                    }
+                }
+            }
+        }
+        for (let chunk = ring.deq(reader); chunk !== undefined; chunk = ring.deq(reader)) chunks.push(chunk);
+        const text = chunks.join('');
+        if (/�/.test(text)) n_fffd += 1;
+        // 완전한 토큰("[번호/번호…|")만 본다. 읽던 독자가 밀려 생긴 틈 앞뒤의 잘린 토큰이 이어 붙어도 앞뒤 번호가 달라 걸러진다.
+        const numbers = [...text.matchAll(/\[(\d+)\/(\d+)[^|\[]*\|/g)].filter(match => match[1] === match[2]).map(match => Number(match[1]));
+        if (numbers.some((number, i) => i > 0 && number <= numbers[i - 1])) n_disorder += 1;
+        if (!text.endsWith(windowOf(input, size))) n_mismatch += 1;
+    }
+    assert.deepEqual({ n_fffd, n_disorder, n_mismatch }, { n_fffd: 0, n_disorder: 0, n_mismatch: 0 });
+});

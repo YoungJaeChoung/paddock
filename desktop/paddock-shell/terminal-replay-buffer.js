@@ -16,11 +16,13 @@ function isContinuationByte(
  *
  * 기본 구현의 `deq`는 두 가지가 틀린다. 첫째, 읽는 구간이 링 끝을 넘으면 요청한 크기를 무시하고 링 전체를 읽는데
  * 독자 위치는 요청한 크기만큼만 나아가므로 같은 구간이 다시 읽혀 재생이 중복된다. 둘째, 조각마다 따로 문자열로 바꿔
- * 조각 경계에 걸친 3바이트 한글이 깨진 글자(U+FFFD)가 된다. 이 클래스는 `deq`만 바꾸고 쓰기(`enq`)·위치 계산은 그대로 둔다.
+ * 조각 경계에 걸친 3바이트 한글이 깨진 글자(U+FFFD)가 된다. 셋째, 쓰기가 독자의 읽지 않은 구간을 덮었는지를
+ * 쓰기가 끝난 뒤의 앞 위치로 판정해 한 쓰기만큼 어긋나므로, 독자가 새 데이터 중간에서 이어 읽거나 이미 보낸 구간을 다시 읽는다.
+ * 이 클래스는 `deq`와 쓰기가 독자를 미는 규칙(`incTails`)을 바꾸고, 쓰기 자체(`enq`의 복사)는 그대로 둔다.
  *
- * 독자 위치가 우리가 마지막으로 읽은 곳 다음이 아니면(처음 읽을 때, 또는 쓰기가 독자를 앞질러 위치를 밀었을 때)
- * 글자 중간에서 시작했을 수 있으므로, 그 조각 앞쪽의 이어지는 바이트를 버리고 시작해 글자 경계에 맞춘다.
- * 이때 그 위치가 새 글자의 시작이면 버릴 것이 없어 손실도 없다.
+ * 독자가 처음 읽거나 쓰기가 독자의 읽지 않은 구간을 덮어 독자를 새 시작 위치로 밀었을 때(또는 한 번의 쓰기가 링보다 커서
+ * 앞이 잘렸을 때)는 이어 읽는 것이 아니고 글자 중간에서 시작했을 수 있다. 그 조각 앞쪽의 이어지는 바이트를 버리고
+ * 읽던 글자 상태도 버려 글자 경계부터 읽는다. 그 위치가 새 글자의 시작이면 버릴 것이 없어 손실도 없다.
  *
  * Examples
  * --------
@@ -28,7 +30,8 @@ function isContinuationByte(
  * |------------------------------------------------|--------------------------------------------|
  * | 링 1 MiB에 1.5 MB를 쓰고 처음부터 읽음         | 마지막 1 MiB 이하 한 번씩, 중복 없음       |
  * | 한글 3바이트가 두 조각에 나뉨                  | 첫 조각엔 앞 글자까지, 다음 조각에 그 글자 |
- * | 쓰기가 독자를 앞질러 글자 중간에서 시작        | 이어지는 바이트를 건너뛰고 다음 글자부터   |
+ * | 쓰기가 독자의 읽지 않은 구간을 덮음            | 새 시작 위치의 다음 글자 경계부터          |
+ * | 쓰기가 독자가 이미 읽은 구간만 덮음            | 독자 위치 그대로 이어 읽음                 |
  */
 class PaddockReplayBuffer extends MultiRingBuffer {
     constructor(
@@ -38,6 +41,64 @@ class PaddockReplayBuffer extends MultiRingBuffer {
         // 독자 번호별 읽기 상태: { decoder, expectedPosition, isAligned }.
         // expectedPosition은 마지막으로 읽은 바로 다음 위치(모르면 null), isAligned는 글자 경계를 찾았는지다.
         this.readerStates = new Map();
+        // 진행 중인 쓰기가 링보다 커서 앞이 잘렸는지. 잘린 쓰기는 글자 중간에서 시작할 수 있다.
+        this.isTruncatingWrite = false;
+    }
+
+    enq(
+        str,
+        encoding = 'utf8',
+    ) {
+        this.isTruncatingWrite = Buffer.byteLength(str, encoding) > this.maxSize;
+        super.enq(str, encoding);
+        this.isTruncatingWrite = false;
+    }
+
+    /**
+     * 쓰기 `size`바이트가 링의 가장 오래된 바이트를 덮는 만큼 시작 위치(tail)를 옮기고, 읽지 않은 구간이 덮인 독자를 새 시작 위치로 민다.
+     * 덮이지 않은 독자는 그대로 둔다. 이 호출은 쓰기가 반영되기 전(머리 위치 갱신 전)에 일어난다.
+     *
+     * Examples
+     * --------
+     * | 링 크기 | 쓰기 전 담긴 양 | 쓰기 | 덮인 바이트 | 독자(시작에서 떨어진 거리) | 결과                  |
+     * |---------|-----------------|------|-------------|----------------------------|-----------------------|
+     * | 10      | 6               | 3    | 0           | 2                          | 그대로                |
+     * | 10      | 10              | 4    | 4           | 3                          | 새 시작 위치로 밀림   |
+     * | 10      | 10              | 4    | 4           | 4                          | 그대로(읽은 구간만 덮임) |
+     */
+    incTails(
+        size,
+    ) {
+        const used = this.sizeFrom(this.tail, this.head, this.isWrapped(this.tail, this.head));
+        const n_covered = Math.max(0, used + size - this.maxSize);
+        if (n_covered > 0) {
+            const oldTail = this.tail;
+            this.tail = (oldTail + n_covered) % this.maxSize;
+            for (const [id, pos] of this.readers) {
+                if (pos !== -1 && (pos - oldTail + this.maxSize) % this.maxSize < n_covered) {
+                    this.readers.set(id, this.tail);
+                    this.invalidate(id);
+                }
+            }
+        }
+    }
+
+    /** 독자 `id`가 마지막으로 읽은 곳에서 이어 읽는 것이 아니게 됐음을 표시한다. 다음 읽기는 글자 경계부터 시작한다. */
+    invalidate(
+        id,
+    ) {
+        const state = this.readerStates.get(id);
+        if (state !== undefined) state.expectedPosition = null;
+    }
+
+    onData(
+        start,
+    ) {
+        // 앞이 잘린 쓰기는 시작이 글자 중간일 수 있어, 다 읽고 기다리던 독자도 이어 읽는 것으로 보지 않는다.
+        if (this.isTruncatingWrite) {
+            for (const id of this.readerStates.keys()) this.invalidate(id);
+        }
+        super.onData(start);
     }
 
     closeReader(
