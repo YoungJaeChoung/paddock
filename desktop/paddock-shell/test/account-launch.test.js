@@ -164,3 +164,13 @@ test('L09 permission modes add each CLI\'s own flag, default to asking, survive 
     assert.ok(refreshed.shellArgs.at(-1).includes('--resume'));
     assert.throws(() => launch(claude, 'always'), /agent permissions/);
 });
+
+test('C-ACCOUNT-RESUME-L03 resuming in the same account folder passes only the conversation identifier', () => {
+    const sessionId = '00000000-0000-4000-8000-000000000013';
+    const resume = { provider: 'claude', sessionId, runtime: 'native', useSessionId: true };
+    const options = accountTerminalOptions({ ...preparedAccount('claude', 'native', '/tmp/account'), resume }, { cwd: '/tmp/work', isWindows: false });
+    assert.ok(options.shellArgs.join('\n').includes(`--resume`));
+    assert.ok(options.shellArgs.join('\n').includes(sessionId));
+    assert.equal(options.shellArgs.join('\n').includes('transcript'), false);
+    assert.throws(() => accountTerminalOptions({ ...preparedAccount('claude', 'native', '/tmp/account'), resume: { ...resume, sessionId: '../x' } }, { cwd: '/tmp', isWindows: false }), /identifier/);
+});

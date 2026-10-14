@@ -16,10 +16,14 @@ const { MessageService } = require('@theia/core/lib/common/message-service');
 const { BinaryBuffer } = require('@theia/core/lib/common/buffer');
 const { FileUri } = require('@theia/core/lib/common/file-uri');
 const URI = require('@theia/core/lib/common/uri').default;
+const { Endpoint } = require('@theia/core/lib/browser/endpoint');
+const { PreferenceService } = require('@theia/core/lib/common/preferences/preference-service');
 const { isWslShell } = require('./wsl-terminals');
 const { PASTE_PLACE, pastePathText, imageExtension } = require('./paste-paths');
 const { osc52ClipboardText } = require('./terminal-copy');
 const { refreshGlyphs, synchronizeTextureAtlas } = require('./terminal-renderer');
+const { planRestore, noticeLine } = require('./terminal-restore');
+const { KEY: RESTORE_KEY, RESTORE } = require('./restore-preference');
 
 class TerminalReplacement {
     static TIMEOUT_MS = 20000;
@@ -79,11 +83,41 @@ async function waitForReplacementStep(
     return result;
 }
 
+/** 백엔드에 저장된 터미널 기록의 주소. */
+function historyUrl(
+    terminalId,
+) {
+    return new Endpoint({ path: `/paddock/session/terminals/${terminalId}/history` }).getRestUrl().toString();
+}
+
+/** 앱이 터미널 프로세스째 사라진 뒤 백엔드가 저장해 둔 기록을 읽는다. 없으면 null이다. */
+async function fetchTerminalHistory(
+    terminalId,
+) {
+    let record = null;
+    const response = await fetch(historyUrl(terminalId));
+    if (response.ok) record = await response.json();
+    return record;
+}
+
+/** 저장된 터미널 기록을 지운다. 되살렸거나 되살리지 않기로 했을 때 부른다. */
+async function deleteTerminalHistory(
+    terminalId,
+) {
+    await fetch(historyUrl(terminalId), { method: 'DELETE' });
+}
+
 /**
  * 실행 중인 터미널의 닫기 요청을 확인한 뒤 종료한다.
  * 탭 버튼·메뉴·단축키는 같은 닫기 계약을 쓰며, 셸 프로세스가 스스로 끝날 때의 dispose는 확인 없이 유지한다.
  */
 class PaddockTerminal extends TerminalWidgetImpl {
+    /**
+     * 배치를 주기적으로 저장하는 중인지(layout-autosave.js). Theia 터미널은 배치 상태를 내놓을 때 "창을 닫는 중이라 프로세스를 닫지 않는다"로
+     * 표시한다. 주기 저장은 창을 닫는 것이 아니라서 그 표시를 바꾸지 않아야, 나중에 탭을 닫을 때 셸 프로세스도 닫힌다.
+     */
+    static isStoringAutomatically = false;
+
     /** A detached or moving document can briefly have no measurable terminal cells. */
     doResizeTerminal() {
         if (!this.isDisposed) {
@@ -120,7 +154,11 @@ class PaddockTerminal extends TerminalWidgetImpl {
 
     /** Keeps the last account label when the launch entry was renamed and then removed. */
     storeState() {
+        const closeOnDispose = this.closeOnDispose;
         const state = super.storeState();
+        if (PaddockTerminal.isStoringAutomatically) this.closeOnDispose = closeOnDispose;
+        // 되살리는 중에는 아직 새 프로세스 번호가 없다. 이때 배치를 저장해도 지난 번호를 남겨, 되살리기가 끝나기 전에 앱이 끝나도 같은 기록을 다시 찾는다.
+        if (this.restoringTerminalId !== undefined && !(this.terminalId >= 0)) state.terminalId = this.restoringTerminalId;
         if (this.options.paddockShared) state.paddockShared = true;
         const created = this.createdReplacement?.isClosed ? undefined : this.createdReplacement;
         const options = created?.options || this.replacementSavedState?.options || this.options;
@@ -565,17 +603,84 @@ class PaddockTerminal extends TerminalWidgetImpl {
     write(
         data,
     ) {
+        this.hasWritten = true;
         super.write(typeof data === 'string' ? this.fixEmojiWidth(data) : data);
+    }
+
+    /**
+     * 터미널을 시작한다. 지난 프로세스에 다시 붙는 동안 그 번호를 기억하고(storeState가 쓴다),
+     * 프로세스가 사라져 저장 기록으로 되살린 터미널에는 시작이 끝난 뒤 이어하기 명령을 입력한다.
+     */
+    async start(
+        id,
+    ) {
+        this.restoringTerminalId = typeof id === 'number' ? id : undefined;
+        let terminalId;
+        try {
+            terminalId = await super.start(id);
+        } finally {
+            this.restoringTerminalId = undefined;
+        }
+        if (this.pendingResumeCommand) {
+            const command = this.pendingResumeCommand;
+            this.pendingResumeCommand = undefined;
+            this.sendText(`${command}${OS.backend.EOL}`);
+        }
+        return terminalId;
     }
 
     async attachTerminal(
         id,
     ) {
-        if (!this.options.paddockShared) return super.attachTerminal(id);
-        const terminalId = await this.shellTerminalServer.attach(id);
-        if (!IBaseTerminalServer.validateId(terminalId)) throw new Error('The terminal in the other window has closed.');
-        this.exitStatus = undefined;
+        let terminalId;
+        if (this.options.paddockShared) {
+            terminalId = await this.shellTerminalServer.attach(id);
+            if (!IBaseTerminalServer.validateId(terminalId)) throw new Error('The terminal in the other window has closed.');
+            this.exitStatus = undefined;
+        } else {
+            terminalId = await this.shellTerminalServer.attach(id);
+            if (IBaseTerminalServer.validateId(terminalId)) {
+                // 새 프로세스에 붙었으면 종료 상태를 지운다.
+                this.exitStatus = undefined;
+            } else if (this.kind === 'user') {
+                // 프로세스가 사라졌다(앱 갱신·강제 종료·백엔드 종료). 저장해 둔 화면·폴더·대화로 새 셸을 연다. 저장 기록이 없으면 Theia 기본 동작이다.
+                this.logger.warn(`Failed attaching to terminal id ${id}, the terminal is most likely gone. Starting up a new terminal instead.`);
+                await this.restoreFromHistory(id);
+                terminalId = await this.createTerminal();
+                await deleteTerminalHistory(id).catch(() => {});
+            } else {
+                terminalId = -1;
+            }
+        }
         return terminalId;
+    }
+
+    /**
+     * 사라진 터미널 `id`의 저장 기록으로 지난 화면을 보이고 새 셸의 실행 옵션을 고친다. 저장 기록이 없거나 되살리기 설정이 꺼져 있으면 아무것도 바꾸지 않는다.
+     * 화면에 이미 출력이 있으면(연결이 끊겼다 되살아난 터미널) 화면은 다시 쓰지 않는다. 새 셸을 연 뒤 지울 기록은 호출한 쪽이 지운다.
+     */
+    async restoreFromHistory(
+        id,
+    ) {
+        let record = null;
+        try {
+            await this.preferenceService.ready;
+            if (this.preferenceService.get(RESTORE_KEY, RESTORE.ALWAYS) === RESTORE.NEVER) {
+                await deleteTerminalHistory(id);
+            } else {
+                record = await fetchTerminalHistory(id);
+            }
+        } catch {
+            // 기록을 읽지 못하면 되살리지 않고 기본 동작으로 새 셸을 연다.
+            record = null;
+        }
+        if (record) {
+            const plan = planRestore({ options: this.options, record, toUri: folder => URI.fromFilePath(folder.replace(/\\/g, '/')).toString() });
+            if (!this.hasWritten && record.output) this.write(record.output);
+            this.write(noticeLine(plan.notice));
+            this.options = plan.options;
+            this.pendingResumeCommand = plan.command || undefined;
+        }
     }
 
     close() {
@@ -609,5 +714,6 @@ decorate(inject(ApplicationShell), PaddockTerminal.prototype, 'applicationShell'
 decorate(inject(FileService), PaddockTerminal.prototype, 'fileService');
 decorate(inject(EnvVariablesServer), PaddockTerminal.prototype, 'envVariablesServer');
 decorate(inject(MessageService), PaddockTerminal.prototype, 'messageService');
+decorate(inject(PreferenceService), PaddockTerminal.prototype, 'preferenceService');
 
 module.exports = { PaddockTerminal };

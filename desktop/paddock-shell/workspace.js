@@ -275,6 +275,51 @@ class PaddockWorkspace {
     }
 
     /**
+     * 모든 묶음의 본문 배치를 칸 나눔째 옆에 붙인 하나의 배치(`merged`)와 묶음별 배치(`layouts`)를 계산한다. 화면과 저장소는 바꾸지 않는다.
+     * Theia는 화면에 있는 위젯만 저장하는데 다른 묶음의 위젯은 화면에서 빼 둔 상태라, 배치를 저장할 때는 이 합친 배치를 써야 다음 실행에 다른 묶음의 터미널이 돌아온다.
+     * 창을 닫기 직전(onWillStop)과 작업 중 주기 저장(layout-autosave.js)이 같은 계산을 쓴다.
+     */
+    mergedRootLayouts() {
+        const panel = this.shell.mainPanel;
+        const shown = panel.saveLayout().main;
+        const layouts = new Map([...this.rootLayouts].map(([root, area]) => [root,
+            layoutModel.prune(area, widget => !widget.isDisposed && (this.rootSwitcher.rootOf(widget) ?? root) === root),
+        ]));
+        const groupOf = widget => this.rootSwitcher.rootOf(widget) ?? this.displayedRoot;
+        for (const root of new Set(layoutModel.widgetsOf(shown).map(groupOf))) {
+            let area = layouts.get(root);
+            if ((!this.isRestoringRootLayouts && root === this.displayedRoot) || !area) {
+                area = layoutModel.prune(shown, widget => !widget.isDisposed && groupOf(widget) === root);
+            } else {
+                // 종료 직전에 다른 묶음의 새 탭이 들어와도 기존 탭·칸 배치를 함께 저장한다.
+                for (const widget of layoutModel.widgetsOf(shown).filter(item => !item.isDisposed && groupOf(item) === root)) {
+                    if (!layoutModel.includes(area, widget)) area = layoutModel.withWidget(area, widget);
+                }
+            }
+            layouts.set(root, area);
+        }
+        // 살아 있는 화면이 보관 배치에서 누락됐어도 재시작 시 사라지지 않게 소속 묶음에 포함한다.
+        for (const widget of this.shell.widgets) {
+            const root = this.rootSwitcher.rootOf(widget);
+            if (root && !widget.isDisposed && !layoutModel.includes(layouts.get(root), widget)) {
+                layouts.set(root, layoutModel.withWidget(layouts.get(root), widget));
+            }
+        }
+        // 다른 묶음은 탭으로 합치지 않고 칸 나눔째 옆에 붙인다. 탭으로 합치면 다음 실행에 그 묶음의 분할이 사라진다.
+        const others = [...layouts]
+            .filter(([root]) => root !== this.displayedRoot)
+            .map(([, area]) => area);
+        return { layouts, merged: layoutModel.besides([layouts.get(this.displayedRoot), ...others]) };
+    }
+
+    /** 묶음별 배치를 저장소에 쓴다. 모으기 전 배치를 따로 저장해 두어, 다음 실행이 묶음별 칸 비율을 되살린다. */
+    storeRootLayouts(
+        layouts,
+    ) {
+        this.storage.setData(STORAGE.ROOT_LAYOUTS, [...layouts].filter(([root]) => root).map(([root, area]) => [root, layoutModel.serialize(layoutModel.withoutDisposed(area))]));
+    }
+
+    /**
      * 창을 닫기 직전에 화면에서 빼 둔 다른 묶음의 위젯을 본문에 도로 모은다.
      * Theia는 화면에 있는 위젯만 저장하므로, 이때 모으지 않으면 다음 실행에 다른 묶음의 터미널이 돌아오지 않는다.
      * 다음 실행은 시작 때 묶음별로 다시 나눈다. 닫기가 취소되면 주기 갱신이 현재 묶음만 남긴다.
@@ -285,38 +330,10 @@ class PaddockWorkspace {
         this.isSwitchingRoot = true;
         try {
             const panel = this.shell.mainPanel;
-            const shown = panel.saveLayout().main;
-            const layouts = new Map([...this.rootLayouts].map(([root, area]) => [root,
-                layoutModel.prune(area, widget => !widget.isDisposed && (this.rootSwitcher.rootOf(widget) ?? root) === root),
-            ]));
-            const groupOf = widget => this.rootSwitcher.rootOf(widget) ?? this.displayedRoot;
-            for (const root of new Set(layoutModel.widgetsOf(shown).map(groupOf))) {
-                let area = layouts.get(root);
-                if ((!this.isRestoringRootLayouts && root === this.displayedRoot) || !area) {
-                    area = layoutModel.prune(shown, widget => !widget.isDisposed && groupOf(widget) === root);
-                } else {
-                    // 종료 직전에 다른 묶음의 새 탭이 들어와도 기존 탭·칸 배치를 함께 저장한다.
-                    for (const widget of layoutModel.widgetsOf(shown).filter(item => !item.isDisposed && groupOf(item) === root)) {
-                        if (!layoutModel.includes(area, widget)) area = layoutModel.withWidget(area, widget);
-                    }
-                }
-                layouts.set(root, area);
-            }
-            // 살아 있는 화면이 보관 배치에서 누락됐어도 재시작 시 사라지지 않게 소속 묶음에 포함한다.
-            for (const widget of this.shell.widgets) {
-                const root = this.rootSwitcher.rootOf(widget);
-                if (root && !widget.isDisposed && !layoutModel.includes(layouts.get(root), widget)) {
-                    layouts.set(root, layoutModel.withWidget(layouts.get(root), widget));
-                }
-            }
+            const { layouts, merged } = this.mergedRootLayouts();
             this.rootLayouts = layouts;
             // 모든 묶음을 좁은 창에 모으면 최소 칸 크기 때문에 비율이 달라진다. 모으기 전 배치를 따로 동기 저장한다.
-            this.storage.setData(STORAGE.ROOT_LAYOUTS, [...layouts].filter(([root]) => root).map(([root, area]) => [root, layoutModel.serialize(layoutModel.withoutDisposed(area))]));
-            // 다른 묶음은 탭으로 합치지 않고 칸 나눔째 옆에 붙인다. 탭으로 합치면 다음 실행에 그 묶음의 분할이 사라진다.
-            const others = [...layouts]
-                .filter(([root]) => root !== this.displayedRoot)
-                .map(([, area]) => area);
-            const merged = layoutModel.besides([layouts.get(this.displayedRoot), ...others]);
+            this.storeRootLayouts(layouts);
             if (merged) {
                 panel.restoreLayout({ main: merged });
                 // 닫기가 취소돼 다시 묶음을 나눌 때도 모으기 전의 칸 비율을 유지한다.

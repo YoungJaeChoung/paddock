@@ -104,9 +104,15 @@ function accountTerminalOptions(
     if (resume) {
         if (profile.provider !== 'claude' || resume.provider !== profile.provider || resume.runtime !== profile.runtime
             || (profile.runtime === 'wsl' && resume.wslDistribution?.toLowerCase() !== profile.wslDistribution.toLowerCase())) throw new Error('The conversation belongs to another CLI or environment.');
-        if (typeof resume.transcriptPath !== 'string' || !/^(?:\/|[a-z]:[\\/]|\\\\)/i.test(resume.transcriptPath)
-            || /[\u0000-\u001f\u007f]/.test(resume.transcriptPath)) throw new Error('The conversation path is invalid.');
-        cliArguments.push('--resume', resume.transcriptPath);
+        if (resume.useSessionId === true) {
+            // 같은 계정 폴더에서 이어 열 때(앱을 다시 연 뒤)는 전사 파일 경로 없이 대화 식별자만으로 찾는다.
+            if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(resume.sessionId || '')) throw new Error('The conversation identifier is invalid.');
+            cliArguments.push('--resume', resume.sessionId);
+        } else {
+            if (typeof resume.transcriptPath !== 'string' || !/^(?:\/|[a-z]:[\\/]|\\\\)/i.test(resume.transcriptPath)
+                || /[\u0000-\u001f\u007f]/.test(resume.transcriptPath)) throw new Error('The conversation path is invalid.');
+            cliArguments.push('--resume', resume.transcriptPath);
+        }
     }
     const variable = profile.provider === 'claude' ? 'CLAUDE_CONFIG_DIR' : 'CODEX_HOME';
     const env = Object.fromEntries(AccountLaunch.AUTH_ENV.map(name => [name, null]));

@@ -17,6 +17,7 @@ const { VSXExtensionsModel } = require('@theia/vsx-registry/lib/browser/vsx-exte
 const { Endpoint } = require('@theia/core/lib/browser/endpoint');
 const { PaddockBackendStop } = require('./backend-stop');
 const { PaddockQuitPrompt } = require('./quit-prompt');
+const { PaddockLayoutAutosave } = require('./layout-autosave');
 const { PaddockReviewNotes } = require('./review-notes-contribution');
 const { PaddockPdfOpener } = require('./pdf-viewer');
 const { PaddockBinaryNoticeOpener } = require('./binary-notice');
@@ -49,6 +50,16 @@ const PaddockPreferenceSchema = {
             ],
             default: 'ask',
             description: 'What to do with running terminals when you quit Paddock. With no terminals open nothing is kept. To stop background terminals once, run "Paddock: Quit and Stop All Terminals" from the command palette.',
+        },
+        'paddock.terminal.restoreOnRestart': {
+            type: 'string',
+            enum: ['always', 'never'],
+            enumDescriptions: [
+                'Show the last screen of each terminal when Paddock opens again after its terminals ended (quit with "Stop all", an update, a crash), open a new shell in the same folder, and resume the Claude or Codex conversation that was open.',
+                'Open a plain new shell instead.',
+            ],
+            default: 'always',
+            description: 'What to do with terminals whose programs ended while Paddock was closed. Paddock saves each terminal\'s last screen to its settings folder while it runs; "never" stops saving and deletes it.',
         },
         'paddock.agents.permissions': {
             type: 'string',
@@ -133,6 +144,9 @@ exports.default = new ContainerModule((bind, unbind, isBound, rebind, unbindAsyn
     bind(CommandContribution).toDynamicValue(({ container }) => new PaddockBackendStop(container)).inSingletonScope();
     // 마지막 창을 닫을 때 남은 터미널을 계속 실행할지 창 안에서 묻는다(quit-prompt.js).
     bind(FrontendApplicationContribution).toDynamicValue(({ container }) => new PaddockQuitPrompt(container)).inSingletonScope();
+    // 작업 중에도 화면 배치를 주기적으로 저장해, 앱이 강제로 끝나도 그 터미널 탭이 되살아나게 한다(layout-autosave.js).
+    bind(PaddockLayoutAutosave).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(PaddockLayoutAutosave);
     // 코드 줄에 남긴 검토 메모를 모아 에이전트 터미널에 한 번에 붙여 넣는다(review-notes.js).
     bind(PaddockReviewNotes).toDynamicValue(({ container }) => new PaddockReviewNotes(container)).inSingletonScope();
     bind(CommandContribution).toService(PaddockReviewNotes);
