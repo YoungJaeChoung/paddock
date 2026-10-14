@@ -1,4 +1,3 @@
-const { WebviewWidget } = require('@theia/plugin-ext/lib/main/browser/webview/webview');
 const { PreferencesWidget } = require('@theia/preferences/lib/browser/views/preference-widget');
 const layoutModel = require('../layout-model');
 const { STORAGE } = require('./shared');
@@ -26,8 +25,8 @@ class RootSwitcher {
             root = PreferencesWidget.ID;
         } else if (folder) {
             root = `folder:${folder}`;
-        } else if (widget instanceof WebviewWidget && this.workspace.webviewFolders.has(widget.id)) {
-            root = `folder:${this.workspace.webviewFolders.get(widget.id)}`;
+        } else if (this.workspace.isFolderPage(widget) && this.workspace.pageFolders.has(widget.id)) {
+            root = `folder:${this.workspace.pageFolders.get(widget.id)}`;
         } else {
             const top = widget ? this.workspace.topTerminalOf(widget) : null;
             if (top) root = `top:${top}`;
@@ -141,8 +140,8 @@ class RootSwitcher {
                             if (root.startsWith('top:') && !this.workspace.isTerminal(widget) && this.workspace.fileRoots.get(widget.id) !== root.slice(4)) {
                                 this.workspace.fileRoots.set(widget.id, root.slice(4));
                                 filesChanged = true;
-                            } else if (root.startsWith('folder:') && widget instanceof WebviewWidget) {
-                                this.workspace.webviewFolders.set(widget.id, root.slice(7));
+                            } else if (root.startsWith('folder:') && this.workspace.isFolderPage(widget)) {
+                                this.workspace.pageFolders.set(widget.id, root.slice(7));
                             }
                         }
                     }

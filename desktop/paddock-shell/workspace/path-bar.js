@@ -1,4 +1,3 @@
-const { WebviewWidget } = require('@theia/plugin-ext/lib/main/browser/webview/webview');
 const model = require('../work-model');
 const { h } = require('@theia/core/shared/@lumino/virtualdom');
 const { paneColumns } = require('../pane-columns');
@@ -86,7 +85,7 @@ class PathBar {
             bar.replaceChildren();
             // 한 칸이거나 열의 맨 위 칸은 위쪽 탭 줄의 탭이 이름을 맡으므로 줄을 1px로 접는다. 아래 칸은 자기 실제 탭 줄이 이름을 맡는다.
             const hasTabAbove = !isSplit || (topPanes.has(tabBar) && !showsTabs);
-            const isCompactPane = hasTabAbove && (this.workspace.isTerminal(widget) || Boolean(widget?.getResourceUri?.()) || widget instanceof WebviewWidget && (this.workspace.webviewFolders.has(widget.id) || this.workspace.fileRoots.has(widget.id)));
+            const isCompactPane = hasTabAbove && (this.workspace.isTerminal(widget) || Boolean(widget?.getResourceUri?.()) || this.workspace.isFolderPage(widget) && (this.workspace.pageFolders.has(widget.id) || this.workspace.fileRoots.has(widget.id)));
             // 칸이 둘 이상이면 입력이 가지 않는 칸을 흐리게 해 지금 입력할 칸을 드러낸다.
             widget?.node.classList.toggle('is-inactive-pane', isSplit && widget !== this.workspace.currentWidget());
             isResized = isResized || tabBar.node.classList.contains('is-compact-pane') !== isCompactPane;

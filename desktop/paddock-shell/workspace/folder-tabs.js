@@ -1,7 +1,6 @@
 const { OS } = require('@theia/core/lib/common/os');
 const { Saveable } = require('@theia/core/lib/browser/saveable');
 const { ShellTerminalProfile } = require('@theia/terminal/lib/browser/shell-terminal-profile');
-const { WebviewWidget } = require('@theia/plugin-ext/lib/main/browser/webview/webview');
 const model = require('../work-model');
 const tabOverflow = require('../tab-overflow');
 const { paneColumns, groupTabsByColumn, columnSpans, orderTabsByPane } = require('../pane-columns');
@@ -337,7 +336,7 @@ class FolderTabs {
             const uri = widget.getResourceUri?.();
             return !this.workspace.isTerminal(widget) && (this.workspace.isFileOnlyGroup(widget) || (uri
                 ? (key ? this.workspace.workFolderOf(widget) === key : root && this.workspace.fileRoots.get(widget.id) === root)
-                : widget instanceof WebviewWidget && (key ? this.workspace.webviewFolders.get(widget.id) === key : root && this.workspace.fileRoots.get(widget.id) === root)));
+                : this.workspace.isFolderPage(widget) && (key ? this.workspace.pageFolders.get(widget.id) === key : root && this.workspace.fileRoots.get(widget.id) === root)));
         };
         const fileWidgets = [...this.workspace.shell.widgets].filter(belongs);
         // 같은 이름의 파일이 둘 이상 열려 있으면 탭에 상위 폴더를 붙여 구분한다(`notes.md · src`).

@@ -25,6 +25,7 @@ const { WebviewWidget } = require('@theia/plugin-ext/lib/main/browser/webview/we
 const { ScmService } = require('@theia/scm/lib/browser/scm-service');
 const { VSXExtensionsContribution } = require('@theia/vsx-registry/lib/browser/vsx-extensions-contribution');
 const { VSXExtensionsSearchModel } = require('@theia/vsx-registry/lib/browser/vsx-extensions-search-model');
+const { VSXExtensionEditor } = require('@theia/vsx-registry/lib/browser/vsx-extension-editor');
 const { RemoteStatusService } = require('@theia/remote/lib/electron-common/remote-status-service');
 const { PreferenceService } = require('@theia/core/lib/common/preferences/preference-service');
 const { PreferencesWidget } = require('@theia/preferences/lib/browser/views/preference-widget');
@@ -111,7 +112,8 @@ class PaddockWorkspace {
         // 코드가 화면을 닫고 곧바로 다음 화면을 정하는 구간(폴더 제거, 전용 편집기로 다시 열기)의 수. 0보다 크면 위 예약을 건너뛴다.
         this.n_closesByCode = 0;
         this.fileRoots = new Map();
-        this.webviewFolders = new Map();
+        // 파일 주소가 없는 화면(웹뷰·확장 페이지)을 연 작업 폴더. 이 폴더의 위쪽 탭 줄에 그 화면의 탭을 둔다.
+        this.pageFolders = new Map();
         this.markdownPreviewSources = new Map();
         this.pendingMarkdownSource = null;
         this.homePath = '';
@@ -428,12 +430,12 @@ class PaddockWorkspace {
         this.shell.onDidAddWidget((widget) => {
             widget.title.changed.connect(() => this.refreshSoon());
             if (this.isTerminal(widget)) this.agentActivity.watchTerminal(widget);
-            if (widget instanceof WebviewWidget) {
-                if (widget.viewType === MARKDOWN_PREVIEW.VIEW_TYPE && this.pendingMarkdownSource) {
-                    this.markdownPreviewSources.set(widget.id, this.pendingMarkdownSource);
-                }
+            if (widget instanceof WebviewWidget && widget.viewType === MARKDOWN_PREVIEW.VIEW_TYPE && this.pendingMarkdownSource) {
+                this.markdownPreviewSources.set(widget.id, this.pendingMarkdownSource);
+            }
+            if (this.isFolderPage(widget)) {
                 const folder = this.shownFolder();
-                if (folder) this.webviewFolders.set(widget.id, folder);
+                if (folder) this.pageFolders.set(widget.id, folder);
                 else {
                     const root = this.fileRoots.get(this.currentWidget()?.id) || this.shownTopTerminal();
                     if (root) {
@@ -935,6 +937,19 @@ class PaddockWorkspace {
         return widget instanceof TerminalWidget;
     }
 
+    /**
+     * 파일 주소 없이 본문에 열리는 화면(웹뷰·확장 페이지)인지 가린다.
+     *
+     * 이런 화면은 연 순간 보이던 작업 폴더(없으면 그 터미널 묶음)에 속하게 해, 터미널·파일과 같은 위쪽 탭 줄에 탭을 둔다.
+     * 묶지 않으면 위쪽 줄에 탭이 없어 본문 바로 위에 이름 줄이 따로 생기고, 탭 자리가 터미널과 달라진다.
+     * 설정 화면은 작업 폴더와 무관한 전역 화면이라 여기에 넣지 않는다.
+     */
+    isFolderPage(
+        widget,
+    ) {
+        return widget instanceof WebviewWidget || widget instanceof VSXExtensionEditor;
+    }
+
     async readCwd(
         terminal,
     ) {
@@ -1034,7 +1049,7 @@ class PaddockWorkspace {
             }
             const removedInner = this.innerTerminalRoots.delete(widget.id);
             const removedFile = this.fileRoots.delete(widget.id);
-            this.webviewFolders.delete(widget.id);
+            this.pageFolders.delete(widget.id);
             this.markdownPreviewSources.delete(widget.id);
             let innerChanged = removedInner || removedFile;
             if (widget.id === this.selectedTopTerminal) this.selectedTopTerminal = nextRoot;

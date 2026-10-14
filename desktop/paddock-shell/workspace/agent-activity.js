@@ -1,6 +1,5 @@
 const { URI } = require('@theia/core');
 const { OS } = require('@theia/core/lib/common/os');
-const { WebviewWidget } = require('@theia/plugin-ext/lib/main/browser/webview/webview');
 const model = require('../work-model');
 const layoutModel = require('../layout-model');
 const agent = require('../agent-model');
@@ -258,7 +257,7 @@ class AgentActivity {
                 const folder = model.folderOf(this.workspace.state, rootId);
                 const next = `folder:${folder}`;
                 for (const [id, root] of this.workspace.fileRoots) {
-                    if (root === rootId && this.workspace.shell.getWidgetById(id) instanceof WebviewWidget) this.workspace.webviewFolders.set(id, folder);
+                    if (root === rootId && this.workspace.isFolderPage(this.workspace.shell.getWidgetById(id))) this.workspace.pageFolders.set(id, folder);
                 }
                 const destination = this.workspace.displayedRoot === next ? this.workspace.shell.mainPanel.saveLayout().main : this.workspace.rootLayouts.get(next);
                 const merged = layoutModel.besides([layoutModel.withoutDisposed(destination), layoutModel.withoutDisposed(area)]);
