@@ -185,18 +185,21 @@ if [ -d "$source_dir" ]; then
     done
 fi
 # Folders and instruction files the CLI loads by name from its config folder are linked whole; a missing host entry is skipped.
+# The names are listed by kind exactly as the JS preparation lists them (AccountProfile.SHARED_FOLDERS and SHARED_FILES).
 case "$provider" in
-    claude) shared_names="commands agents" ;;
-    codex) shared_names="prompts AGENTS.md" ;;
+    claude) shared_folders="commands agents hooks rules"; shared_files="CLAUDE.md keybindings.json" ;;
+    codex) shared_folders="prompts rules"; shared_files="AGENTS.md hooks.json" ;;
 esac
 shared_root=\${source_dir%/skills}
-for shared_name in $shared_names; do
+link_shared() {
+    shared_kind=$1
+    shared_name=$2
     shared_source="$shared_root/$shared_name"
     shared_target="$config_dir/$shared_name"
-    shared_kind=""
-    if [ -d "$shared_source" ] && [ "$shared_name" != AGENTS.md ]; then shared_kind=folder; fi
-    if [ -f "$shared_source" ] && [ "$shared_name" = AGENTS.md ]; then shared_kind=file; fi
-    if [ -n "$shared_kind" ]; then
+    shared_found=""
+    if [ "$shared_kind" = folder ] && [ -d "$shared_source" ]; then shared_found=1; fi
+    if [ "$shared_kind" = file ] && [ -f "$shared_source" ]; then shared_found=1; fi
+    if [ -n "$shared_found" ]; then
         if [ -e "$shared_target" ] || [ -L "$shared_target" ]; then
             if [ ! -L "$shared_target" ] || [ "$(readlink "$shared_target")" != "$shared_source" ]; then
                 printf 'An existing %s %s was kept.\\0' "$shared_name" "$shared_kind"
@@ -205,7 +208,9 @@ for shared_name in $shared_names; do
             ln -s "$shared_source" "$shared_target"
         fi
     fi
-done`;
+}
+for shared_name in $shared_folders; do link_shared folder "$shared_name"; done
+for shared_name in $shared_files; do link_shared file "$shared_name"; done`;
 }
 
 /** Runs only fixed scripts; account labels and frontend paths never become shell text. */

@@ -263,6 +263,49 @@ test('A20 links host command and agent folders, skips missing ones, and keeps th
     assert.equal(fs.readFileSync(path.join(commands, 'ask.md'), 'utf8'), 'Ask questions.\n');
 });
 
+test('A22 links hooks and rules folders plus CLAUDE.md and keybindings.json for Claude, and rules and hooks.json for Codex', async context => {
+    const setup = fixture(context);
+    for (const directory of [setup.claudeDirectory, setup.codexDirectory]) {
+        fs.mkdirSync(path.join(directory, 'rules'), { recursive: true });
+    }
+    fs.mkdirSync(path.join(setup.claudeDirectory, 'hooks'));
+    fs.writeFileSync(path.join(setup.claudeDirectory, 'CLAUDE.md'), 'Claude rules.\n');
+    fs.writeFileSync(path.join(setup.claudeDirectory, 'keybindings.json'), '{}\n');
+    fs.writeFileSync(path.join(setup.codexDirectory, 'hooks.json'), '{}\n');
+    const claude = await setup.accounts.prepare((await setup.accounts.create({ provider: 'claude' })).id);
+    const codex = await setup.accounts.prepare((await setup.accounts.create({ provider: 'codex' })).id);
+    for (const name of ['hooks', 'rules', 'CLAUDE.md', 'keybindings.json']) {
+        assert.equal(fs.lstatSync(path.join(claude.configDir, name)).isSymbolicLink(), true, name);
+    }
+    for (const name of ['rules', 'hooks.json']) assert.equal(fs.lstatSync(path.join(codex.configDir, name)).isSymbolicLink(), true, name);
+    assert.equal(fs.readFileSync(path.join(claude.configDir, 'CLAUDE.md'), 'utf8'), 'Claude rules.\n');
+    assert.equal(fs.existsSync(path.join(codex.configDir, 'hooks')), false);
+    assert.deepEqual([...claude.warnings, ...codex.warnings], []);
+});
+
+test('A23 WSL preparation script links the same shared names as the native preparation', { skip: process.platform === 'win32' }, context => {
+    const home = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'paddock-wsl-script-'));
+    context.after(() => fs.rmSync(home, { recursive: true, force: true }));
+    const claude = path.join(home, '.claude');
+    fs.mkdirSync(path.join(claude, 'hooks'), { recursive: true });
+    fs.mkdirSync(path.join(claude, 'rules'));
+    fs.writeFileSync(path.join(claude, 'CLAUDE.md'), 'Claude rules.\n');
+    fs.writeFileSync(path.join(claude, 'keybindings.json'), '{}\n');
+    // A name of the wrong kind on the host (a hooks file instead of a hooks folder) is not linked.
+    fs.mkdirSync(path.join(home, '.codex'));
+    fs.writeFileSync(path.join(home, '.codex', 'hooks'), 'not a folder');
+    for (const provider of ['claude', 'codex']) {
+        const id = provider === 'claude' ? '00000000-0000-4000-8000-000000000001' : '00000000-0000-4000-8000-000000000002';
+        const result = spawnSync('sh', ['-c', WslScripts.PREPARE, 'paddock-accounts', id, provider, 'browser', 'echo', 'doctor', 'echo', ''], {
+            encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home },
+        });
+        assert.equal(result.status, 0, result.stderr);
+        const configDir = path.join(home, '.paddock', 'agent-profiles', id, provider);
+        const linked = fs.readdirSync(configDir).filter(name => fs.lstatSync(path.join(configDir, name)).isSymbolicLink()).sort();
+        assert.deepEqual(linked, provider === 'claude' ? ['CLAUDE.md', 'hooks', 'keybindings.json', 'rules'] : []);
+    }
+});
+
 test('A21 keeps an account-owned commands folder and reports it', async context => {
     const setup = fixture(context);
     fs.mkdirSync(path.join(setup.claudeDirectory, 'commands'), { recursive: true });

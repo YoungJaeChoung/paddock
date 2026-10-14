@@ -18,9 +18,9 @@ class AccountProfile {
     static METADATA_FILE = 'account-profiles.json';
     static N_LABEL_CHARACTERS = 64;
     // Folders the CLI loads by name from its config folder; each one is linked whole so entries added later appear without re-linking.
-    static SHARED_FOLDERS = Object.freeze({ claude: ['commands', 'agents'], codex: ['prompts'] });
-    // Instruction files the CLI loads by name; Claude Code already finds its CLAUDE.md without a link, so only Codex lists one.
-    static SHARED_FILES = Object.freeze({ claude: [], codex: ['AGENTS.md'] });
+    static SHARED_FOLDERS = Object.freeze({ claude: ['commands', 'agents', 'hooks', 'rules'], codex: ['prompts', 'rules'] });
+    // Instruction and keybinding files the CLI loads by name from its config folder (Claude Code resolves the user CLAUDE.md and keybindings.json against CLAUDE_CONFIG_DIR, so an account without a link loses them).
+    static SHARED_FILES = Object.freeze({ claude: ['CLAUDE.md', 'keybindings.json'], codex: ['AGENTS.md', 'hooks.json'] });
 }
 
 function checkedLabel(
