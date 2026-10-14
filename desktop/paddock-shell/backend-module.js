@@ -24,6 +24,7 @@ const agent = require('./agent-model');
 const { WorkPresenceRegistry } = require('./work-presence');
 const wsl = require('./wsl-terminals');
 const { PaddockSessionRoutes } = require('./session-routes');
+const { PaddockServiceOverrides } = require('./service-overrides');
 const windowsProcesses = require('./windows-processes');
 const { attributeAccount, parseEnviron } = require('./agent-account');
 const { trustWslRepositories } = require('./git-environment');
@@ -629,6 +630,8 @@ decorate(injectable(), PaddockStatusRoutes);
 decorate(inject(ProcessManager), PaddockStatusRoutes.prototype, 'processManager');
 
 exports.default = new ContainerModule((bind) => {
+    // Theia 서비스 교체는 그 서비스를 묶는 모듈이 모두 로드된 뒤여야 하므로, 컨테이너를 받는 시작 기여로 둔다.
+    bind(BackendApplicationContribution).toDynamicValue(context => new PaddockServiceOverrides(context.container)).inSingletonScope();
     bind(PaddockStatusRoutes).toSelf().inSingletonScope();
     bind(BackendApplicationContribution).toService(PaddockStatusRoutes);
     bind(PaddockSessionRoutes).toSelf().inSingletonScope();

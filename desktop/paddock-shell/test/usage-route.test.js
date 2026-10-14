@@ -16,7 +16,7 @@ function fixture(
     let Contribution;
     backend.default.registry(token => {
         if (token?.name === 'PaddockStatusRoutes') Contribution = token;
-        return { toSelf: () => ({ inSingletonScope() {} }), toService() {}, toConstantValue() {} };
+        return { toSelf: () => ({ inSingletonScope() {} }), toService() {}, toConstantValue() {}, toDynamicValue: () => ({ inSingletonScope() {} }) };
     });
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'paddock-usage-route-'));
     // 테스트를 Paddock 계정 터미널에서 돌리면 CLAUDE_CONFIG_DIR·CODEX_HOME이 실제 계정 폴더를 가리킨다.
