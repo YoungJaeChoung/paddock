@@ -21,6 +21,9 @@ class AccountProfile {
     // Folders the CLI loads by name from its config folder; each one is linked whole so entries added later appear without re-linking.
     static SHARED_FOLDERS = Object.freeze({ claude: ['commands', 'agents', 'hooks', 'rules'], codex: ['prompts', 'rules'] });
     // Instruction and keybinding files the CLI loads by name from its config folder (Claude Code resolves the user CLAUDE.md and keybindings.json against CLAUDE_CONFIG_DIR, so an account without a link loses them).
+    // Settings files the CLI itself rewrites. They are linked like SHARED_FILES, but an account's own copy (made by the CLI before it was linked) is moved aside as a backup first instead of being kept.
+    static SETTINGS_FILES = Object.freeze({ claude: ['settings.json'], codex: [] });
+    static BACKUP_SUFFIX = '.paddock-backup';
     static SHARED_FILES = Object.freeze({ claude: ['CLAUDE.md', 'keybindings.json'], codex: ['AGENTS.md', 'hooks.json'] });
 }
 
@@ -118,6 +121,131 @@ function linkSharedEntry(
                 warning = `The ${name} file could not be linked. Enable Windows developer mode to share it.`;
             }
         } else if (!sameSource) warning = `An existing ${name} ${kind} was kept.`;
+    }
+    return warning;
+}
+
+/**
+ * Returns the path a settings file is moved to before the account follows the host's file:
+ * `<file>.paddock-backup`, or `<file>.paddock-backup-<YYYYMMDD-HHMMSS>` when that name is already taken.
+ */
+function backupName(
+    file,
+    now = new Date(),
+) {
+    const taken = path => {
+        let isTaken = true;
+        try { fs.lstatSync(path); } catch (error) {
+            if (error.code !== 'ENOENT') throw error;
+            isTaken = false;
+        }
+        return isTaken;
+    };
+    const first = `${file}${AccountProfile.BACKUP_SUFFIX}`;
+    let name = first;
+    if (taken(first)) {
+        const pad = value => String(value).padStart(2, '0');
+        name = `${first}-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    }
+    return name;
+}
+
+/**
+ * Makes an account's settings file follow the host CLI's file, so `/model`, `/theme` and permission grants made in any account land in one file.
+ *
+ * The CLI rewrites settings files itself, so each account would otherwise keep a diverging copy. The account file becomes a link straight to
+ * the host file's final location (the host path with every link resolved). One hop matters: the CLI saves through a link by resolving a single
+ * level and renaming over that path, so a link that leads through the host's own link (for example a dotfiles-repository link) would replace
+ * the host link with a plain file and cut it off from its repository.
+ * Nothing happens when the host has no such file. An account's own regular file is moved to `<name>.paddock-backup`
+ * (`-<YYYYMMDD-HHMMSS>` appended when that name is taken) before linking, unless its content already equals the host's.
+ * A link that already leads to the host file through another path is made direct; a link to some other file, or a folder, is kept and reported.
+ * Windows without developer mode refuses file links (EPERM); then the account gets a copy that is refreshed whenever it differs,
+ * and the first differing account file is backed up once.
+ * Returns a warning text when something was moved, kept, or copied instead of linked; otherwise null.
+ *
+ * Examples
+ * --------
+ * | Host file | Account file                      | Result                                                           |
+ * | --------- | --------------------------------- | ---------------------------------------------------------------- |
+ * | exists    | none                              | direct link, no warning                                          |
+ * | exists    | regular, different content        | account file moved to `.paddock-backup`, direct link, warning    |
+ * | exists    | regular, same content             | relinked without backup, no warning                              |
+ * | exists    | direct link to the host's file    | unchanged                                                        |
+ * | exists    | link to it through another path   | made direct, no warning                                          |
+ * | exists    | link elsewhere, or a folder       | kept, warning                                                    |
+ * | none      | any                               | unchanged                                                        |
+ */
+function shareSettingsFile(
+    source,
+    target,
+    name,
+) {
+    let resolved = null;
+    try {
+        if (fs.statSync(source).isFile()) resolved = fs.realpathSync(source);
+    } catch (error) {
+        if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw error;
+    }
+    let warning = null;
+    if (resolved) {
+        let existing = null;
+        try {
+            existing = fs.lstatSync(target);
+        } catch (error) {
+            if (error.code !== 'ENOENT') throw error;
+        }
+        let isDirect = false;
+        let isSameFile = false;
+        if (existing?.isSymbolicLink()) {
+            isDirect = path.resolve(path.dirname(target), fs.readlinkSync(target)) === resolved;
+            try {
+                isSameFile = fs.realpathSync(target) === resolved;
+            } catch (error) {
+                if (error.code !== 'ENOENT') throw error;
+            }
+        }
+        if (existing?.isSymbolicLink() && !isSameFile) {
+            warning = `An existing ${name} link was kept.`;
+        } else if (existing && !existing.isSymbolicLink() && !existing.isFile()) {
+            warning = `An existing ${name} entry was kept.`;
+        } else if (!isDirect) {
+            const sameContent = isSameFile || (Boolean(existing) && fs.readFileSync(resolved).equals(fs.readFileSync(target)));
+            // The link is built beside the account file and renamed over it, so a refused link leaves the account file untouched.
+            const pendingLink = path.join(path.dirname(target), `.${name}.${randomUUID()}.link`);
+            let canLink = true;
+            try {
+                fs.symlinkSync(resolved, pendingLink, 'file');
+            } catch (error) {
+                // Windows allows file links only with developer mode or elevation.
+                if (error.code !== 'EPERM') throw error;
+                canLink = false;
+            }
+            try {
+                if (canLink) {
+                    let backup = null;
+                    if (existing && !sameContent) {
+                        backup = backupName(target);
+                        fs.renameSync(target, backup);
+                    }
+                    fs.renameSync(pendingLink, target);
+                    if (backup) warning = `The ${name} of this account was moved to ${path.basename(backup)}; the account now follows the shared ${name}.`;
+                } else if (!sameContent) {
+                    const backup = existing && !fs.existsSync(`${target}${AccountProfile.BACKUP_SUFFIX}`) ? `${target}${AccountProfile.BACKUP_SUFFIX}` : null;
+                    if (backup) fs.copyFileSync(target, backup, fs.constants.COPYFILE_EXCL);
+                    const temporaryFile = path.join(path.dirname(target), `.${name}.${randomUUID()}.tmp`);
+                    try {
+                        fs.copyFileSync(resolved, temporaryFile);
+                        fs.renameSync(temporaryFile, target);
+                    } finally {
+                        fs.rmSync(temporaryFile, { force: true });
+                    }
+                    warning = `Enable Windows developer mode to share ${name} live; the account copy is refreshed each launch.`;
+                }
+            } finally {
+                fs.rmSync(pendingLink, { force: true });
+            }
+        }
     }
     return warning;
 }
@@ -542,6 +670,10 @@ class AccountProfiles {
                 const warning = linkSharedEntry(path.join(hostDirectory, name), path.join(configDir, name), name, kind);
                 if (warning) warnings.push(warning);
             }
+        }
+        for (const name of AccountProfile.SETTINGS_FILES[profile.provider]) {
+            const warning = shareSettingsFile(path.join(hostDirectory, name), path.join(configDir, name), name);
+            if (warning) warnings.push(warning);
         }
         const browserDirectory = process.platform === 'linux' && process.env.WSL_DISTRO_NAME ? installBrowserBridge(configDir, profile.provider) : null;
         if (profile.provider === 'claude') {
