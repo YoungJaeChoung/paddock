@@ -54,3 +54,43 @@ test('A-messages.4: Git 채널의 오류·경고 줄만 로그로 남긴다', ()
     assert.deepEqual(loggedLines('Tasks', text), []);
     assert.deepEqual(loggedLines('Git', undefined), []);
 });
+
+test('A-messages.5: 문구가 같아도 버튼 집합이 다르면 합치지 않는다', () => {
+    const { messageKey } = require('../message-coalesce');
+    assert.equal(messageKey('a', ['Open', 'Close']), messageKey('a', ['Open', 'Close']));
+    assert.notEqual(messageKey('a', ['Open']), messageKey('a', ['Open', 'Close']));
+    const pending = new Map();
+    const { open, calls } = fakeOpen();
+    coalesceMessage(pending, messageKey('a', ['Open']), open);
+    coalesceMessage(pending, messageKey('a', ['Retry']), open);
+    assert.equal(calls.length, 2);
+});
+
+/**
+ * 화면(document)이 필요한 Theia 모달 구현 대신, 같은 응답 번호 변환을 하는 화면 없는 기본 구현을 부모로 끼워 읽는다.
+ * 모달 여부로 갈리는 `doShowMessage`만 Paddock 코드가 바꾸고, 응답 번호 변환(`$showMessage`)은 두 구현이 같다.
+ */
+const Module = require('node:module');
+const loadModule = Module._load;
+Module._load = (request, ...rest) => (request === '@theia/plugin-ext/lib/main/browser/message-registry-main'
+    ? { MessageRegistryMainImpl: loadModule('@theia/plugin-ext/lib/main/common/basic-message-registry-main', ...rest).BasicMessageRegistryMainImpl }
+    : loadModule(request, ...rest));
+
+test('A-messages.6: 오류 모달은 알림으로 열고 누른 버튼을 응답 번호로 돌려주며, 닫으면 onCloseActionHandle을 돌려준다', async () => {
+    const { MessageService } = require('@theia/core/lib/common/message-service');
+    const { ILogger } = require('@theia/core/lib/common/logger');
+    const { MainMessageType } = require('@theia/plugin-ext/lib/common/plugin-api-rpc');
+    const { PaddockMessageRegistryMain } = require('../plugin-messages');
+    const shown = [];
+    let answer = 'Show Command Output';
+    const services = new Map([
+        [MessageService, { error: (text, ...titles) => { shown.push([text, titles]); return Promise.resolve(answer); } }],
+        [ILogger, { warn: () => {} }],
+    ]);
+    const registry = new PaddockMessageRegistryMain({ get: key => services.get(key) });
+    const actions = [{ title: 'Open Git Log' }, { title: 'Show Command Output' }];
+    assert.equal(await registry.$showMessage(MainMessageType.Error, 'Git: fatal', { modal: true }, actions), 1);
+    assert.deepEqual(shown, [['Git: fatal', ['Open Git Log', 'Show Command Output']]]);
+    answer = undefined;
+    assert.equal(await registry.$showMessage(MainMessageType.Error, 'Git: fatal 2', { modal: true, onCloseActionHandle: 7 }, actions), 7);
+});

@@ -42,4 +42,25 @@ function rotateIfLarge(
     return isRotated;
 }
 
-module.exports = { ROTATION, rotateIfLarge };
+/**
+ * `rotateIfLarge`를 부르되 실패해도 던지지 않는다. 실패하면 `onFailure(error)`를 부르고 false를 돌려준다.
+ *
+ * 회전은 백엔드를 띄우기 전의 부수 작업이라 실패(다른 프로그램이 파일을 쥐고 있음 등)가 시작을 막으면 안 된다.
+ * 실패해도 원래 파일은 지워지지 않고 그대로 이어 쓴다.
+ */
+function tryRotate(
+    filePath,
+    onFailure,
+    maxBytes = ROTATION.MAX_BYTES,
+    keep = ROTATION.KEEP,
+) {
+    let isRotated = false;
+    try {
+        isRotated = rotateIfLarge(filePath, maxBytes, keep);
+    } catch (error) {
+        onFailure(error);
+    }
+    return isRotated;
+}
+
+module.exports = { ROTATION, rotateIfLarge, tryRotate };

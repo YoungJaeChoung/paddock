@@ -29,6 +29,7 @@ const wsl = require('./wsl-terminals');
 const { PaddockSessionRoutes } = require('./session-routes');
 const { PaddockServiceOverrides } = require('./service-overrides');
 const { installLogSquelch } = require('./log-squelch');
+const { PaddockFrontendRoutes } = require('./frontend-routes');
 const windowsProcesses = require('./windows-processes');
 const { attributeAccount } = require('./agent-account');
 const { foregroundProcess } = require('./terminal-inspector');
@@ -796,6 +797,9 @@ exports.default = new ContainerModule((bind) => {
     bind(BackendApplicationContribution).toService(PaddockStatusRoutes);
     bind(PaddockSessionRoutes).toSelf().inSingletonScope();
     bind(BackendApplicationContribution).toService(PaddockSessionRoutes);
+    // 죽은 화면의 옛 연결을 앱이 바로 닫게 하는 경로(frontend-routes.js).
+    bind(PaddockFrontendRoutes).toSelf().inSingletonScope();
+    bind(BackendApplicationContribution).toService(PaddockFrontendRoutes);
     // Git 보기를 그리는 내장 git 확장은 플러그인 호스트 프로세스에서 git을 실행하므로, 그 프로세스 환경에만 WSL 저장소 신뢰를 넣는다.
     bind(PluginHostEnvironmentVariable).toConstantValue({ process: env => trustWslRepositories(env, process.platform) });
     // Expose account actions only; filesystem helpers are not remotely callable.

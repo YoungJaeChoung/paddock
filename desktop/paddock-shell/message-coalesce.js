@@ -28,4 +28,24 @@ function coalesceMessage(
     return opened;
 }
 
-module.exports = { coalesceMessage };
+/**
+ * 합치기 열쇠. 문구와 버튼 제목의 순서 있는 목록이 모두 같아야 같은 알림으로 본다.
+ *
+ * 문구만 열쇠로 쓰면 같은 문구에 다른 버튼을 단 다른 확장의 알림이 하나로 합쳐져, 한쪽 버튼이 사라지거나
+ * 누른 버튼이 엉뚱한 요청의 응답이 된다. 요청에는 확장 이름이 실려 오지 않아 버튼 집합으로 구분한다.
+ *
+ * Examples
+ * --------
+ * | text | 버튼              | key                 |
+ * |------|-------------------|---------------------|
+ * | 'a'  | ['Open', 'Close'] | 같은 입력이면 같다  |
+ * | 'a'  | ['Open']          | 위와 다르다         |
+ */
+function messageKey(
+    text,
+    titles,
+) {
+    return JSON.stringify([text, titles]);
+}
+
+module.exports = { coalesceMessage, messageKey };

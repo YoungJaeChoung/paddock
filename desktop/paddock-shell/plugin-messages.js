@@ -4,7 +4,7 @@
 const { MessageService } = require('@theia/core/lib/common/message-service');
 const { ILogger } = require('@theia/core/lib/common/logger');
 const { MainMessageType } = require('@theia/plugin-ext/lib/common/plugin-api-rpc');
-const { coalesceMessage } = require('./message-coalesce');
+const { coalesceMessage, messageKey } = require('./message-coalesce');
 const { MessageRegistryMainImpl } = require('@theia/plugin-ext/lib/main/browser/message-registry-main');
 
 /**
@@ -33,10 +33,11 @@ class PaddockMessageRegistryMain extends MessageRegistryMainImpl {
         if (options.modal && type === MainMessageType.Error) {
             const text = options.detail ? `${message}\n${options.detail}` : message;
             this.logger.warn(`[plugin] ${text}`);
+            const titles = actions.map(action => action.title);
             selected = await coalesceMessage(
                 this.pendingErrors,
-                text,
-                () => this.container.get(MessageService).error(text, ...actions.map(action => action.title)),
+                messageKey(text, titles),
+                () => this.container.get(MessageService).error(text, ...titles),
             );
         } else {
             selected = await super.doShowMessage(type, message, options, actions);

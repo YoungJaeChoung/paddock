@@ -15,7 +15,7 @@ const BackendSession = require('./backend-session');
 const QuitPreference = require('./quit-preference');
 const { startPerformanceProbe } = require('./performance-probe');
 const { attachWindowEventLog, attachAppEventLog } = require('./window-events');
-const { rotateIfLarge } = require('./log-rotation');
+const { tryRotate } = require('./log-rotation');
 const { clearInheritedSession } = require('./terminal-environment');
 const { WINDOW_ROLE } = require('./window-role');
 
@@ -167,6 +167,9 @@ function terminalsPhrase(
     return phrase;
 }
 
+/** 화면이 죽은 뒤 백엔드가 소켓 끊김을 알아챌 때까지 기다리는 시간(ms). */
+const CLOSE_STALE_DELAY_MS = 500;
+
 /** 포트가 열릴 때까지 기다리는 최대 횟수(100ms 간격). */
 const N_START_POLLS = 600;
 
@@ -234,10 +237,8 @@ class PaddockMainApplication extends ElectronMainApplication {
         delete options.env.THEIA_PARENT_PID;
         const logPath = path.join(directory, 'backend.log');
         // 크게 불어난 기록(예전 판은 상한이 없어 수백 MB가 된 적이 있다)은 열기 전에 옛 기록으로 넘긴다. 넘기지 못해도 백엔드는 띄운다.
-        try {
-            if (rotateIfLarge(logPath)) BackendSession.note(directory, 'backend.log was large; the previous one is now backend.log.1');
-        } catch (error) {
-            console.warn('Could not rotate backend.log:', error);
+        if (tryRotate(logPath, error => console.warn('Could not rotate backend.log:', error))) {
+            BackendSession.note(directory, 'backend.log was large; the previous one is now backend.log.1');
         }
         const logFd = fs.openSync(logPath, 'a');
         const child = childProcess.spawn(process.execPath, [this.globals.THEIA_BACKEND_MAIN_PATH, ...args], {
@@ -292,6 +293,17 @@ class PaddockMainApplication extends ElectronMainApplication {
         if (isAllowed) await BackendSession.stop(state, 'outdated', directory);
         else BackendSession.note(directory, 'declined update; previous backend kept');
         return isAllowed;
+    }
+
+    /**
+     * 죽은 화면의 옛 연결을 백엔드에서 닫는다. 소켓이 끊긴 것을 백엔드가 알아챌 시간을 잠깐 준 뒤 부른다.
+     * 백엔드에 붙어 있지 않으면 아무것도 하지 않는다.
+     */
+    async closeStaleFrontends() {
+        if (this.backend) {
+            await new Promise(resolve => setTimeout(resolve, CLOSE_STALE_DELAY_MS));
+            await BackendSession.callBackend(this.backend.port, this.backend.token, 'POST', '/paddock/session/close-disconnected-frontends');
+        }
     }
 
     /**
@@ -362,6 +374,7 @@ class PaddockMainApplication extends ElectronMainApplication {
             window,
             noteEvent,
             () => [...this.windows.values()].find(theiaWindow => theiaWindow.window === window)?.applicationState ?? '',
+            () => this.closeStaleFrontends(),
         ));
         if (process.platform === 'win32') app.on('browser-window-created', (event, window) => keepMaximizedContentFitted(window));
         // 창이 모두 닫혀 종료가 확정된 시점(will-quit)에 백엔드를 어떻게 할지 정한다. 저장하지 않은 편집기 때문에 창 닫기가
