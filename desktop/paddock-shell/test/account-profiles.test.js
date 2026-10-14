@@ -106,7 +106,7 @@ test('A04 links existing skill sources for both providers and never reads creden
             const prepared = await setup.accounts.prepare(profile.id);
             assert.equal(fs.realpathSync(path.join(prepared.configDir, 'skills', 'shared-writing')), fs.realpathSync(sourceSkill));
             assert.deepEqual(fs.readdirSync(path.join(prepared.configDir, 'skills')), ['shared-writing']);
-            // Claude's settings.json is linked to the host file (never copied or read); Codex has no linked settings file yet.
+            // Claude's settings.json is linked to the host file (never copied or read); Codex links config.toml only when the host has one (this fixture has none).
             assert.equal(fs.existsSync(path.join(prepared.configDir, 'settings.json')), provider === 'claude');
             if (provider === 'claude') assert.equal(fs.lstatSync(path.join(prepared.configDir, 'settings.json')).isSymbolicLink(), true);
         }
@@ -344,6 +344,15 @@ test('A28 WSL preparation script links settings.json like the native preparation
     fs.writeFileSync(path.join(configDir, 'settings.json'), '{"other":1}\n');
     const [warning] = prepare();
     assert.match(warning, /settings\.json\.paddock-backup-\d{8}-\d{6}/);
+    // Codex follows its config.toml the same way.
+    fs.mkdirSync(path.join(home, '.codex'));
+    fs.writeFileSync(path.join(home, '.codex', 'config.toml'), 'model = "x"\n');
+    const codexId = '00000000-0000-4000-8000-000000000004';
+    const codexConfig = path.join(home, '.paddock', 'agent-profiles', codexId, 'codex');
+    const result = spawnSync('sh', ['-c', WslScripts.PREPARE, 'paddock-accounts', codexId, 'codex', 'browser', 'echo', 'doctor', 'echo', ''], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home } });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(fs.readlinkSync(path.join(codexConfig, 'config.toml')), path.join(home, '.codex', 'config.toml'));
+    assert.equal(fs.existsSync(path.join(codexConfig, 'settings.json')), false);
 });
 
 test('A24 Claude accounts report where Paddock settings are passed with --settings, native and WSL, and Codex does not', async context => {
@@ -457,8 +466,31 @@ test('A27 settings.json on Windows without link permission: the account gets a r
     assert.equal(fs.readFileSync(`${accountFile}.paddock-backup`, 'utf8'), '{"own":true}\n', 'only the first differing file is backed up');
     assert.equal(fs.readFileSync(accountFile, 'utf8'), '{"v":1}\n');
     assert.deepEqual(fs.readdirSync(first.configDir).filter(name => name.startsWith('.settings.json')), [], 'no temporary link or copy is left behind');
+    // Codex takes the same path for config.toml: with link permission refused it gets a refreshed copy and the first differing file is backed up.
     const codex = await setup.accounts.prepare((await setup.accounts.create({ provider: 'codex' })).id);
-    assert.equal(fs.existsSync(path.join(codex.configDir, 'config.toml')), false);
+    assert.equal(fs.readFileSync(path.join(codex.configDir, 'config.toml'), 'utf8'), 'model = "x"\n');
+    assert.equal(fs.lstatSync(path.join(codex.configDir, 'config.toml')).isSymbolicLink(), false);
+});
+
+test('A31 Codex config.toml is linked straight to the host file like Claude\'s settings.json, with the account\'s own file backed up first', async context => {
+    const setup = fixture(context);
+    fs.mkdirSync(setup.codexDirectory, { recursive: true });
+    const dotfile = path.join(setup.homeDirectory, 'dotfiles', 'config.toml');
+    fs.mkdirSync(path.dirname(dotfile));
+    fs.writeFileSync(dotfile, 'model = "gpt-5"\n');
+    fs.symlinkSync(dotfile, path.join(setup.codexDirectory, 'config.toml'));
+    const profile = await setup.accounts.create({ provider: 'codex' });
+    const first = await setup.accounts.prepare(profile.id);
+    const accountFile = path.join(first.configDir, 'config.toml');
+    assert.equal(fs.readlinkSync(accountFile), dotfile);
+    assert.deepEqual(first.warnings, []);
+    fs.rmSync(accountFile);
+    fs.writeFileSync(accountFile, '[projects."/w"]\ntrust_level = "trusted"\n');
+    const second = await setup.accounts.prepare(profile.id);
+    assert.deepEqual(second.warnings, ['The config.toml of this account was moved to config.toml.paddock-backup; the account now follows the shared config.toml.']);
+    assert.equal(fs.readFileSync(`${accountFile}.paddock-backup`, 'utf8'), '[projects."/w"]\ntrust_level = "trusted"\n');
+    assert.equal(fs.readFileSync(accountFile, 'utf8'), 'model = "gpt-5"\n');
+    assert.equal(fs.existsSync(path.join(first.configDir, 'settings.json')), false);
 });
 
 test('A29 MCP servers of the default sign-in file reach a new Claude account, follow later additions and removals, and keep the account\'s own servers', async context => {

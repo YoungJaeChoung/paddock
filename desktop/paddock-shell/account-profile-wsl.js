@@ -202,8 +202,10 @@ for shared_name in $shared_files; do link_shared file "$shared_name"; done
 # The link goes straight to the host file's final location: the CLI saves through a link by resolving one level and renaming over it,
 # so a link that leads through the host's own link would replace that link with a plain file.
 # An account's own regular file is moved aside first (to .paddock-backup, with a timestamp appended when that name is taken) unless its content already equals the host's.
-settings_names=""
-if [ "$provider" = claude ]; then settings_names="settings.json"; fi
+case "$provider" in
+    claude) settings_names="settings.json" ;;
+    codex) settings_names="config.toml" ;;
+esac
 for settings_name in $settings_names; do
     settings_source="$shared_root/$settings_name"
     settings_target="$config_dir/$settings_name"

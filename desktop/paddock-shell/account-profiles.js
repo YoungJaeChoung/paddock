@@ -23,7 +23,7 @@ class AccountProfile {
     static SHARED_FOLDERS = Object.freeze({ claude: ['commands', 'agents', 'hooks', 'rules'], codex: ['prompts', 'rules'] });
     // Instruction and keybinding files the CLI loads by name from its config folder (Claude Code resolves the user CLAUDE.md and keybindings.json against CLAUDE_CONFIG_DIR, so an account without a link loses them).
     // Settings files the CLI itself rewrites. They are linked like SHARED_FILES, but an account's own copy (made by the CLI before it was linked) is moved aside as a backup first instead of being kept.
-    static SETTINGS_FILES = Object.freeze({ claude: ['settings.json'], codex: [] });
+    static SETTINGS_FILES = Object.freeze({ claude: ['settings.json'], codex: ['config.toml'] });
     static BACKUP_SUFFIX = '.paddock-backup';
     static SHARED_FILES = Object.freeze({ claude: ['CLAUDE.md', 'keybindings.json'], codex: ['AGENTS.md', 'hooks.json'] });
 }
