@@ -46,13 +46,20 @@ function claudeWrapperScript(
         script = [
             '#!/bin/sh',
             '# Paddock가 만든 claude 실행 래퍼. Paddock 전용 설정(상태 줄·메모리 안내)을 --settings로 덧붙이고 진짜 claude를 실행한다.',
-            'own=$(cd "$(dirname "$0")" && pwd)',
-            // 래퍼 폴더만 PATH에서 빼 진짜 claude를 찾게 한다. 빈 PATH 조각은 현재 폴더를 뜻하므로 함께 버린다.
-            'PATH=$(printf %s "$PATH" | tr \':\' \'\\n\' | grep -vxF -e "$own" -e \'\' | paste -sd: -)',
-            'export PATH',
+            // PATH를 앞에서부터 훑어 자기 자신이 아닌 첫 claude를 찾는다. 같은 파일인지는 경로 표기(끝 슬래시·..)가 아니라 파일 동일성(-ef)으로 가려,
+            // 래퍼 폴더가 다른 표기로 PATH에 남아 있어도 자기 자신을 다시 실행하는 무한 반복이 생기지 않는다. 빈 PATH 조각은 건너뛴다.
+            'real=',
+            'old_ifs=$IFS',
+            "IFS=:",
+            'for dir in $PATH; do',
+            '    [ -n "$dir" ] || continue',
+            '    if [ -f "$dir/claude" ] && [ -x "$dir/claude" ] && ! [ "$dir/claude" -ef "$0" ]; then real="$dir/claude"; break; fi',
+            'done',
+            'IFS=$old_ifs',
+            'if [ -z "$real" ]; then printf \'%s\\n\' "claude was not found in PATH (Paddock\'s launcher found only itself). Install Claude Code, then try again." >&2; exit 127; fi',
             `flag=${shellWord(flagFile)}`,
-            'if [ -f "$flag" ]; then exec claude --settings "$flag" "$@"; fi',
-            'exec claude "$@"',
+            'if [ -f "$flag" ]; then exec "$real" --settings "$flag" "$@"; fi',
+            'exec "$real" "$@"',
             '',
         ].join('\n');
     } else {
@@ -63,11 +70,18 @@ function claudeWrapperScript(
             'setlocal',
             `set "PATH=%PATH:${own};=%"`,
             `set "PATH=%PATH:;${own}=%"`,
+            // 위에서 못 뺀 다른 표기의 자기 폴더가 PATH에 남아도 자기 자신을 다시 실행하지 않도록, 찾은 claude가 이 파일이면 멈춘다.
+            'set "real="',
+            'for /f "delims=" %%i in (\'where claude 2^>nul\') do if not defined real if /i not "%%~fi"=="%~f0" set "real=%%i"',
+            'if not defined real (',
+            '    echo claude was not found in PATH ^(Paddock launcher found only itself^). Install Claude Code, then try again. 1>&2',
+            '    exit /b 9009',
+            ')',
             `if not exist "${flagFile}" goto plain`,
-            `claude --settings "${flagFile}" %*`,
+            '"%real%" --settings "' + flagFile + '" %*',
             'exit /b %ERRORLEVEL%',
             ':plain',
-            'claude %*',
+            '"%real%" %*',
             'exit /b %ERRORLEVEL%',
             '',
         ].join('\r\n');

@@ -106,14 +106,18 @@ function linkSharedEntry(
             if (error.code !== 'ENOENT') throw error;
         }
         let sameSource = false;
+        // A link whose target is gone is one Paddock made before the host entry moved (a dotfiles repository relocated); it is repointed, not kept.
+        let isDangling = false;
         if (existing?.isSymbolicLink()) {
             try {
                 sameSource = fs.realpathSync(target) === fs.realpathSync(source);
             } catch (error) {
                 if (error.code !== 'ENOENT') throw error;
+                isDangling = true;
             }
         }
-        if (!existing) {
+        if (isDangling) fs.unlinkSync(target);
+        if (!existing || isDangling) {
             try {
                 fs.symlinkSync(source, target, kind === 'file' ? 'file' : process.platform === 'win32' ? 'junction' : 'dir');
             } catch (error) {
@@ -198,20 +202,23 @@ function shareSettingsFile(
         }
         let isDirect = false;
         let isSameFile = false;
+        // A link whose target no longer exists is one Paddock made before the host file moved (for example a relocated dotfiles repository), so it is repointed.
+        let isDangling = false;
         if (existing?.isSymbolicLink()) {
             isDirect = path.resolve(path.dirname(target), fs.readlinkSync(target)) === resolved;
             try {
                 isSameFile = fs.realpathSync(target) === resolved;
             } catch (error) {
                 if (error.code !== 'ENOENT') throw error;
+                isDangling = true;
             }
         }
-        if (existing?.isSymbolicLink() && !isSameFile) {
+        if (existing?.isSymbolicLink() && !isSameFile && !isDangling) {
             warning = `An existing ${name} link was kept.`;
         } else if (existing && !existing.isSymbolicLink() && !existing.isFile()) {
             warning = `An existing ${name} entry was kept.`;
         } else if (!isDirect) {
-            const sameContent = isSameFile || (Boolean(existing) && fs.readFileSync(resolved).equals(fs.readFileSync(target)));
+            const sameContent = isSameFile || isDangling || (Boolean(existing) && fs.readFileSync(resolved).equals(fs.readFileSync(target)));
             // The link is built beside the account file and renamed over it, so a refused link leaves the account file untouched.
             const pendingLink = path.join(path.dirname(target), `.${name}.${randomUUID()}.link`);
             let canLink = true;

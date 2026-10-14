@@ -190,6 +190,8 @@ const SCENARIOS = {
     'unicode and indent': { default: { mcpServers: { '한글': SERVER_A } }, profile: '{\n\t"memo": "한글",\n\t"mcpServers": {}\n}\n', synced: {} },
     'broken profile': { default: { mcpServers: { a: SERVER_A } }, profile: '{ broken', synced: {} },
     'broken default': { default: '{ broken', profile: { mcpServers: {} }, synced: {} },
+    'shadowed name restored': { default: { mcpServers: {} }, profile: { mcpServers: { a: SERVER_A } }, synced: { a: SERVER_A }, shadowed: { a: { type: 'http', url: 'mine' } } },
+    'shadow recorded': { default: { mcpServers: { a: SERVER_A } }, profile: { mcpServers: { a: { type: 'http', url: 'mine' } } }, synced: {} },
     'bad shape': { default: { mcpServers: { a: SERVER_A } }, profile: { mcpServers: [] }, synced: {} },
 };
 
@@ -200,7 +202,7 @@ for (const [name, scenario] of Object.entries(SCENARIOS)) {
             const { files, write } = workspace(context);
             if (scenario.default !== null) write('defaultFile', scenario.default);
             if (scenario.profile !== null) write('profileFile', scenario.profile);
-            if (Object.keys(scenario.synced).length) write('syncFile', { version: 1, claude: { mcpServers: scenario.synced } });
+            if (Object.keys(scenario.synced).length) write('syncFile', { version: 1, claude: { mcpServers: scenario.synced, ...(scenario.shadowed ? { shadowed: scenario.shadowed } : {}) } });
             const pencilCommand = scenario.pencil === undefined ? PENCIL : scenario.pencil;
             let warning = '';
             if (runner === 'js') {
@@ -216,3 +218,47 @@ for (const [name, scenario] of Object.entries(SCENARIOS)) {
         assert.deepEqual(outcomes[1], outcomes[0]);
     });
 }
+
+test('CC15 a name the profile had first returns to the profile\'s own value when the default drops it, and is deleted only when Paddock created it', context => {
+    const { files, write, read } = workspace(context);
+    const mine = { type: 'http', url: 'https://mine.example.com' };
+    write('profileFile', { mcpServers: { a: mine } });
+    write('defaultFile', { mcpServers: { a: SERVER_A, b: SERVER_B } });
+    syncClaudeConfig({ ...files, pencilCommand: null });
+    assert.deepEqual(read('profileFile').mcpServers, { a: SERVER_A, b: SERVER_B });
+    assert.deepEqual(read('syncFile').claude.shadowed, { a: mine });
+    syncClaudeConfig({ ...files, pencilCommand: null });
+    assert.deepEqual(read('syncFile').claude.shadowed, { a: mine }, 'the original value is remembered across runs');
+    write('defaultFile', { mcpServers: {} });
+    syncClaudeConfig({ ...files, pencilCommand: null });
+    assert.deepEqual(read('profileFile').mcpServers, { a: mine }, 'a returns to the profile value; b, which Paddock created, is gone');
+    assert.deepEqual(read('syncFile').claude, { mcpServers: {} });
+});
+
+test('CC16 a change made to the profile file by a running session while Paddock merges is not overwritten', context => {
+    const { files, write, read } = workspace(context);
+    write('defaultFile', { mcpServers: { a: SERVER_A } });
+    write('profileFile', { theme: 'dark' });
+    const readFile = fs.readFileSync;
+    let n_reads = 0;
+    context.mock.method(fs, 'readFileSync', (file, ...rest) => {
+        const text = readFile(file, ...rest);
+        // The session rewrites the file right after the first read (a refreshed sign-in).
+        if (file === files.profileFile && (n_reads += 1) === 1) fs.writeFileSync(files.profileFile, JSON.stringify({ theme: 'dark', oauthAccount: { accountUuid: 'refreshed' } }));
+        return text;
+    });
+    assert.equal(syncClaudeConfig({ ...files, pencilCommand: null }).status, 'updated');
+    assert.deepEqual(read('profileFile'), { theme: 'dark', oauthAccount: { accountUuid: 'refreshed' }, mcpServers: { a: SERVER_A } });
+});
+
+test('CC17 a linked profile file is skipped with a warning and left as the link', { skip: process.platform === 'win32' }, context => {
+    const { directory, files, write } = workspace(context);
+    write('defaultFile', { mcpServers: { a: SERVER_A } });
+    const real = path.join(directory, 'elsewhere.json');
+    fs.writeFileSync(real, '{"theme":"dark"}');
+    fs.symlinkSync(real, files.profileFile);
+    const result = syncClaudeConfig({ ...files, pencilCommand: PENCIL });
+    assert.deepEqual(result, { status: 'skipped', warnings: ['The account sign-in file (.claude.json) is a link, so MCP servers were not synced.'] });
+    assert.equal(fs.lstatSync(files.profileFile).isSymbolicLink(), true);
+    assert.equal(fs.readFileSync(real, 'utf8'), '{"theme":"dark"}');
+});

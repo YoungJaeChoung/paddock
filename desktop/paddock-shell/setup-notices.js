@@ -57,6 +57,7 @@ class PaddockSetupNotices {
     }
 
     onDidInitializeLayout() {
+        void this.announceStartupWarnings();
         void this.announceLegacyCleanup();
         void this.setUpWslLauncher();
     }
@@ -66,6 +67,17 @@ class PaddockSetupNotices {
         query = '',
     ) {
         return `${new Endpoint({ path }).getRestUrl().toString()}${query}`;
+    }
+
+    /** 백엔드가 시작할 때 단계별로 실패한 일(설정 파일 쓰기·래퍼 설치·예전 항목 정리)을 경고로 보인다. 터미널은 그대로 열린다. */
+    async announceStartupWarnings() {
+        try {
+            const response = await fetch(this.endpoint('/paddock/startup-warnings'));
+            const { warnings } = response.ok ? await response.json() : { warnings: [] };
+            if (Array.isArray(warnings)) for (const warning of warnings) void this.container.get(MessageService).warn(warning);
+        } catch {
+            // 경고를 못 가져와도 앱 사용에는 영향이 없다.
+        }
     }
 
     async announceLegacyCleanup() {

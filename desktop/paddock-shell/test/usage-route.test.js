@@ -300,3 +300,25 @@ test('UR11 the WSL launcher route reports unsupported without WSL and rejects a 
     await contribution.pendingDefaultWrites;
     assert.deepEqual(unsupported.reply.value, { state: 'unsupported', file: '', isLinked: false });
 });
+
+test('UR12 a failing settings-file write at start is reported as a warning and does not skip the launcher install or the old-entry cleanup', { skip: process.platform === 'win32' }, async context => {
+    const { root, contribution } = fixture(context, home => {
+        fs.mkdirSync(path.join(home, '.claude'));
+        fs.writeFileSync(path.join(home, '.claude', 'settings.json'), JSON.stringify({ statusLine: OLD_STATUS_LINE, theme: 'dark' }));
+    });
+    await contribution.pendingDefaultWrites;
+    // Start again from a clean slate with the settings-file write failing.
+    fs.rmSync(path.join(root, 'bin'), { recursive: true });
+    fs.rmSync(path.join(root, 'usage', 'legacy-cleanup.json'));
+    fs.writeFileSync(path.join(root, '.claude', 'settings.json'), JSON.stringify({ statusLine: OLD_STATUS_LINE, theme: 'dark' }));
+    context.mock.method(contribution.constructor.prototype, 'writeFlagFiles', async () => { throw new Error('Node.js is needed'); });
+    const routes = new Map();
+    const restarted = new (contribution.constructor)();
+    restarted.configure({ get: (url, route) => routes.set(url, route), post() {}, delete() {} });
+    await restarted.pendingDefaultWrites;
+    assert.equal(fs.existsSync(path.join(root, 'bin', 'claude')), true, 'the launcher is still installed');
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, '.claude', 'settings.json'), 'utf8')), { theme: 'dark' }, 'the old entries are still removed');
+    const { reply, response } = respond();
+    routes.get('/paddock/startup-warnings')({}, response);
+    assert.deepEqual(reply.value.warnings, ['Paddock Claude settings could not be written: Node.js is needed']);
+});

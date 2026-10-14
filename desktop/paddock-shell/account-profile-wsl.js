@@ -136,7 +136,7 @@ if [ "$provider" = claude ]; then
     # Pencil's own registration goes to the host's ~/.claude.json, so it is merged into this account's file together with the default's MCP servers
     # and folder trust (the same algorithm as the native preparation: ClaudeConfig in account-claude-config.js).
     # The file also holds sign-in state: an unparsable file is left alone and every other key is kept. A refusal is reported after the fixed output below.
-    if command -v python3 >/dev/null 2>&1 && [ ! -L "$config_dir/.claude.json" ]; then
+    if command -v python3 >/dev/null 2>&1; then
         sync_default="\${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json"
         if [ -n "$pencil_command" ] && [ ! -f "$pencil_command" ]; then pencil_command=""; fi
         sync_warning=$(python3 - "$sync_default" "$config_dir/.claude.json" "$config_dir/paddock-sync.json" "$pencil_command" <<'PY' || true
@@ -187,7 +187,10 @@ link_shared() {
     if [ "$shared_kind" = folder ] && [ -d "$shared_source" ]; then shared_found=1; fi
     if [ "$shared_kind" = file ] && [ -f "$shared_source" ]; then shared_found=1; fi
     if [ -n "$shared_found" ]; then
-        if [ -e "$shared_target" ] || [ -L "$shared_target" ]; then
+        if [ -L "$shared_target" ] && [ ! -e "$shared_target" ]; then
+            # A link whose target is gone was made by an earlier launch before the host entry moved; repoint it.
+            ln -sfn "$shared_source" "$shared_target" || printf '%s could not be shared: the link was refused.\\0' "$shared_name"
+        elif [ -e "$shared_target" ] || [ -L "$shared_target" ]; then
             if [ ! -L "$shared_target" ] || [ "$(readlink "$shared_target")" != "$shared_source" ]; then
                 printf 'An existing %s %s was kept.\\0' "$shared_name" "$shared_kind"
             fi
@@ -213,6 +216,9 @@ for settings_name in $settings_names; do
         settings_real=$(readlink -f "$settings_source" || true)
         if [ -z "$settings_real" ]; then
             printf '%s could not be shared: its location could not be resolved.\\0' "$settings_name"
+        elif [ -L "$settings_target" ] && [ ! -e "$settings_target" ]; then
+            # A link whose target is gone was made by an earlier launch before the host file moved; repoint it.
+            ln -sfn "$settings_real" "$settings_target" || printf '%s could not be shared: the link was refused.\\0' "$settings_name"
         elif [ -L "$settings_target" ]; then
             if [ "$(readlink -f "$settings_target")" != "$settings_real" ]; then
                 printf 'An existing %s link was kept.\\0' "$settings_name"

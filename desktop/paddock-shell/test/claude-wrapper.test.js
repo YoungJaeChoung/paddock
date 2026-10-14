@@ -87,8 +87,11 @@ test('C-wrapper.6: cmd 래퍼는 자기 폴더를 PATH에서 빼고 플래그 �
     assert.ok(script.includes('set "PATH=%PATH:C:\\Users\\me\\.paddock\\config\\bin;=%"'));
     assert.ok(script.includes('set "PATH=%PATH:;C:\\Users\\me\\.paddock\\config\\bin=%"'));
     assert.ok(script.includes('if not exist "C:\\Users\\me\\.paddock\\config\\claude\\flag-settings.json" goto plain'));
-    assert.ok(script.includes('claude --settings "C:\\Users\\me\\.paddock\\config\\claude\\flag-settings.json" %*'));
-    assert.ok(script.includes('\r\nclaude %*\r\n'));
+    assert.ok(script.includes('"%real%" --settings "C:\\Users\\me\\.paddock\\config\\claude\\flag-settings.json" %*'));
+    assert.ok(script.includes('\r\n"%real%" %*\r\n'));
+    // A claude that turns out to be this file is skipped, and finding nothing else stops with a message instead of looping.
+    assert.ok(script.includes('if /i not "%%~fi"=="%~f0"'));
+    assert.ok(script.includes('exit /b 9009'));
     assert.equal(ClaudeWrapper.FILES.cmd, 'claude.cmd');
 });
 
@@ -108,4 +111,20 @@ test('C-wrapper.8: Windows는 Path 키 이름을 유지하고 세미콜론으로
     assert.deepEqual(Object.keys(next), ['Path']);
     assert.equal(next.Path, 'C:\\p\\bin;C:\\a;C:\\b');
     assert.equal(withWrapperPath(undefined, 'C:\\p\\bin', { baseEnv: { Path: 'C:\\x' }, isWindows: true }).Path, 'C:\\p\\bin;C:\\x');
+});
+
+test('C-wrapper.9: PATH에 래퍼 폴더가 다른 표기(끝 슬래시·..)로 남아 있어도 자기 자신을 다시 실행하지 않고, 진짜 claude가 없으면 메시지와 함께 끝난다', { skip: process.platform === 'win32' }, context => {
+    const root = folder(context);
+    const bin = path.join(root, 'bin');
+    const real = path.join(root, 'real');
+    installClaudeWrapper({ directory: bin, kind: 'sh', flagFile: path.join(root, 'missing.json') });
+    const spellings = [`${bin}/`, `${bin}/../bin`, `${root}//bin`];
+    for (const spelling of spellings) {
+        const lonely = spawnSync(path.join(bin, 'claude'), ['--version'], { encoding: 'utf8', env: { PATH: `${spelling}:/usr/bin:/bin` }, timeout: 5000 });
+        assert.equal(lonely.status, 127, `${spelling}: ${lonely.stderr}`);
+        assert.match(lonely.stderr, /claude was not found in PATH/);
+    }
+    fakeClaude(real);
+    const found = spawnSync(path.join(bin, 'claude'), ['--version'], { encoding: 'utf8', env: { PATH: `${bin}/:${real}:/usr/bin:/bin` }, timeout: 5000 });
+    assert.equal(found.stdout.trim(), 'REAL|--version');
 });

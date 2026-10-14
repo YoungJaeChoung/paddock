@@ -277,6 +277,8 @@ class PaddockStatusRoutes {
         // 설정 폴더는 만들어질 때 한 번 정한다. 시작 때 비동기로 이어지는 작업(설정 파일 쓰기·예전 항목 걷어 내기)이 나중에 환경이 바뀐 뒤에도 같은 폴더를 다루게 하려는 것이다.
         this.configDirectory = paddockConfigDirectory();
         this.startupAccounts = new AccountProfiles();
+        // 시작 때 단계별로 실패한 일의 문장 목록. 화면이 시작 뒤 경고로 보인다.
+        this.startupWarnings = [];
         this.workPresence = new WorkPresenceRegistry();
         this.windowsProcesses = windowsProcessList;
         // 마지막 WSL 스캔이 읽은 `{ total, available, swap, terminals, at }`. 아직 읽은 적 없으면 null.
@@ -459,6 +461,9 @@ class PaddockStatusRoutes {
                     .catch(error => response.status(error.statusCode || 500).json({ error: error instanceof Error ? error.message : String(error) }));
             }
         });
+        app.get('/paddock/startup-warnings', (request, response) => {
+            response.json({ warnings: this.startupWarnings });
+        });
         // 예전 판이 사용자 설정 파일에 넣은 항목을 걷어 낸 결과 알림. 화면이 보인 뒤 한 번 알리고 확인 요청을 받으면 다시 알리지 않는다.
         app.get('/paddock/legacy-cleanup', (request, response) => {
             const record = readJson(path.join(this.configDirectory, 'usage', LegacyCleanup.MARKER_FILE), null);
@@ -637,20 +642,35 @@ class PaddockStatusRoutes {
     async startFlagSettings() {
         const configDirectory = this.configDirectory;
         const state = readJson(path.join(configDirectory, 'usage', 'state.json'), {});
-        if (state.claude === 'on') await this.installStatusLineScripts();
-        // 켜져 있던 메모리 안내는 스크립트도 이 앱 판으로 다시 놓는다. 이 경로가 설정 파일도 함께 쓴다.
-        if (state.memory?.enabled === true) await this.setMemoryNotice({ enabled: true, minimumMb: state.memory.minimumMb, source: memoryHookSource() });
-        else await this.writeFlagFiles();
-        installClaudeWrapper({
-            directory: path.join(configDirectory, ClaudeWrapper.DIRECTORY),
-            kind: process.platform === 'win32' ? 'cmd' : 'sh',
-            flagFile: flagSettingsPath(configDirectory),
-            ownDirectory: path.join(configDirectory, ClaudeWrapper.DIRECTORY),
+        // 단계마다 따로 실패를 받는다. 앞 단계(예: Windows에서 node를 못 찾아 설정 파일을 못 씀)가 실패해도 래퍼 설치·WSL 런처·예전 항목 정리는 계속하고,
+        // 실패는 화면이 경고로 보이도록 모아 둔다(GET /paddock/startup-warnings).
+        const attempt = async (label, step) => {
+            try {
+                await step();
+            } catch (error) {
+                this.startupWarnings.push(`${label}: ${error instanceof Error ? error.message : String(error)}`);
+            }
+        };
+        await attempt('Paddock Claude settings could not be written', async () => {
+            if (state.claude === 'on') await this.installStatusLineScripts();
+            // 켜져 있던 메모리 안내는 스크립트도 이 앱 판으로 다시 놓는다. 이 경로가 설정 파일도 함께 쓴다.
+            if (state.memory?.enabled === true) await this.setMemoryNotice({ enabled: true, minimumMb: state.memory.minimumMb, source: memoryHookSource() });
+            else await this.writeFlagFiles();
+        });
+        await attempt('The claude launcher could not be installed', async () => {
+            installClaudeWrapper({
+                directory: path.join(configDirectory, ClaudeWrapper.DIRECTORY),
+                kind: process.platform === 'win32' ? 'cmd' : 'sh',
+                flagFile: flagSettingsPath(configDirectory),
+                ownDirectory: path.join(configDirectory, ClaudeWrapper.DIRECTORY),
+            });
         });
         // Windows 앱이면 WSL 안에도 같은 실행 래퍼를 놓는다(WSL 일반 터미널의 PATH에 앞세우는 일은 사용자가 허락했을 때만 한다).
-        const wslInfo = await readWslInfo();
-        if (wslInfo.home && wslInfo.linuxHome) await installWslLauncher(flagSettingsPath(wslPaths(wslInfo).configDirectory, path.posix.join));
-        await this.runLegacyCleanup();
+        await attempt('The claude launcher could not be installed in WSL', async () => {
+            const wslInfo = await readWslInfo();
+            if (wslInfo.home && wslInfo.linuxHome) await installWslLauncher(flagSettingsPath(wslPaths(wslInfo).configDirectory, path.posix.join));
+        });
+        await attempt('Old Paddock entries could not be removed from the Claude settings', () => this.runLegacyCleanup());
     }
 
     /**

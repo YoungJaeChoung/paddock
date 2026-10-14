@@ -428,6 +428,7 @@ test('A26 settings.json: no host file does nothing; an account file with the hos
     assert.equal(fs.existsSync(`${accountFile}.paddock-backup`), false);
     // A link to another file is kept and reported.
     fs.rmSync(accountFile);
+    fs.writeFileSync(path.join(setup.homeDirectory, 'elsewhere.json'), '{}');
     fs.symlinkSync(path.join(setup.homeDirectory, 'elsewhere.json'), accountFile);
     assert.deepEqual((await setup.accounts.prepare(profile.id)).warnings, ['An existing settings.json link was kept.']);
     assert.equal(fs.readlinkSync(accountFile), path.join(setup.homeDirectory, 'elsewhere.json'));
@@ -544,6 +545,62 @@ test('A32 a sharing step that fails becomes a warning and the account still open
     assert.equal(fs.lstatSync(path.join(prepared.configDir, 'agents')).isSymbolicLink(), true);
     assert.equal(fs.existsSync(path.join(prepared.configDir, 'commands')), false);
     assert.deepEqual(fs.readdirSync(prepared.configDir).filter(name => name.startsWith('.settings.json')), [], 'no temporary link is left behind');
+});
+
+test('A33 a link left dangling because the host file or folder moved is repointed to the new location instead of being kept forever', { skip: process.platform === 'win32' }, async context => {
+    const setup = fixture(context);
+    const oldRepo = path.join(setup.homeDirectory, 'old-dotfiles');
+    fs.mkdirSync(path.join(oldRepo, 'commands'), { recursive: true });
+    fs.writeFileSync(path.join(oldRepo, 'settings.json'), '{"a":1}\n');
+    fs.mkdirSync(setup.claudeDirectory, { recursive: true });
+    fs.symlinkSync(path.join(oldRepo, 'settings.json'), path.join(setup.claudeDirectory, 'settings.json'));
+    fs.symlinkSync(path.join(oldRepo, 'commands'), path.join(setup.claudeDirectory, 'commands'));
+    const profile = await setup.accounts.create({ provider: 'claude' });
+    const first = await setup.accounts.prepare(profile.id);
+    assert.equal(fs.readlinkSync(path.join(first.configDir, 'settings.json')), path.join(oldRepo, 'settings.json'));
+    // The repository moves and only the default links are re-made.
+    const newRepo = path.join(setup.homeDirectory, 'new-dotfiles');
+    fs.renameSync(oldRepo, newRepo);
+    fs.rmSync(path.join(setup.claudeDirectory, 'settings.json'));
+    fs.rmSync(path.join(setup.claudeDirectory, 'commands'));
+    fs.symlinkSync(path.join(newRepo, 'settings.json'), path.join(setup.claudeDirectory, 'settings.json'));
+    fs.symlinkSync(path.join(newRepo, 'commands'), path.join(setup.claudeDirectory, 'commands'));
+    const second = await setup.accounts.prepare(profile.id);
+    assert.deepEqual(second.warnings, []);
+    assert.equal(fs.readlinkSync(path.join(first.configDir, 'settings.json')), path.join(newRepo, 'settings.json'));
+    assert.equal(fs.realpathSync(path.join(first.configDir, 'commands')), fs.realpathSync(path.join(newRepo, 'commands')));
+    // A live link to some other file is still the user's and stays.
+    fs.rmSync(path.join(first.configDir, 'settings.json'));
+    fs.writeFileSync(path.join(setup.homeDirectory, 'other.json'), '{}');
+    fs.symlinkSync(path.join(setup.homeDirectory, 'other.json'), path.join(first.configDir, 'settings.json'));
+    assert.deepEqual((await setup.accounts.prepare(profile.id)).warnings, ['An existing settings.json link was kept.']);
+});
+
+test('A34 the WSL preparation script repoints dangling settings and folder links the same way', { skip: process.platform === 'win32' }, context => {
+    const home = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'paddock-wsl-dangling-'));
+    context.after(() => fs.rmSync(home, { recursive: true, force: true }));
+    const id = '00000000-0000-4000-8000-000000000005';
+    const configDir = path.join(home, '.paddock', 'agent-profiles', id, 'claude');
+    const prepare = () => {
+        const result = spawnSync('sh', ['-c', WslScripts.PREPARE, 'paddock-accounts', id, 'claude', 'browser', 'echo', 'doctor', 'echo', ''], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home } });
+        assert.equal(result.status, 0, result.stderr);
+        return result.stdout.split('\0').filter(Boolean).slice(2);
+    };
+    fs.mkdirSync(path.join(home, 'old', 'commands'), { recursive: true });
+    fs.writeFileSync(path.join(home, 'old', 'settings.json'), '{}\n');
+    fs.mkdirSync(path.join(home, '.claude'));
+    fs.symlinkSync(path.join(home, 'old', 'settings.json'), path.join(home, '.claude', 'settings.json'));
+    fs.symlinkSync(path.join(home, 'old', 'commands'), path.join(home, '.claude', 'commands'));
+    assert.deepEqual(prepare(), []);
+    fs.renameSync(path.join(home, 'old'), path.join(home, 'new'));
+    for (const name of ['settings.json', 'commands']) {
+        fs.rmSync(path.join(home, '.claude', name));
+        fs.symlinkSync(path.join(home, 'new', name), path.join(home, '.claude', name));
+    }
+    assert.deepEqual(prepare(), []);
+    assert.equal(fs.readlinkSync(path.join(configDir, 'settings.json')), path.join(home, 'new', 'settings.json'));
+    assert.equal(fs.readlinkSync(path.join(configDir, 'commands')), path.join(home, '.claude', 'commands'));
+    assert.equal(fs.existsSync(path.join(configDir, 'commands')), true);
 });
 
 test('A21 keeps an account-owned commands folder and reports it', async context => {
