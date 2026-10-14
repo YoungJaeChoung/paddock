@@ -149,6 +149,7 @@
     "rebuild": "theia rebuild:electron --cacheRoot .",
     "start": "node scripts/start.cjs",
     "smoke:shell": "node scripts/smoke-shell.cjs",
+    "sweep:screens": "node scripts/screen-sweep.cjs",
     "test:terminal-renderer": "node --test paddock-shell/test/terminal-renderer.test.js",
     "package:mac": "node scripts/package.cjs mac",
     "package:win": "node scripts/package.cjs win",
