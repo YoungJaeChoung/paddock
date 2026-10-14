@@ -110,8 +110,32 @@ class FolderTabs {
             const index = target.isInsert && bar ? tabMoveIndex(bar.titles.map(title => title.owner.id), id, target.mode, target.ref.id) : null;
             if (index !== null) bar.insertTab(index, widget.title);
             else this.workspace.shell.addWidget(widget, { area: 'main', mode: target.mode, ref: target.ref });
+            this.adoptIntoGroupOf(widget, target.ref);
             await this.workspace.activate(id);
             await this.workspace.refresh();
+        }
+    }
+
+    /**
+     * 터미널이 아닌 탭(파일·확장 페이지)을 다른 묶음의 칸에 놓으면 그 묶음 소속으로 옮긴다.
+     *
+     * 묶음 소속은 탭이 처음 열릴 때 한 번 정해진다. 놓은 자리의 묶음으로 바꾸지 않으면, 옆 칸의 터미널을 누르는 순간
+     * 본문이 그 터미널의 묶음으로 갈아 끼워지면서 방금 놓은 탭이 화면에서 빠진다. 웹뷰 탭(Pencil 등)은 빠지는 동안
+     * 내용 창이 없어져 확장이 보낸 메시지가 다시 보일 때까지 쌓인다.
+     * 소속은 놓은 칸의 기준 위젯을 따른다: 터미널이면 그 터미널, 파일·페이지면 그 위젯이 속한 터미널이다.
+     */
+    adoptIntoGroupOf(
+        widget,
+        reference,
+    ) {
+        const switcher = this.workspace.rootSwitcher;
+        const destination = switcher.rootOf(reference);
+        const anchor = this.workspace.isTerminal(reference) ? reference.id : this.workspace.fileRoots.get(reference.id);
+        if (!this.workspace.isTerminal(widget) && destination && anchor && switcher.rootOf(widget) !== destination) {
+            this.workspace.fileRoots.set(widget.id, anchor);
+            if (destination.startsWith('folder:')) this.workspace.pageFolders.set(widget.id, destination.slice('folder:'.length));
+            else this.workspace.pageFolders.delete(widget.id);
+            void this.workspace.saveInnerTabs();
         }
     }
 
