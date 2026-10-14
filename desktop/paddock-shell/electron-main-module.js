@@ -14,6 +14,7 @@ const { isViewportStale, fillsWorkArea, boundsWithin } = require('./window-fit')
 const BackendSession = require('./backend-session');
 const QuitPreference = require('./quit-preference');
 const { startPerformanceProbe } = require('./performance-probe');
+const { attachWindowEventLog, attachAppEventLog } = require('./window-events');
 const { clearInheritedSession } = require('./terminal-environment');
 const { WINDOW_ROLE } = require('./window-role');
 
@@ -346,6 +347,14 @@ class PaddockMainApplication extends ElectronMainApplication {
         config,
     ) {
         usePaddockDirectories();
+        // 화면·창·하위 프로세스 사건을 backend.log에 남기고, 화면이 죽으면 창을 다시 불러온다(window-events.js).
+        const noteEvent = (text) => BackendSession.note(process.env.THEIA_CONFIG_DIR, text);
+        attachAppEventLog(noteEvent);
+        app.on('browser-window-created', (event, window) => attachWindowEventLog(
+            window,
+            noteEvent,
+            () => [...this.windows.values()].find(theiaWindow => theiaWindow.window === window)?.applicationState ?? '',
+        ));
         if (process.platform === 'win32') app.on('browser-window-created', (event, window) => keepMaximizedContentFitted(window));
         // 창이 모두 닫혀 종료가 확정된 시점(will-quit)에 백엔드를 어떻게 할지 정한다. 저장하지 않은 편집기 때문에 창 닫기가
         // 거부되면 이 이벤트가 오지 않으므로 백엔드는 그대로다. 결정이 끝나기 전의 종료 요청은 계속 막는다.

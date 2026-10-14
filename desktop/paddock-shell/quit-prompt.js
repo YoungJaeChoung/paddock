@@ -6,6 +6,7 @@ const { EnvVariablesServer } = require('@theia/core/lib/common/env-variables');
 const { FileService } = require('@theia/filesystem/lib/browser/file-service');
 const { URI } = require('@theia/core/lib/common/uri');
 const { StopReason } = require('@theia/core/lib/common/frontend-application-state');
+const { ILogger } = require('@theia/core/lib/common/logger');
 const { QUIT_CHOICE_FILE, QUIT_CHOICE, formatQuitChoice } = require('./backend-session');
 const { PaddockWorkspace } = require('./workspace');
 
@@ -95,8 +96,11 @@ class PaddockQuitPrompt {
         const isLastWindow = !workspace.remoteWorkSnapshots.some(snapshot => !snapshot.retired);
         const isAsked = reason !== StopReason.Reload && isLastWindow && preferences.get(ON_QUIT_KEY, 'ask') === 'ask';
         const n_terminals = isAsked ? await this.countTerminals() : 0;
+        // 누가 왜 닫았는지 backend.log에서 이어 읽을 수 있게 닫기 사유와 응답을 남긴다(메인의 종료 사유 줄이 뒤따른다).
+        let answered = isAsked ? 'not-needed' : 'not-asked';
         if (n_terminals > 0) {
             const answer = await new QuitDialog(n_terminals).open();
+            answered = answer ? answer.choice : 'cancel';
             if (answer) {
                 if (answer.remember) await preferences.set(ON_QUIT_KEY, answer.choice, PreferenceScope.User);
                 const directory = new URI(await this.container.get(EnvVariablesServer).getConfigDirUri());
@@ -105,6 +109,7 @@ class PaddockQuitPrompt {
                 isAllowed = false;
             }
         }
+        this.container.get(ILogger).info(`quit prompt: reason=${StopReason[reason]} lastWindow=${isLastWindow} terminals=${n_terminals} answer=${answered}`);
         return isAllowed;
     }
 
