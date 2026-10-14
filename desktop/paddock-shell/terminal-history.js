@@ -249,11 +249,13 @@ class TerminalHistory {
             foreground: entry.info?.foreground || null,
             output: entry.tail.text(),
         };
-        fs.mkdirSync(this.directory, { recursive: true });
+        // 화면 출력에는 비밀이 찍혔을 수 있다. 폴더는 0700, 파일은 0600으로 둔다(Windows에서는 무시된다).
+        fs.mkdirSync(this.directory, { recursive: true, mode: 0o700 });
+        fs.chmodSync(this.directory, 0o700);
         const file = this.fileOf(entry.process.id);
         // 쓰는 도중 앱이 끝나도 반쪽 파일이 남지 않게 임시 파일에 쓴 뒤 옮긴다.
         const temporary = `${file}.${process.pid}.tmp`;
-        fs.writeFileSync(temporary, JSON.stringify(record));
+        fs.writeFileSync(temporary, JSON.stringify(record), { mode: 0o600 });
         fs.renameSync(temporary, file);
     }
 

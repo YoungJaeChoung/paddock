@@ -362,7 +362,7 @@ class PaddockStatusRoutes {
                         terminals[id] = { cwd, program, account: publicAccount(linked ? { ...found, profile: linked } : found) };
                     }
                     // 터미널 화면 저장 장치가 저장할 때 WSL 터미널의 폴더·Claude 대화를 이 스캔 결과에서 읽는다.
-                    terminalHistoryService().inspector.noteWsl(Object.fromEntries(parsed.map(([id, { cwd, argv, sessionId }]) => [id, { cwd, program: argv.length ? agent.programName(argv) : null, sessionId }])));
+                    terminalHistoryService().inspector.noteWsl(Object.fromEntries(parsed.map(([id, { cwd, argv, env, sessionRecord, pid }]) => [id, { cwd, program: argv.length ? agent.programName(argv) : null, pid, sessionRecord, configDir: env.CLAUDE_CONFIG_DIR }])));
                     response.json(terminals);
                 });
             }

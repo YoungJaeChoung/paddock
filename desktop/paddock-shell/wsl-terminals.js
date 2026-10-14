@@ -41,8 +41,8 @@ function isWslShell(
 }
 
 /**
- * 표지가 붙은 셸마다 `id \t Windows 경로로 바꾼 현재 폴더 \t 앞쪽 프로그램 명령줄(인자 사이 \x1f) \t 앞쪽 프로그램의 계정 환경 \t WSL 배포판 이름 \t Claude 대화 식별자`를
- * 한 줄씩 출력하는 sh 스크립트. 대화 식별자는 앞쪽 프로세스의 pid로 된 Claude sessions 기록에서 읽으며 없으면 빈 칸이다(그 프로세스가 Claude인지는 명령줄로 가린다). 계정 환경은 CODEX_HOME·CLAUDE_CONFIG_DIR·HOME의 `이름=값`만 \x1f로 이은 것이다(다른 변수는 읽지 않는다).
+ * 표지가 붙은 셸마다 `id \t Windows 경로로 바꾼 현재 폴더 \t 앞쪽 프로그램 명령줄(인자 사이 \x1f) \t 앞쪽 프로그램의 계정 환경 \t WSL 배포판 이름 \t Claude sessions 기록 본문 \t 앞쪽 프로세스 pid`를
+ * 한 줄씩 출력하는 sh 스크립트. 기록 본문은 앞쪽 프로세스의 pid로 된 Claude sessions 기록이며 없으면 빈 칸이다(그 프로세스가 Claude인지는 명령줄로 가린다). 계정 환경은 CODEX_HOME·CLAUDE_CONFIG_DIR·HOME의 `이름=값`만 \x1f로 이은 것이다(다른 변수는 읽지 않는다).
  * 배포판 이름은 셸 환경의 WSL_DISTRO_NAME이다. 홈 경로가 같은 두 배포판에서 한쪽에만 등록된 계정을 다른 쪽 터미널에 붙이지 않으려고 읽는다.
  * 셸에서 실행한 프로그램도 표지를 물려받으므로, 부모에게 같은 표지가 없고 터미널이 붙은 프로세스를 셸로 본다.
  * 다른 사용자의 프로세스처럼 읽을 수 없는 항목은 조용히 건너뛴다.
@@ -73,16 +73,17 @@ function script() {
         // Claude가 이 앞쪽 프로세스에 대해 남긴 sessions 기록의 대화 식별자. 계정 폴더는 위에서 읽은 환경(env)에서 얻는다.
         `  cfg=$(printf %s "$env" | tr '\\037' '\\n' | sed -n 's/^CLAUDE_CONFIG_DIR=//p')`,
         `  hm=$(printf %s "$env" | tr '\\037' '\\n' | sed -n 's/^HOME=//p')`,
-        `  sess=$(sed -n 's/.*"sessionId" *: *"\\([0-9a-f-]*\\)".*/\\1/p' "\${cfg:-$hm/.claude}/sessions/$fg.json" 2>/dev/null | head -n 1)`,
-        `  printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' "$id" "$cwd" "$argv" "$env" "$distro" "$sess"`,
+        // 기록 본문(탭·줄바꿈을 지운 한 줄)을 그대로 내보낸다. 대화형·pid 일치 판정은 읽는 쪽(agent-resume.js의 claudeSessionOf)이 Linux 셸과 같은 규칙으로 한다.
+        `  sess=$(head -c 4096 "\${cfg:-$hm/.claude}/sessions/$fg.json" 2>/dev/null | tr -d '\\t\\r\\n')`,
+        `  printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' "$id" "$cwd" "$argv" "$env" "$distro" "$sess" "$fg"`,
         'done',
     ].join('\n');
 }
 
 /**
- * 스크립트 출력을 `{ [터미널 id]: { cwd, argv, env, distribution, sessionId } }`로 바꾼다. 현재 폴더는 Windows 경로(\\wsl.localhost\… 또는 C:\…)이고,
- * env는 앞쪽 프로그램의 계정 환경(CODEX_HOME·CLAUDE_CONFIG_DIR·HOME 중 읽힌 것), distribution은 셸의 WSL 배포판 이름, sessionId는 앞쪽 프로세스의 Claude 대화 식별자다.
- * 읽지 못한 값은 빈 문자열·빈 배열·빈 객체다. 넷째~여섯째 칸이 없는 이전 형식의 줄도 받는다. 형식이 맞지 않는 줄은 버린다.
+ * 스크립트 출력을 `{ [터미널 id]: { cwd, argv, env, distribution, sessionRecord, pid } }`로 바꾼다. 현재 폴더는 Windows 경로(\\wsl.localhost\… 또는 C:\…)이고,
+ * env는 앞쪽 프로그램의 계정 환경(CODEX_HOME·CLAUDE_CONFIG_DIR·HOME 중 읽힌 것), distribution은 셸의 WSL 배포판 이름, sessionRecord는 앞쪽 프로세스(pid)의 Claude sessions 기록 본문이다.
+ * 읽지 못한 값은 빈 문자열·빈 배열·빈 객체다. 넷째~일곱째 칸이 없는 이전 형식의 줄도 받는다. 형식이 맞지 않는 줄은 버린다.
  *
  * Examples
  * --------
@@ -96,10 +97,10 @@ function parse(
 ) {
     const terminals = {};
     for (const line of String(output || '').split('\n')) {
-        const [id, cwd, argv, env = '', distribution = '', sessionId = ''] = line.replace(/\r$/, '').split('\t');
+        const [id, cwd, argv, env = '', distribution = '', sessionRecord = '', pid = ''] = line.replace(/\r$/, '').split('\t');
         // `#`로 시작하는 줄은 메모리 줄이다(parseMemory가 읽는다). 터미널 id는 `#`로 시작하지 않는다.
         if (id && !id.startsWith('#') && cwd !== undefined && argv !== undefined) {
-            terminals[id] = { cwd, argv: argv.split('\x1f').filter(Boolean), env: parseEnviron(env, '\x1f'), distribution, sessionId };
+            terminals[id] = { cwd, argv: argv.split('\x1f').filter(Boolean), env: parseEnviron(env, '\x1f'), distribution, sessionRecord, pid };
         }
     }
     return terminals;

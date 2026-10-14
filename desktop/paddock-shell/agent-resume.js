@@ -12,6 +12,8 @@ class AgentResume {
     static N_FIRST_LINE_BYTES = 65536;
     /** 프로세스 시작 시각을 초 단위로만 알 수 있어 두는 여유(ms). 대화 파일이 이 시각보다 이만큼 일러도 같은 프로세스의 것으로 본다. */
     static START_MARGIN_MS = 3000;
+    /** Claude가 프로세스를 시작한 뒤 sessions 기록을 남기기까지 걸릴 수 있는 최대 시간(ms). */
+    static RECORD_LAG_MS = 120000;
 }
 
 /**
@@ -26,12 +28,16 @@ class AgentResume {
  * | 같은 기록                                                    | 43  | null           |
  * | `"kind":"sdk"`                                               | 42  | null           |
  * | 파일 없음 · 깨진 JSON                                        | 42  | null           |
+ * | 기록의 `startedAt`이 프로세스 시작(`processStartedAt`)보다 오래전 | 42  | null           |
+ *
+ * `processStartedAt`(ms)을 모르면 시작 시각 비교는 건너뛴다. WSL 스캔도 같은 판정을 쓰도록 기록 본문만 넘길 수 있다(`readFile`이 본문을 돌려준다).
  */
 function claudeSessionOf(
     {
         configDirectory,
         pid,
         readFile,
+        processStartedAt = null,
     },
 ) {
     let result = null;
@@ -39,7 +45,10 @@ function claudeSessionOf(
         const text = readFile(nodePath.join(configDirectory, 'sessions', `${pid}.json`));
         if (typeof text === 'string' && text.length <= AgentResume.N_MAX_RECORD_BYTES) {
             const record = JSON.parse(text);
-            if (record && record.pid === pid && record.kind === 'interactive' && AgentResume.UUID.test(String(record.sessionId || ''))) {
+            // pid가 재사용되면 옛 프로세스의 기록이 남아 있을 수 있다. 기록의 시작 시각이 이 프로세스의 시작과 맞지 않으면 다른 프로세스의 기록이다.
+            const isSameProcess = !Number.isFinite(processStartedAt) || !Number.isFinite(record.startedAt)
+                || (record.startedAt >= processStartedAt - AgentResume.START_MARGIN_MS && record.startedAt <= processStartedAt + AgentResume.RECORD_LAG_MS);
+            if (record && record.pid === pid && record.kind === 'interactive' && isSameProcess && AgentResume.UUID.test(String(record.sessionId || ''))) {
                 result = { sessionId: record.sessionId, cwd: typeof record.cwd === 'string' ? record.cwd : '' };
             }
         }
@@ -165,7 +174,7 @@ function elapsedSeconds(
  * 에이전트가 아니거나 대화를 확신할 수 없으면 null이므로, 호출한 쪽은 이어 열지 않고 새 셸만 연다.
  *
  * `foreground`는 `{ program, pid, env, cwd, startedAt }`(앞쪽 프로그램 이름·pid·계정 환경·셸의 현재 폴더·프로세스 시작 시각(ms), 모르면 null),
- * `deps`는 `{ homeDirectory, readFile, fileSystem }`이다. 시작 시각은 Codex 대화를 고를 때만 쓰며 모르면 Codex는 null이다.
+ * `deps`는 `{ homeDirectory, readFile, fileSystem }`이다. 시작 시각은 Codex 대화를 고를 때 꼭 필요하고(모르면 Codex는 null), Claude 기록이 이 프로세스의 것인지 확인할 때는 알 때만 쓴다.
  */
 function resumableAgent(
     foreground,
@@ -178,8 +187,10 @@ function resumableAgent(
             configDirectory: env.CLAUDE_CONFIG_DIR || nodePath.join(env.HOME || deps.homeDirectory, '.claude'),
             pid: foreground.pid,
             readFile: deps.readFile,
+            processStartedAt: foreground.startedAt,
         });
-        if (found) result = { provider: 'claude', sessionId: found.sessionId, cwd: found.cwd || foreground.cwd || '' };
+        // 계정 폴더를 환경 변수로 지정해 실행한 경우만 남긴다 — 복원 셸이 같은 계정 폴더로 --resume해야 대화를 찾는다.
+        if (found) result = { provider: 'claude', sessionId: found.sessionId, cwd: found.cwd || foreground.cwd || '', ...(env.CLAUDE_CONFIG_DIR ? { configDir: env.CLAUDE_CONFIG_DIR } : {}) };
     } else if (foreground.program === 'codex' && foreground.cwd && Number.isFinite(foreground.startedAt)) {
         const candidates = listCodexSessions({
             codexHome: env.CODEX_HOME || nodePath.join(env.HOME || deps.homeDirectory, '.codex'),

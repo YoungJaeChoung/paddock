@@ -5,7 +5,7 @@ const os = require('node:os');
 const { spawnSync } = require('node:child_process');
 const { parseEnviron } = require('./agent-account');
 const agentModel = require('./agent-model');
-const { AgentResume, resumableAgent, elapsedSeconds } = require('./agent-resume');
+const { claudeSessionOf, resumableAgent, elapsedSeconds } = require('./agent-resume');
 
 /**
  * 셸 프로세스의 지금 앞쪽 프로그램(터미널에서 실행 중인 명령)의 `{ pid, argv, env }`. 셸만 떠 있으면 셸 자신이다.
@@ -105,7 +105,7 @@ function createTerminalInspector(
         now = Date.now,
     } = {},
 ) {
-    // 터미널 표지 id → { cwd, program, sessionId }. 최근 WSL 스캔 결과다.
+    // 터미널 표지 id → { cwd, program, pid, sessionRecord, configDir }. 최근 WSL 스캔 결과다.
     let wslTerminals = {};
     const deps = { homeDirectory, readFile: file => fs.readFileSync(file, 'utf8'), fileSystem: { readdir: directory => fs.readdirSync(directory), readFirstLine } };
 
@@ -113,8 +113,10 @@ function createTerminalInspector(
         let result = null;
         const marker = terminalProcess.options?.options?.env?.PADDOCK_TERMINAL;
         if (marker && wslTerminals[marker]) {
-            const { cwd, program, sessionId } = wslTerminals[marker];
-            const agent = program === 'claude' && AgentResume.UUID.test(sessionId || '') ? { provider: 'claude', sessionId, cwd } : null;
+            const { cwd, program, pid, sessionRecord, configDir } = wslTerminals[marker];
+            // Linux 셸과 같은 판정(claudeSessionOf)으로 sessions 기록 본문을 가린다: pid 일치·대화형만 인정한다.
+            const found = program === 'claude' ? claudeSessionOf({ configDirectory: '', pid: Number(pid), readFile: () => sessionRecord }) : null;
+            const agent = found ? { provider: 'claude', sessionId: found.sessionId, cwd, ...(configDir ? { configDir } : {}) } : null;
             result = { cwd, agent, foreground: agentModel.isAgent(program) ? program : null };
         } else if (process.platform === 'linux' || process.platform === 'darwin') {
             let shellPid = null;
@@ -126,7 +128,7 @@ function createTerminalInspector(
                 const foreground = foregroundProcess(shellPid);
                 const program = foreground ? agentModel.programName(foreground.argv) : null;
                 let startedAt = null;
-                if (program === 'codex') startedAt = processStartedAt(foreground.pid, now());
+                if (program === 'codex' || program === 'claude') startedAt = processStartedAt(foreground.pid, now());
                 const agent = foreground ? resumableAgent({ program, pid: foreground.pid, env: foreground.env, cwd, startedAt }, deps) : null;
                 result = { cwd, agent, foreground: agentModel.isAgent(program) ? program : null };
             }

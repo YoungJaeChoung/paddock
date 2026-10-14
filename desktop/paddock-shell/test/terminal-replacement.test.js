@@ -126,8 +126,11 @@ function fixture() {
         close() { this.dispose(); }
     }
     const exports = {};
+    const fetches = [];
+    const fetchHandler = { respond: () => ({ ok: false, status: 404, json: async () => null }) };
     const context = {
         module: { exports }, exports, Promise, queueMicrotask,
+        fetch: async (url, init) => { fetches.push({ url, method: init?.method || 'GET' }); return fetchHandler.respond(url, init); },
         setTimeout: callback => { const id = ++n_timers; timers.set(id, callback); return id; },
         clearTimeout: id => timers.delete(id),
         require: name => {
@@ -145,7 +148,7 @@ function fixture() {
             else if (name === 'xterm-addon-unicode11') result = { Unicode11Addon: class {} };
             else if (name === './emoji-width') result = require('../emoji-width');
             else if (name === './terminal-restore' || name === './restore-preference') result = require(`.${name}`);
-            else if (name.endsWith('/endpoint')) result = { Endpoint: class {} };
+            else if (name.endsWith('/endpoint')) result = { Endpoint: class { constructor(o) { this.path = o.path; } getRestUrl() { return { toString: () => this.path }; } } };
             else if (name.endsWith('/preference-service')) result = { PreferenceService: {} };
             else if (name === './wsl-terminals' || name === './paste-paths' || name === './terminal-copy' || name === './terminal-renderer') result = require(`.${name}`);
             else if (/(file-service|env-variables|message-service|buffer|file-uri|common\/uri)$/.test(name)) result = { default: class {}, FileService: {}, EnvVariablesServer: {}, MessageService: {}, BinaryBuffer: {}, FileUri: {} };
@@ -162,7 +165,7 @@ function fixture() {
         paddockResume: { provider: 'claude', sessionId: 'same-session', sourceAccountId: 'a', runtime: 'native', cwd: '/work', transcriptPath: '/account-a/projects/session.jsonl' },
         env: { CLAUDE_CONFIG_DIR: '/account-b', ANTHROPIC_API_KEY: null, BASH_ENV: null, ENV: null },
     };
-    return { terminal, Terminal, backend, options, channel, closeChannel, timers, dataListeners };
+    return { terminal, Terminal, backend, options, channel, closeChannel, timers, dataListeners, fetches, fetchHandler };
 }
 
 test('C-terminal-replacement-preserve: one replacement keeps widget, buffer and tab identity until the old connection closes', async () => {
@@ -510,4 +513,25 @@ test('C-terminal-number-restore: the default-name number survives a restart and 
     const invalid = new Terminal();
     invalid.restoreState({ ...JSON.parse(JSON.stringify(state)), paddockNumber: -1 });
     assert.equal(invalid.paddockNumber, undefined);
+});
+
+test('C-terminal-restore-delete: 저장 기록을 읽지 못하면(5xx) 지우지 않고, 기록이 없다고(404) 확인했을 때만 지운다', async () => {
+    for (const [status, expectedDeletes] of [[500, 0], [404, 1]]) {
+        const { terminal, backend, fetches, fetchHandler } = fixture();
+        terminal.kind = 'user';
+        terminal.logger = { warn: () => {} };
+        terminal.preferenceService = { ready: Promise.resolve(), get: () => 'always' };
+        fetchHandler.respond = () => ({ ok: false, status, json: async () => null });
+        const id = await terminal.attachTerminal(99);
+        assert.equal(id, backend.nextId - 1, `status ${status}: a new shell opens either way`);
+        assert.equal(fetches.filter(item => item.method === 'DELETE').length, expectedDeletes, `status ${status}`);
+    }
+});
+
+test('C-terminal-restore-delete: 번호가 없는 시작(-1)은 저장 기록을 찾지 않는다', async () => {
+    const { terminal, fetches } = fixture();
+    terminal.kind = 'user';
+    terminal.logger = { warn: () => {} };
+    await terminal.attachTerminal(-1);
+    assert.equal(fetches.length, 0);
 });

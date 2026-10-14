@@ -22,7 +22,7 @@ const { isWslShell } = require('./wsl-terminals');
 const { PASTE_PLACE, pastePathText, imageExtension } = require('./paste-paths');
 const { osc52ClipboardText } = require('./terminal-copy');
 const { refreshGlyphs, synchronizeTextureAtlas } = require('./terminal-renderer');
-const { planRestore, noticeLine } = require('./terminal-restore');
+const { planRestore, noticeLine, waitForPrompt } = require('./terminal-restore');
 const { KEY: RESTORE_KEY, RESTORE } = require('./restore-preference');
 
 class TerminalReplacement {
@@ -90,13 +90,20 @@ function historyUrl(
     return new Endpoint({ path: `/paddock/session/terminals/${terminalId}/history` }).getRestUrl().toString();
 }
 
-/** 앱이 터미널 프로세스째 사라진 뒤 백엔드가 저장해 둔 기록을 읽는다. 없으면 null이다. */
+/**
+ * 앱이 터미널 프로세스째 사라진 뒤 백엔드가 저장해 둔 기록을 읽는다. 기록이 없으면(404) null이다.
+ * 그 밖의 실패(5xx·네트워크)는 기록이 있는지 알 수 없다는 뜻이라 던진다 — 호출한 쪽이 기록을 지우면 안 된다.
+ */
 async function fetchTerminalHistory(
     terminalId,
 ) {
     let record = null;
     const response = await fetch(historyUrl(terminalId));
-    if (response.ok) record = await response.json();
+    if (response.ok) {
+        record = await response.json();
+    } else if (response.status !== 404) {
+        throw new Error(`Reading the saved terminal failed: ${response.status}`);
+    }
     return record;
 }
 
@@ -604,6 +611,7 @@ class PaddockTerminal extends TerminalWidgetImpl {
         data,
     ) {
         this.hasWritten = true;
+        this.lastWriteAt = Date.now();
         super.write(typeof data === 'string' ? this.fixEmojiWidth(data) : data);
     }
 
@@ -624,7 +632,18 @@ class PaddockTerminal extends TerminalWidgetImpl {
         if (this.pendingResumeCommand) {
             const command = this.pendingResumeCommand;
             this.pendingResumeCommand = undefined;
-            this.sendText(`${command}${OS.backend.EOL}`);
+            // 셸 시작 스크립트(.bashrc 등)가 입력을 읽거나 tmux 같은 프로그램을 띄우면 지금 입력한 명령이 엉뚱한 곳으로 들어간다.
+            // 새 셸이 프롬프트를 내고 멎을 때까지 기다리고, 그렇지 않으면 입력하지 않고 직접 입력할 명령을 안내한다.
+            const outcome = await waitForPrompt({
+                lastWriteAt: () => this.lastWriteAt ?? null,
+                hasChildren: () => this.hasChildProcesses().catch(() => true),
+                clock: { now: () => Date.now(), sleep: ms => new Promise(resolve => setTimeout(resolve, ms)) },
+            });
+            if (outcome === 'ready' && !this.isDisposed) {
+                this.sendText(`${command}${OS.backend.EOL}`);
+            } else {
+                this.write(noticeLine(`The shell did not become ready for input. To continue the conversation, run: ${command}`));
+            }
         }
         return terminalId;
     }
@@ -645,9 +664,12 @@ class PaddockTerminal extends TerminalWidgetImpl {
             } else if (this.kind === 'user') {
                 // 프로세스가 사라졌다(앱 갱신·강제 종료·백엔드 종료). 저장해 둔 화면·폴더·대화로 새 셸을 연다. 저장 기록이 없으면 Theia 기본 동작이다.
                 this.logger.warn(`Failed attaching to terminal id ${id}, the terminal is most likely gone. Starting up a new terminal instead.`);
-                await this.restoreFromHistory(id);
+                // 번호가 없는 시작(-1)은 지난 프로세스가 없어 저장 기록도 없다.
+                const canDelete = id >= 0 ? await this.restoreFromHistory(id) : false;
                 terminalId = await this.createTerminal();
-                await deleteTerminalHistory(id).catch(() => {});
+                this.lastWriteAt = null;
+                // 기록을 읽지 못한 경우(canDelete=false)는 있는지 알 수 없으니 지우지 않는다.
+                if (canDelete) await deleteTerminalHistory(id).catch(() => {});
             } else {
                 terminalId = -1;
             }
@@ -658,11 +680,13 @@ class PaddockTerminal extends TerminalWidgetImpl {
     /**
      * 사라진 터미널 `id`의 저장 기록으로 지난 화면을 보이고 새 셸의 실행 옵션을 고친다. 저장 기록이 없거나 되살리기 설정이 꺼져 있으면 아무것도 바꾸지 않는다.
      * 화면에 이미 출력이 있으면(연결이 끊겼다 되살아난 터미널) 화면은 다시 쓰지 않는다. 새 셸을 연 뒤 지울 기록은 호출한 쪽이 지운다.
+     * 돌려주는 값은 기록을 지워도 되는지다: 기록이 없다고 확인했거나 되살렸으면 true, 읽기에 실패해 있는지 모르면 false다.
      */
     async restoreFromHistory(
         id,
     ) {
         let record = null;
+        let canDelete = true;
         try {
             await this.preferenceService.ready;
             if (this.preferenceService.get(RESTORE_KEY, RESTORE.ALWAYS) === RESTORE.NEVER) {
@@ -671,8 +695,9 @@ class PaddockTerminal extends TerminalWidgetImpl {
                 record = await fetchTerminalHistory(id);
             }
         } catch {
-            // 기록을 읽지 못하면 되살리지 않고 기본 동작으로 새 셸을 연다.
+            // 기록을 읽지 못하면 되살리지 않고 기본 동작으로 새 셸을 연다. 기록은 남겨 다음 실행에서 다시 읽는다.
             record = null;
+            canDelete = false;
         }
         if (record) {
             const plan = planRestore({ options: this.options, record, toUri: folder => URI.fromFilePath(folder.replace(/\\/g, '/')).toString() });
@@ -681,6 +706,7 @@ class PaddockTerminal extends TerminalWidgetImpl {
             this.options = plan.options;
             this.pendingResumeCommand = plan.command || undefined;
         }
+        return canDelete;
     }
 
     close() {

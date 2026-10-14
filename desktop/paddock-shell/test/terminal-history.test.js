@@ -214,3 +214,14 @@ test('저장은 반쪽 파일을 남기지 않는다(임시 파일은 옮긴 뒤
     await clock.advance(2100);
     assert.deepEqual(fs.readdirSync(directory), ['16.json']);
 });
+
+test('기록 파일은 소유자만 읽고 쓴다(파일 0600, 폴더 0700)', { skip: process.platform === 'win32' }, async () => {
+    const { directory, clock, history } = setup();
+    fs.rmSync(directory, { recursive: true });
+    const terminal = fakeProcess(17);
+    history.track(terminal);
+    terminal.write('secret');
+    await clock.advance(2100);
+    assert.equal(fs.statSync(directory).mode & 0o777, 0o700);
+    assert.equal(fs.statSync(path.join(directory, '17.json')).mode & 0o777, 0o600);
+});

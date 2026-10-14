@@ -18,6 +18,22 @@ test('claudeSessionOf: pid가 같은 대화형 기록만 인정한다', () => {
     assert.equal(claudeSessionOf({ configDirectory: '/c', pid: 42, readFile: () => { throw new Error('ENOENT'); } }), null);
 });
 
+test('claudeSessionOf: 기록의 시작 시각이 프로세스 시작과 맞지 않으면(pid 재사용) 다른 프로세스의 기록으로 본다', () => {
+    const at = Date.parse('2026-10-14T01:00:00Z');
+    const read = startedAt => () => JSON.stringify({ pid: 42, sessionId: CLAUDE_ID, kind: 'interactive', startedAt });
+    assert.notEqual(claudeSessionOf({ configDirectory: '/c', pid: 42, readFile: read(at + 5000), processStartedAt: at }), null);
+    assert.equal(claudeSessionOf({ configDirectory: '/c', pid: 42, readFile: read(at - 3600000), processStartedAt: at }), null);
+    assert.equal(claudeSessionOf({ configDirectory: '/c', pid: 42, readFile: read(at + 3600000), processStartedAt: at }), null);
+    // 시작 시각을 모르거나 기록에 없으면 비교하지 않는다.
+    assert.notEqual(claudeSessionOf({ configDirectory: '/c', pid: 42, readFile: read(at - 3600000) }), null);
+    assert.notEqual(claudeSessionOf({ configDirectory: '/c', pid: 42, readFile: read(undefined), processStartedAt: at }), null);
+});
+
+test('resumableAgent: 환경 변수로 계정 폴더를 지정해 실행했으면 그 폴더를 기록에 남긴다', () => {
+    const deps = { homeDirectory: '/home/me', readFile: file => (file === '/acc/sessions/42.json' ? JSON.stringify({ pid: 42, sessionId: CLAUDE_ID, kind: 'interactive' }) : (() => { throw new Error('x'); })()), fileSystem: {} };
+    assert.deepEqual(resumableAgent({ program: 'claude', pid: 42, env: { CLAUDE_CONFIG_DIR: '/acc' }, cwd: '/w', startedAt: null }, deps), { provider: 'claude', sessionId: CLAUDE_ID, cwd: '/w', configDir: '/acc' });
+});
+
 test('claudeSessionOf: 계정 폴더 아래 sessions/<pid>.json을 읽는다', () => {
     let requested = '';
     claudeSessionOf({ configDirectory: '/acc', pid: 7, readFile: file => { requested = file; return ''; } });

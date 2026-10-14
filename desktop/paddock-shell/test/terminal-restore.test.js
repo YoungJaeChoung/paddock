@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { planRestore, noticeLine } = require('../terminal-restore');
+const { planRestore, noticeLine, waitForPrompt, withoutWslCd } = require('../terminal-restore');
 const { accountTerminalOptions } = require('../account-launch');
 
 const SESSION = '0b9f2f77-6a1e-4a4c-9d33-2f7a5d1c1a10';
@@ -74,4 +74,42 @@ test('계정 터미널: 대화가 없거나 Codex면 시작 옵션을 그대로 
 
 test('noticeLine: 줄을 바꾸고 흐린 한 줄로 쓴다', () => {
     assert.equal(noticeLine('hello'), '\x1b[0m\r\n\x1b[2m— hello —\x1b[0m\r\n');
+});
+
+test('WSL 터미널: Windows 홈의 --cd ~가 복원할 폴더를 덮지 않게 --cd 쌍을 걷어 내고 배포판 인자는 남긴다', () => {
+    assert.deepEqual(withoutWslCd(['--cd', '~', '-d', 'Ubuntu']), ['-d', 'Ubuntu']);
+    assert.deepEqual(withoutWslCd(['-d', 'Ubuntu', '--cd=/tmp']), ['-d', 'Ubuntu']);
+    assert.deepEqual(withoutWslCd(['-d', 'Ubuntu']), ['-d', 'Ubuntu']);
+    const options = { shellPath: 'C:\\Windows\\System32\\wsl.exe', shellArgs: ['--cd', '~', '-d', 'Ubuntu'], cwd: 'file:///C:/Users/me' };
+    const plan = planRestore({ options, record: record({ cwdNow: '\\\\wsl.localhost\\Ubuntu\\home\\me\\app' }), toUri });
+    assert.deepEqual(plan.options.shellArgs, ['-d', 'Ubuntu']);
+    assert.equal(plan.options.cwd, 'file://\\\\wsl.localhost\\Ubuntu\\home\\me\\app');
+    // 복원할 폴더가 없으면 인자를 건드리지 않는다. WSL이 아닌 셸의 --cd도 건드리지 않는다.
+    assert.deepEqual(planRestore({ options, record: record({ cwdNow: '' }), toUri }).options.shellArgs, ['--cd', '~', '-d', 'Ubuntu']);
+    assert.deepEqual(planRestore({ options: { shellPath: '/bin/zsh', shellArgs: ['--cd', 'x'] }, record: record(), toUri }).options.shellArgs, ['--cd', 'x']);
+});
+
+test('이어하기 명령: 계정 폴더를 지정해 실행했으면 POSIX 셸에서만 같은 폴더를 앞붙인다', () => {
+    const agent = { provider: 'claude', sessionId: SESSION, cwd: '/w', configDir: "/acc/it's" };
+    const posix = planRestore({ options: { shellPath: '/bin/bash' }, record: record({ agent, foreground: 'claude' }), toUri });
+    assert.equal(posix.command, `CLAUDE_CONFIG_DIR='/acc/it'"'"'s' claude --resume ${SESSION}`);
+    const wsl = planRestore({ options: { shellPath: 'C:\\Windows\\System32\\wsl.exe' }, record: record({ agent, foreground: 'claude' }), toUri });
+    assert.match(wsl.command, /^CLAUDE_CONFIG_DIR=/);
+    const powershell = planRestore({ options: { shellPath: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe' }, record: record({ agent, foreground: 'claude' }), toUri });
+    assert.equal(powershell.command, `claude --resume ${SESSION}`);
+});
+
+test('waitForPrompt: 출력이 멎고 자식 프로세스가 없을 때만 ready, 자식이 있으면 busy, 계속 출력하면 timeout', async () => {
+    const fake = () => {
+        const clock = { time: 0, now: () => clock.time, sleep: async ms => { clock.time += ms; } };
+        return clock;
+    };
+    let clock = fake();
+    assert.equal(await waitForPrompt({ lastWriteAt: () => (clock.time >= 300 ? 300 : null), hasChildren: async () => false, clock }), 'ready');
+    clock = fake();
+    assert.equal(await waitForPrompt({ lastWriteAt: () => 0, hasChildren: async () => true, clock }), 'busy');
+    clock = fake();
+    assert.equal(await waitForPrompt({ lastWriteAt: () => clock.time, hasChildren: async () => false, clock }), 'timeout');
+    clock = fake();
+    assert.equal(await waitForPrompt({ lastWriteAt: () => null, hasChildren: async () => false, clock }), 'timeout');
 });

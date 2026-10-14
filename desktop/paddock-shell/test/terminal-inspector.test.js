@@ -25,18 +25,23 @@ test('Linux: 셸의 현재 폴더와 앞쪽 프로그램을 /proc에서 읽는�
     }
 });
 
-test('WSL 터미널은 스캔 결과의 폴더와 Claude 대화를 쓰고, 스캔에 없으면 null이다', () => {
+test('WSL 터미널은 스캔 결과의 폴더와 Claude 대화를 Linux 셸과 같은 판정으로 읽고, 스캔에 없으면 null이다', () => {
     const inspector = createTerminalInspector();
     const terminal = { options: { options: { env: { PADDOCK_TERMINAL: 'terminal-1' } } } };
+    const ID = '0b9f2f77-6a1e-4a4c-9d33-2f7a5d1c1a10';
+    const cwd = '\\\\wsl.localhost\\Ubuntu\\home\\me\\app';
+    const record = (extra = {}) => JSON.stringify({ pid: 55, sessionId: ID, kind: 'interactive', ...extra });
     assert.equal(inspector.inspect(terminal), null);
-    inspector.noteWsl({ 'terminal-1': { cwd: '\\\\wsl.localhost\\Ubuntu\\home\\me\\app', program: 'claude', sessionId: '0b9f2f77-6a1e-4a4c-9d33-2f7a5d1c1a10' } });
-    assert.deepEqual(inspector.inspect(terminal), {
-        cwd: '\\\\wsl.localhost\\Ubuntu\\home\\me\\app',
-        agent: { provider: 'claude', sessionId: '0b9f2f77-6a1e-4a4c-9d33-2f7a5d1c1a10', cwd: '\\\\wsl.localhost\\Ubuntu\\home\\me\\app' },
-        foreground: 'claude',
-    });
-    inspector.noteWsl({ 'terminal-1': { cwd: '/x', program: 'bash', sessionId: '0b9f2f77-6a1e-4a4c-9d33-2f7a5d1c1a10' } });
-    assert.equal(inspector.inspect(terminal).agent, null);
-    inspector.noteWsl({ 'terminal-1': { cwd: '/x', program: 'claude', sessionId: 'bad' } });
-    assert.equal(inspector.inspect(terminal).agent, null);
+    inspector.noteWsl({ 'terminal-1': { cwd, program: 'claude', pid: '55', sessionRecord: record(), configDir: '/home/me/acc' } });
+    assert.deepEqual(inspector.inspect(terminal), { cwd, agent: { provider: 'claude', sessionId: ID, cwd, configDir: '/home/me/acc' }, foreground: 'claude' });
+    // 비대화형(claude -p)·pid 불일치·깨진 기록·다른 프로그램은 대화로 보지 않는다.
+    for (const entry of [
+        { program: 'claude', pid: '55', sessionRecord: record({ kind: 'sdk' }) },
+        { program: 'claude', pid: '56', sessionRecord: record() },
+        { program: 'claude', pid: '55', sessionRecord: '{broken' },
+        { program: 'bash', pid: '55', sessionRecord: record() },
+    ]) {
+        inspector.noteWsl({ 'terminal-1': { cwd, ...entry } });
+        assert.equal(inspector.inspect(terminal).agent, null);
+    }
 });
