@@ -18,8 +18,8 @@ test('C-macproc.2: 셸 수와 상관없이 ps를 두 번만 실행하고, 앞쪽
     assert.equal(calls.length, 2);
     assert.deepEqual(calls[0], ['-o', 'pid=,tpgid=', '-p', '101,102,103']);
     assert.deepEqual(calls[1], ['-o', 'pid=,args=', '-p', '205,102,103']);
-    assert.deepEqual(result.get(101), { argv: ['claude', '--resume'], env: null });
-    assert.deepEqual(result.get(102), { argv: ['/bin/zsh', '-il'], env: null });
+    assert.deepEqual(result.get(101), { pid: 205, argv: ['claude', '--resume'], env: null });
+    assert.deepEqual(result.get(102), { pid: 102, argv: ['/bin/zsh', '-il'], env: null });
     // 이미 끝난 셸은 명령줄이 없어 null이다.
     assert.equal(result.get(103), null);
 });

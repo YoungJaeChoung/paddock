@@ -34,7 +34,7 @@ function runPs(
 }
 
 /**
- * 셸 pid마다 앞쪽 프로그램의 `{ argv, env: null }`. 앞쪽 프로세스 그룹이 없으면 셸 자신의 명령줄이고, 명령줄을 읽지 못한 셸은 null이다.
+ * 셸 pid마다 앞쪽 프로그램의 `{ pid, argv, env: null }`. 앞쪽 프로세스 그룹이 없으면 셸 자신이고, 명령줄을 읽지 못한 셸은 null이다.
  *
  * `ps` 실행은 셸 수와 상관없이 두 번(앞쪽 그룹 → 명령줄)이다. macOS에서는 다른 프로세스의 환경을 읽지 않으므로 env는 늘 null이다.
  * `run`은 `ps` 인자를 받아 출력을 돌려주는 함수로, 기본값은 실제 `ps` 실행이다.
@@ -43,8 +43,8 @@ function runPs(
  * --------
  * | 셸 pid  | `ps -o pid=,tpgid=` | `ps -o pid=,args=`           | 결과                                                      |
  * | ------- | ------------------- | ---------------------------- | --------------------------------------------------------- |
- * | 101     | `101 205`           | `205 claude`                 | `Map { 101 → { argv: ['claude'], env: null } }`           |
- * | 102     | `102 0`             | `102 /bin/zsh -il`           | `Map { 102 → { argv: ['/bin/zsh', '-il'], env: null } }`  |
+ * | 101     | `101 205`           | `205 claude`                 | `Map { 101 → { pid: 205, argv: ['claude'], env: null } }`          |
+ * | 102     | `102 0`             | `102 /bin/zsh -il`           | `Map { 102 → { pid: 102, argv: ['/bin/zsh', '-il'], env: null } }` |
  * | 103     | (줄 없음)           | (줄 없음)                    | `Map { 103 → null }`                                      |
  */
 async function readMacForegrounds(
@@ -58,8 +58,9 @@ async function readMacForegrounds(
         const foregroundOf = new Map(shellPids.map(pid => [pid, Number(groups.get(pid)) > 0 ? Number(groups.get(pid)) : pid]));
         const commandLines = parsePsColumns(await run(['-o', 'pid=,args=', '-p', [...new Set(foregroundOf.values())].join(',')]));
         for (const pid of shellPids) {
-            const args = commandLines.get(foregroundOf.get(pid));
-            if (args) result.set(pid, { argv: args.split(/\s+/), env: null });
+            const foregroundPid = foregroundOf.get(pid);
+            const args = commandLines.get(foregroundPid);
+            if (args) result.set(pid, { pid: foregroundPid, argv: args.split(/\s+/), env: null });
         }
     }
     return result;
