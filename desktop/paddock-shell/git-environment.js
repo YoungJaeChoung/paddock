@@ -24,6 +24,8 @@ const WSL_REPOSITORY_PATTERNS = [
  *
  * Notes
  * -----
+ * Paddock의 WSL용 git 분배기(git-shim.js)가 `git.path`에 놓이면 WSL 폴더의 저장소는 WSL 안의 git이 실행해 이 신뢰 설정이 필요 없다.
+ * 분배기를 만들지 못한 설치와, 사용자가 `git.path`를 직접 정해 Windows git이 WSL 폴더를 여는 경우를 위해 유지한다.
  * 이미 `GIT_CONFIG_COUNT`로 넘긴 설정이 있으면 그 뒤 번호에 덧붙여 기존 설정을 덮지 않는다.
  * 숫자가 아닌 `GIT_CONFIG_COUNT`는 git도 거부하므로 0으로 보고 새로 쓴다.
  *
