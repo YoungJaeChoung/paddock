@@ -12,6 +12,7 @@ const { PaddockAboutDialog } = require('./about-dialog');
 const { PaddockWorkspace } = require('./workspace');
 const { PaddockExtensionOpen } = require('./extension-open');
 const { withLocalReadme } = require('./extension-readme');
+const { holdEnterWhileComposing } = require('./dialog-ime');
 const { VSXExtensionsModel } = require('@theia/vsx-registry/lib/browser/vsx-extensions-model');
 const { Endpoint } = require('@theia/core/lib/browser/endpoint');
 const { PaddockBackendStop } = require('./backend-stop');
@@ -127,6 +128,8 @@ exports.default = new ContainerModule((bind, unbind, isBound, rebind, unbindAsyn
     bind(CommandContribution).toDynamicValue(({ container }) => new PaddockExtensionOpen(container)).inSingletonScope();
     // 설치한 확장의 README를 앱 백엔드에서 화면이 직접 받아 확장 페이지 본문에 보인다(extension-readme.js).
     onActivation(VSXExtensionsModel, (context, model) => withLocalReadme(model, new Endpoint().getRestUrl().toString()));
+    // 한글 조합 중 누른 Enter가 대화상자를 먼저 닫아 마지막 글자가 터미널로 새지 않게, 조합이 끝난 뒤 확인한다(dialog-ime.js).
+    bind(FrontendApplicationContribution).toConstantValue({ onStart: () => { holdEnterWhileComposing(window); } });
     bind(CommandContribution).toDynamicValue(({ container }) => new PaddockBackendStop(container)).inSingletonScope();
     // 마지막 창을 닫을 때 남은 터미널을 계속 실행할지 창 안에서 묻는다(quit-prompt.js).
     bind(FrontendApplicationContribution).toDynamicValue(({ container }) => new PaddockQuitPrompt(container)).inSingletonScope();
