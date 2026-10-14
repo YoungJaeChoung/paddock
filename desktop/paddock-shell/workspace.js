@@ -479,10 +479,11 @@ class PaddockWorkspace {
                 }
             }
             // 파일 화면은 어떤 길로 열렸든(Paddock 열기·Theia 열기·Git 변경 열기·확장 명령) 여기서 묶음을 받아야 위쪽 줄에 오른다.
-            const fileRoot = this.layoutReady && this.shell.getAreaFor(widget) === 'main' ? fileRootFor({
+            const fileRoot = this.layoutReady ? fileRootFor({
                 state: this.state,
                 uri: widget.getResourceUri?.()?.toString(),
                 hasRoot: this.fileRoots.has(widget.id),
+                area: this.shell.getAreaFor(widget),
                 currentRoot: this.fileRoots.get(this.currentWidget()?.id),
                 topTerminal: this.shownTopTerminal(),
             }) : null;

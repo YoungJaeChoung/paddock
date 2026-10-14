@@ -22,3 +22,11 @@ test('FO04: a screen that already has a group or no file address keeps as is', (
     assert.equal(fileRootFor({ ...base, uri: null }), null);
     assert.equal(fileRootFor({ ...base, topTerminal: null }), null);
 });
+
+test('FO05: a screen whose area is not yet known counts as body, but a known non-body area gets no group', () => {
+    // 검색 결과로 여는 미리보기 편집기는 들어왔다는 신호가 영역이 정해지기 전에 온다.
+    assert.equal(fileRootFor({ ...base, area: null }), 't2');
+    assert.equal(fileRootFor({ ...base, area: undefined }), 't2');
+    assert.equal(fileRootFor({ ...base, area: 'main' }), 't2');
+    for (const area of ['left', 'right', 'bottom', 'secondaryWindow']) assert.equal(fileRootFor({ ...base, area }), null);
+});
