@@ -54,6 +54,41 @@ test('stop은 살아 있는 프로세스를 끝내고 없는 프로세스에는 
     await BackendSession.stop({ pid: child.pid });
 });
 
+test('note는 backend.log에 시각·출처·수준이 붙은 한 줄을 덧붙이고, 폴더가 없으면 아무것도 하지 않는다', () => {
+    const directory = temporaryDirectory();
+    BackendSession.note(directory, 'first');
+    BackendSession.note(directory, 'second');
+    const lines = fs.readFileSync(path.join(directory, 'backend.log'), 'utf8').trimEnd().split('\n');
+    assert.equal(lines.length, 2);
+    assert.match(lines[0], /^\d{4}-\d\d-\d\dT[\d:.]+Z paddock:Main INFO first$/);
+    assert.match(lines[1], / second$/);
+    BackendSession.note(undefined, 'ignored');
+    BackendSession.note(path.join(directory, 'missing'), 'ignored');
+});
+
+test('stop은 사유를 백엔드에 전달하고, 받아들이지 않으면 신호로 끝내며 그 사실을 기록한다', async () => {
+    const directory = temporaryDirectory();
+    // 포트가 닫힌 백엔드는 요청을 받지 못한다. 신호로 끝나고 backend.log에 사유가 남는다.
+    const child = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' });
+    await BackendSession.stop({ pid: child.pid, port: 1, token: 't' }, 'outdated', directory);
+    assert.equal(BackendSession.isAlive(child.pid), false);
+    assert.match(fs.readFileSync(path.join(directory, 'backend.log'), 'utf8'), /Stop request not accepted \(pid=\d+, reason=outdated\)/);
+
+    // 요청을 받는 백엔드에는 본문 `{ reason }`이 전달된다. 가짜 백엔드가 요청을 받으면 자기 프로세스를 끝낸다.
+    const second = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' });
+    let received;
+    const server = require('node:http').createServer((request, response) => {
+        let text = '';
+        request.on('data', (chunk) => { text += chunk; });
+        request.on('end', () => { received = JSON.parse(text); response.statusCode = 202; response.end(); process.kill(second.pid); });
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    await BackendSession.stop({ pid: second.pid, port: server.address().port, token: 't' }, 'quit-choice:stop', directory);
+    server.close();
+    assert.deepEqual(received, { reason: 'quit-choice:stop' });
+    assert.equal(BackendSession.isAlive(second.pid), false);
+});
+
 test('sharedEnvironment는 허용한 이름의 문자열 값만 남긴다', () => {
     assert.deepEqual(BackendSession.sharedEnvironment({ PATH: '/bin', SECRET: 'x', CODEX_HOME: 5 }), { PATH: '/bin' });
     assert.deepEqual(BackendSession.sharedEnvironment(null), {});

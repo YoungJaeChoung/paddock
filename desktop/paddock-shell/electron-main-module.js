@@ -187,7 +187,10 @@ class PaddockMainApplication extends ElectronMainApplication {
         try {
             const state = BackendSession.readState(directory);
             if (state) {
-                if (BackendSession.isAlive(state.pid) && await BackendSession.isListening(state.port)) {
+                const isAlive = BackendSession.isAlive(state.pid);
+                const isListening = isAlive && await BackendSession.isListening(state.port);
+                BackendSession.note(directory, `previous backend pid=${state.pid} alive=${isAlive} listening=${isListening} fingerprint=${state.fingerprint === fingerprint ? 'same' : 'different'}`);
+                if (isAlive && isListening) {
                     if (state.fingerprint === fingerprint) {
                         // 남아 있는 백엔드는 자기를 띄운 앱의 토큰만 받아들이므로 같은 토큰을 이어 쓴다.
                         this.electronSecurityToken.value = state.token;
@@ -244,7 +247,7 @@ class PaddockMainApplication extends ElectronMainApplication {
         child.once('exit', () => { hasExited = true; });
         for (let n_polls = 0; !(await BackendSession.isListening(port)); n_polls += 1) {
             if (hasExited || n_polls > N_START_POLLS) {
-                await BackendSession.stop({ pid, port, token: this.electronSecurityToken.value });
+                await BackendSession.stop({ pid, port, token: this.electronSecurityToken.value }, 'start-failed', directory);
                 BackendSession.clearState(directory);
                 this.backend = undefined;
                 throw new Error(`The backend did not start. See ${path.join(directory, 'backend.log')}.`);
@@ -276,7 +279,9 @@ class PaddockMainApplication extends ElectronMainApplication {
             });
             isAllowed = response === 0;
         }
-        if (isAllowed) await BackendSession.stop(state);
+        const directory = process.env.THEIA_CONFIG_DIR;
+        if (isAllowed) await BackendSession.stop(state, 'outdated', directory);
+        else BackendSession.note(directory, 'declined update; previous backend kept');
         return isAllowed;
     }
 
@@ -299,6 +304,13 @@ class PaddockMainApplication extends ElectronMainApplication {
             let onQuit = QuitPreference.readOnQuit(settings);
             let isStopped = n_terminals === 0 || choice === BackendSession.QUIT_CHOICE.STOP
                 || (choice === null && onQuit === QuitPreference.ON_QUIT.STOP);
+            // 끝내거나 남기는 이유. backend.log에 남겨 나중에 터미널이 사라진 까닭을 가릴 수 있게 한다.
+            let reason;
+            if (n_terminals === 0) reason = 'no-terminals';
+            else if (choice !== null) reason = `quit-choice:${choice}`;
+            else if (onQuit === QuitPreference.ON_QUIT.ASK && !this.isSystemShutdown) reason = 'dialog';
+            else if (this.isSystemShutdown && onQuit === QuitPreference.ON_QUIT.ASK) reason = 'system-shutdown';
+            else reason = `setting:${onQuit}`;
             // 창 안에서 답을 받지 못한 종료(창이 여럿인 채 앱을 끝내는 경우 등)만 여기서 묻는다. 창이 모두 닫힌 뒤라 소속 창 없이 뜬다.
             // OS가 종료·로그아웃 중이면 사용자가 답할 수 없다. 묻지 않고 유지로 본다(어차피 OS가 프로세스를 정리한다).
             if (!isStopped && choice === null && onQuit === QuitPreference.ON_QUIT.ASK && !this.isSystemShutdown) {
@@ -313,6 +325,7 @@ class PaddockMainApplication extends ElectronMainApplication {
                     checkboxLabel: "Don't ask again",
                 });
                 isStopped = response === 1;
+                reason = `dialog:${isStopped ? 'stop' : 'keep'}`;
                 if (checkboxChecked) {
                     onQuit = isStopped ? QuitPreference.ON_QUIT.STOP : QuitPreference.ON_QUIT.KEEP;
                     const updated = QuitPreference.withOnQuit(settings, onQuit);
@@ -321,8 +334,10 @@ class PaddockMainApplication extends ElectronMainApplication {
                 }
             }
             if (isStopped) {
-                await BackendSession.stop(backend);
+                await BackendSession.stop(backend, reason, directory);
                 BackendSession.clearState(directory);
+            } else {
+                BackendSession.note(directory, `backend kept: ${reason} (terminals=${n_terminals})`);
             }
         }
     }

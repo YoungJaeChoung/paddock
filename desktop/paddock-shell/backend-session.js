@@ -248,16 +248,45 @@ async function shareEnvironment(
 }
 
 /**
+ * 앱과 백엔드가 남기는 결정 기록을 설정 폴더의 `backend.log`에 한 줄 덧붙인다.
+ *
+ * 백엔드가 왜 끝났는지(또는 왜 남았는지)는 Electron 메인 프로세스의 판단인데, Windows에서는 메인의 출력이 사라져 흔적이 없었다.
+ * 백엔드 자신의 로그와 같은 파일·같은 꼴로 적어 한 곳에서 시간순으로 읽게 한다. 기록하지 못해도 호출한 동작에는 영향이 없다.
+ *
+ * Examples
+ * --------
+ * | text                         | 덧붙는 줄                                                        |
+ * |------------------------------|------------------------------------------------------------------|
+ * | `Stop requested: outdated`   | `2026-10-14T01:00:00.000Z paddock:Main INFO Stop requested: outdated` |
+ */
+function note(
+    directory,
+    text,
+) {
+    if (directory) {
+        try {
+            fs.appendFileSync(path.join(directory, 'backend.log'), `${new Date().toISOString()} paddock:Main INFO ${text}\n`);
+        } catch { /* 기록 실패가 종료·시작 동작을 막으면 안 된다. */ }
+    }
+}
+
+/**
  * 백엔드를 정상 절차로 끝내고 사라질 때까지 기다린다. 정상 절차가 통하지 않으면(옛 버전의 백엔드·응답 없음) 신호로 끝낸다.
  * 백엔드는 정상 종료 때 자기 터미널 프로세스도 함께 정리한다. 제한 시간 안에 끝나지 않으면 강제 종료한다.
+ *
+ * `reason`은 끝내는 이유로, 백엔드가 `Stop requested: <reason>`으로 기록한다. 신호·강제 종료로 넘어간 경우는
+ * `directory`의 `backend.log`에 앱이 직접 적는다(`directory`가 없으면 적지 않는다).
  */
 async function stop(
     backend,
+    reason = 'unknown',
+    directory = undefined,
 ) {
     const { pid, port, token } = backend;
     if (isAlive(pid)) {
-        const reply = port && token ? await callBackend(port, token, 'POST', '/paddock/session/stop') : null;
+        const reply = port && token ? await callBackend(port, token, 'POST', '/paddock/session/stop', { reason }) : null;
         if (!reply || reply.status !== 202) {
+            note(directory, `Stop request not accepted (pid=${pid}, reason=${reason}); terminating the process`);
             if (process.platform === 'win32') {
                 childProcess.spawnSync('taskkill.exe', ['/pid', String(pid), '/t', '/f'], { windowsHide: true });
             } else {
@@ -269,6 +298,7 @@ async function stop(
             await new Promise((resolve) => setTimeout(resolve, 100));
         }
         if (isAlive(pid)) {
+            note(directory, `Backend did not stop within ${STOP_TIMEOUT_MS} ms (pid=${pid}, reason=${reason}); force killing`);
             if (process.platform === 'win32') childProcess.spawnSync('taskkill.exe', ['/pid', String(pid), '/t', '/f'], { windowsHide: true });
             else signalGroup(pid, 'SIGKILL');
         }
@@ -316,4 +346,4 @@ function signalGroup(
     }
 }
 
-module.exports = { STATE_FILE, QUIT_CHOICE_FILE, QUIT_CHOICE, formatQuitChoice, takeQuitChoice, readState, writeState, clearState, isAlive, isListening, freePort, fingerprintOf, sharedEnvironment, callBackend, countTerminals, shareEnvironment, stop, acquireLock };
+module.exports = { STATE_FILE, QUIT_CHOICE_FILE, QUIT_CHOICE, formatQuitChoice, takeQuitChoice, readState, writeState, clearState, isAlive, isListening, freePort, fingerprintOf, sharedEnvironment, callBackend, countTerminals, shareEnvironment, note, stop, acquireLock };
