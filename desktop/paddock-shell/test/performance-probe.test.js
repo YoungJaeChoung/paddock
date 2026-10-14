@@ -36,3 +36,17 @@ test('PP04: an oversize log keeps only whole lines from its newer half', () => {
     assert.ok(kept.length < PROBE.MAX_FILE_BYTES);
     assert.ok(kept.split('\n').filter(Boolean).every(text => JSON.parse(text).filler.length === 1000));
 });
+
+test('PP05: renderer samples keep only known numeric fields and reasons', () => {
+    const { rendererLogEntry } = require('../performance-probe');
+    const sample = { reason: 'input', longestTaskMs: 80.4, n_longTasks: 2, longTaskTotalMs: 140, keyDelayMaxMs: 120, n_slowKeys: 3, note: 'x' };
+    const entry = rendererLogEntry(sample, 0);
+    assert.deepEqual(entry, { at: new Date(0).toISOString(), source: 'renderer', reason: 'input', longestTaskMs: 80, n_longTasks: 2, longTaskTotalMs: 140, keyDelayMaxMs: 120, n_slowKeys: 3 });
+    assert.equal(rendererLogEntry({ ...sample, reason: 'other' }, 0), null);
+    assert.equal(rendererLogEntry({ ...sample, n_slowKeys: undefined }, 0), null);
+    assert.equal(rendererLogEntry(null, 0), null);
+});
+
+test('PP06: main samples are marked with their source', () => {
+    assert.equal(evaluateSample(QUIET, SMALL, 1000, null).entry.source, 'main');
+});

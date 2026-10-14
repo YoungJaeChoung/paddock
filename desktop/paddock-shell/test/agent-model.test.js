@@ -180,3 +180,14 @@ test('AM-SOUND: a second done sound inside the cooldown is skipped', () => {
     assert.equal(shouldSound(1000, 1000 + ACTIVITY.SOUND_COOLDOWN_MS - 1), false);
     assert.equal(shouldSound(1000, 1000 + ACTIVITY.SOUND_COOLDOWN_MS), true);
 });
+
+test('AM-TITLE: 진행 표시 기호만 바뀐 제목은 같은 제목으로 본다', () => {
+    assert.equal(agent.titleWithoutProgress('◐ Rivers paragraph'), agent.titleWithoutProgress('◑ Rivers paragraph'));
+    assert.equal(agent.titleWithoutProgress('✳ Claude Code'), 'Claude Code');
+    assert.equal(agent.titleWithoutProgress('⠂ build'), 'build');
+    assert.equal(agent.titleWithoutProgress('◐'), agent.titleWithoutProgress('◑'));
+    assert.equal(agent.titleWithoutProgress('◐x'), '◐x');
+    assert.equal(agent.titleWithoutProgress('~/work'), '~/work');
+    assert.equal(agent.titleWithoutProgress('bash'), 'bash');
+    assert.equal(agent.titleWithoutProgress(undefined), '');
+});

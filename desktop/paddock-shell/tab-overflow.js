@@ -2,10 +2,38 @@
 // 탭 생성·선택·이벤트 등록은 호출자가 맡고, 이 모듈은 전달받은 탭 줄의 DOM과 키보드 초점만 다룬다.
 
 /**
+ * 탭 줄의 지금 내용과 새로 만든 내용이 같은지. 키보드 이동 순서(tabindex)는 replaceTabs가 넣은 값이라 비교에서 뺀다.
+ * 같으면 바꾸지 않아, 내용이 같은 갱신이 창 전체의 배치 계산을 일으켜 키 입력 처리를 늦추지 않게 한다.
+ */
+function isSameTabs(
+    strip,
+    contents,
+) {
+    const comparable = (nodes) => {
+        const box = document.createElement('div');
+        box.append(...[...nodes].map(node => node.cloneNode(true)));
+        for (const node of box.querySelectorAll('[tabindex]')) node.removeAttribute('tabindex');
+        return box;
+    };
+    return comparable(strip.childNodes).isEqualNode(comparable(contents.childNodes));
+}
+
+/**
  * 탭 내용을 갱신해도 같은 버튼의 키보드 초점과 사용자가 옮긴 스크롤을 유지한다.
  * 선택이 바뀌었는지를 돌려주므로 호출자는 새로 선택한 탭만 화면 안으로 옮길 수 있다.
+ * 내용이 지금과 같으면 기존 탭을 그대로 두고 선택도 바뀌지 않은 것으로 돌려준다.
  */
 function replaceTabs(
+    strip,
+    contents,
+) {
+    let isSelectionChanged = false;
+    if (!isSameTabs(strip, contents)) isSelectionChanged = rebuildTabs(strip, contents);
+    return isSelectionChanged;
+}
+
+/** 탭 줄을 새 내용으로 바꾸고 초점·스크롤·키보드 이동 순서를 되살린다. 선택한 탭이 바뀌었는지를 돌려준다. */
+function rebuildTabs(
     strip,
     contents,
 ) {

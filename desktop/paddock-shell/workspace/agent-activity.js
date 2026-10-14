@@ -28,7 +28,8 @@ class AgentActivity {
         this.checkAgents();
         this.workspace.rootSwitcher.showRootOf(this.workspace.currentWidget());
         void this.workspace.refreshWorkPresence();
-        await this.workspace.refresh();
+        // 입력 중이면 다시 그리기를 입력이 멎을 때로 미룬다(refreshSoon).
+        this.workspace.refreshSoon();
         await this.workspace.statusBar.refreshMemory();
         await this.workspace.statusBar.refreshUsage({ periodic: true });
     }

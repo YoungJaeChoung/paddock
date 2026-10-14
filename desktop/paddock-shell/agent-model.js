@@ -254,8 +254,33 @@ function settle(
     return { activity: next, finished };
 }
 
+/**
+ * 터미널 제목에서 에이전트가 진행 표시로 붙인 맨 앞 기호를 뗀 것.
+ *
+ * Claude Code 같은 에이전트는 일하는 동안 제목 맨 앞 기호를 1초쯤마다 바꾼다(`◐ 작업` ↔ `◑ 작업`). 화면 목록을 다시 그릴지 정할 때
+ * 이 값을 비교하면, 기호만 바뀐 제목 변경으로 사이드바·탭 줄을 다시 그려 키 입력 처리를 늦추지 않는다.
+ * 맨 앞이 기호 문자(유니코드 So) 하나이고 그 뒤가 공백이거나 끝일 때만 뗀다. 글자·숫자·경로로 시작하는 제목은 그대로다.
+ *
+ * Examples
+ * --------
+ * | 제목                    | 결과                |
+ * | ----------------------- | ------------------- |
+ * | `◐ Rivers paragraph`    | `Rivers paragraph`  |
+ * | `✳ Claude Code`         | `Claude Code`       |
+ * | `⠂ build`               | `build`             |
+ * | `◐`                     | ``                  |
+ * | `~/work`                | `~/work`            |
+ * | `bash`                  | `bash`              |
+ */
+function titleWithoutProgress(
+    title,
+) {
+    return String(title ?? '').replace(/^\p{So}(\s+|$)/u, '');
+}
+
 module.exports = {
     ACTIVITY,
+    titleWithoutProgress,
     PROGRAM_STATUS,
     parseProgramStatus,
     noteStatus,

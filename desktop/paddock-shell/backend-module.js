@@ -32,6 +32,8 @@ const windowsProcesses = require('./windows-processes');
 const { attributeAccount } = require('./agent-account');
 const { foregroundProcess } = require('./terminal-inspector');
 const { terminalHistoryService } = require('./terminal-history-service');
+const { readMacForegrounds } = require('./mac-processes');
+const { appendLogLine, rendererLogEntry } = require('./performance-probe');
 const { trustWslRepositories } = require('./git-environment');
 
 const accounts = new AccountProfiles();
@@ -255,6 +257,7 @@ const accountSessions = new AccountSessions({ accounts, readWslInfo, readWindows
  * 기본 Codex도 같다(`codex.account`): 로그인한 기본 환경(이 컴퓨터·WSL)이 모두 같은 등록 계정 하나와 맞을 때만 붙는다.
  * 대조는 같은 실행 환경(WSL은 같은 배포판)의 등록 계정끼리만 하고, 같은 로그인의 등록 계정이 둘 이상이면 붙이지 않는다.
  * provider를 지정하면 다른 도구의 설정이나 사용량을 읽지 않는다. 둘 다 생략하면 두 도구를 읽는다.
+ * `POST /paddock/performance` (JSON: renderer-probe.js의 기록 한 줄) → 204. 숫자 칸만 logs/performance.log에 붙인다. 모르는 이유·빠진 칸이면 400이다.
  * `GET /paddock/foreground?pids=1,2` → `{ "1": { program: "claude", account }, "2": { program: "bash", account: null } }`
  *   셸 pid별 실행 중 프로그램 이름(모르면 program이 null)과, claude·codex면 그 프로세스 환경으로 정한 계정(agent-account.js의 attributeAccount 결과).
  *   account는 `{ kind: 'default' }`·`{ kind: 'profile', profile: { id, provider, label, runtime } }`·`{ kind: 'custom' }`이고,
@@ -310,6 +313,21 @@ class PaddockStatusRoutes {
             if (typeof request.query.windowId === 'string') this.workPresence.retire(request.query.windowId, isAlive);
             response.status(204).end();
         });
+        // 화면이 잰 멈춤·입력 지연(renderer-probe.js)을 메인 프로세스 기록과 같은 logs/performance.log에 남긴다. 숫자 칸만 받아 적는다.
+        app.post('/paddock/performance', express.json({ limit: '4kb' }), (request, response) => {
+            const entry = rendererLogEntry(request.body, Date.now());
+            if (!entry) {
+                response.status(400).json({ error: 'Unknown performance sample' });
+            } else {
+                try {
+                    appendLogLine(path.join(paddockConfigDirectory(), 'logs'), entry);
+                } catch (error) {
+                    // 기록하지 못해도(권한·디스크) 앱 동작에는 영향이 없다.
+                    console.warn('Performance sample could not be recorded:', error);
+                }
+                response.status(204).end();
+            }
+        });
         app.get('/paddock/memory', async (request, response) => {
             const total = os.totalmem();
             // Linux(MemAvailable)·Windows(사용 가능 메모리)의 os.freemem()은 캐시를 이미 가용으로 센다. macOS만 캐시를 뺀 사용량을 따로 읽는다.
@@ -331,8 +349,11 @@ class PaddockStatusRoutes {
             const pids = String(request.query.pids || '').split(',').filter(value => /^\d+$/.test(value));
             // Windows에는 터미널의 앞쪽 프로세스가 없어 프로세스 목록에서 셸의 자식을 찾는다. 목록을 못 읽으면 모두 null이다.
             const processes = process.platform === 'win32' && pids.length ? await this.windowsProcesses.read().catch(() => []) : [];
+            // macOS는 ps를 실행해야 해서, 셸마다 기다리며 실행하면 그동안 터미널 입력 중계가 멈춘다. 모든 셸을 한 번에 비동기로 읽는다.
+            const macForegrounds = process.platform === 'darwin' ? await readMacForegrounds(pids.map(Number)) : null;
             const foregrounds = pids.map(pid => [pid, process.platform === 'win32'
-                ? { argv: windowsProcesses.foregroundArgv(processes, Number(pid)), env: null } : foregroundProcess(Number(pid))]);
+                ? { argv: windowsProcesses.foregroundArgv(processes, Number(pid)), env: null }
+                : macForegrounds ? macForegrounds.get(Number(pid)) : foregroundProcess(Number(pid))]);
             // 계정 목록은 에이전트의 환경을 읽은 경우에만 한 번 읽는다. 읽지 못하면 모든 계정 폴더를 미등록으로 보지 않도록 판정을 건너뛴다.
             const profiles = foregrounds.some(([, item]) => item?.env && agent.isAgent(agent.programName(item.argv || []))) ? await accounts.list().catch(() => null) : null;
             for (const [pid, item] of foregrounds) {

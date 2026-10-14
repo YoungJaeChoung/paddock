@@ -1,5 +1,6 @@
 /**
  * 메인 프로세스의 멈춤과 앱 전체(렌더러·GPU·백엔드 포함) 메모리를 주기적으로 재서 파일에 남긴다.
+ * 화면(렌더러)의 멈춤과 입력 지연은 renderer-probe.js가 재서 백엔드를 거쳐 같은 파일에 남긴다(rendererLogEntry).
  *
  * 성능을 고치기 전에 "어디서 얼마나 멈추고 얼마나 쓰는가"를 같은 방식으로 재야 고친 효과를 비교할 수 있어서 존재한다.
  * 평소에는 기록하지 않고, 이벤트 루프가 한도 이상 멈췄거나 메모리가 한도 이상일 때와 일정 간격마다만 한 줄씩 남긴다.
@@ -53,7 +54,7 @@ function evaluateSample(
     if (stallMs >= PROBE.STALL_MS) reason = 'stall';
     else if (memoryMb >= PROBE.MEMORY_MB) reason = 'memory';
     else if (lastLoggedAt === null || now - lastLoggedAt >= PROBE.HEARTBEAT_MS) reason = 'heartbeat';
-    const entry = { at: new Date(now).toISOString(), reason, stallMs, p99Ms, memoryMb, memoryByType };
+    const entry = { at: new Date(now).toISOString(), source: 'main', reason, stallMs, p99Ms, memoryMb, memoryByType };
     return { isLogged: reason !== null, reason, entry };
 }
 
@@ -69,6 +70,42 @@ function trimLog(
     }
 }
 
+/** 기록 한 줄을 폴더의 기록 파일 끝에 붙이고, 파일이 한도를 넘었으면 줄인다. 폴더가 없으면 만든다. */
+function appendLogLine(
+    directory,
+    entry,
+) {
+    const file = path.join(directory, PROBE.FILE_NAME);
+    fs.mkdirSync(directory, { recursive: true });
+    fs.appendFileSync(file, `${JSON.stringify(entry)}\n`);
+    trimLog(file);
+}
+
+// 화면(renderer-probe.js)이 보낸 기록에서 받아 적는 칸. 숫자 칸만 옮겨, 화면이 보낸 다른 값이 기록 파일에 들어가지 않게 한다.
+const RENDERER_FIELDS = ['longestTaskMs', 'n_longTasks', 'longTaskTotalMs', 'keyDelayMaxMs', 'n_slowKeys'];
+const RENDERER_REASONS = ['stall', 'input', 'heartbeat'];
+
+/**
+ * 화면이 보낸 측정값을 기록 한 줄로 만든다. 시각은 받은 시각이고, 이유가 알려진 값이 아니거나 숫자 칸이 빠지면 null이다.
+ *
+ * Examples:
+ *   { reason: 'input', longestTaskMs: 80, ..., n_slowKeys: 3 } → { at, source: 'renderer', reason: 'input', longestTaskMs: 80, ... }
+ *   { reason: 'input', note: '...', ... }                      → note는 빠진다
+ *   { reason: 'other', ... } · 숫자 칸 하나라도 빠짐            → null
+ */
+function rendererLogEntry(
+    body,
+    now,
+) {
+    let entry = null;
+    const isComplete = RENDERER_FIELDS.every(field => Number.isFinite(body?.[field]) && body[field] >= 0);
+    if (RENDERER_REASONS.includes(body?.reason) && isComplete) {
+        entry = { at: new Date(now).toISOString(), source: 'renderer', reason: body.reason };
+        for (const field of RENDERER_FIELDS) entry[field] = Math.round(body[field]);
+    }
+    return entry;
+}
+
 /**
  * 측정을 시작하고 멈추는 함수를 반환한다. `getMetrics`는 Electron의 `app.getAppMetrics()`를 `{ type, workingSetKb }`로 바꿔 돌려준다.
  * 기록을 쓰지 못해도(폴더 없음·권한) 앱 동작에는 영향이 없도록 오류를 삼킨다.
@@ -79,7 +116,6 @@ function startPerformanceProbe(
 ) {
     const histogram = monitorEventLoopDelay({ resolution: 20 });
     histogram.enable();
-    const file = path.join(directory, PROBE.FILE_NAME);
     let lastLoggedAt = null;
     const timer = setInterval(() => {
         try {
@@ -92,9 +128,7 @@ function startPerformanceProbe(
             );
             histogram.reset();
             if (result.isLogged) {
-                fs.mkdirSync(directory, { recursive: true });
-                fs.appendFileSync(file, `${JSON.stringify(result.entry)}\n`);
-                trimLog(file);
+                appendLogLine(directory, result.entry);
                 lastLoggedAt = now;
             }
         } catch (error) {
@@ -113,5 +147,7 @@ module.exports = {
     PROBE,
     evaluateSample,
     trimLog,
+    appendLogLine,
+    rendererLogEntry,
     startPerformanceProbe,
 };

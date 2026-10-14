@@ -40,17 +40,25 @@ class StatusBar {
         const scope = this.workspace.agentActivity.runningScope(current);
         this.workspace.usagePanel?.observe(current?.id, scope, this.workspace.programs.get(current?.id));
         const saveable = current && Saveable.get(current);
-        status.replaceChildren();
+        const content = document.createDocumentFragment();
         const accountLabel = this.workspace.agentActivity.runningAccountLabel(current);
         const label = element('span', '', accountLabel ? accountLabel : saveable ? (saveable.dirty ? 'Unsaved changes' : 'Saved') : this.workspace.isTerminal(current) ? (this.remote.alive ? `${this.remote.name}` : 'Local shell') : 'Ready');
-        status.append(label);
+        content.append(label);
         if (saveable?.dirty) {
             const save = button('Save', 'save-action', () => this.workspace.run(async () => {
                 save.disabled = true;
                 await saveable.save();
                 await this.workspace.refresh();
             }));
-            status.append(save);
+            content.append(save);
+        }
+        // 내용이 같으면 바꾸지 않는다. 같은 내용으로 바꿔도 창 전체의 배치 계산이 일어나 키 입력 처리가 늦어진다.
+        // Save 버튼이 저장할 화면이 달라지지 않도록 화면 id도 비교한다.
+        // 지금 화면의 HTML과 비교하므로, 눌린 뒤 꺼진 버튼처럼 그 사이 바뀐 상태는 다시 그려 되돌린다.
+        const html = [...content.childNodes].map(node => node.outerHTML).join('');
+        if (status.paddockWidgetId !== current?.id || status.innerHTML !== html) {
+            status.paddockWidgetId = current?.id;
+            status.replaceChildren(content);
         }
     }
 

@@ -42,6 +42,8 @@ const wsl = require('./wsl-terminals');
 const { distributionOf, withDistribution, environmentLabel } = require('./terminal-environment');
 const cwdReport = require('./cwd-report');
 const { UsagePanel } = require('./usage-panel');
+const agent = require('./agent-model');
+const { startRendererProbe } = require('./renderer-probe');
 const agentAccount = require('./agent-account');
 const { STORAGE, STATUS_ITEMS, MARKDOWN_PREVIEW, element, button, attachMenuKeys } = require('./workspace/shared');
 const { RootSwitcher } = require('./workspace/root-switcher');
@@ -59,6 +61,14 @@ const { MemoryNotice } = require('./workspace/memory-notice');
 // 터미널 현재 폴더·실행 중 프로그램·메모리처럼 이벤트가 없는 값을 다시 읽는 간격(ms).
 const REFRESH_INTERVAL = 2000;
 const TICK_STUCK_MS = 30000;
+
+// 목록 다시 그리기를 입력이 잠깐 멎을 때로 미루는 규칙(refreshSoon). 다시 그리는 동안은 키 입력 처리가 밀려 글자가 늦게 나타난다.
+const TYPING = {
+    // 마지막 키를 누른 뒤 이 시간이 지나야 다시 그린다(ms).
+    QUIET_MS: 150,
+    // 계속 입력해도 이 시간보다 오래 미루지는 않는다(ms). 진행 표시·완료 표시가 너무 늦지 않게 한다.
+    MAX_DEFER_MS: 1000,
+};
 
 // 본문 나누기·탭 이동·사이드바 명령. 새 터미널·터미널 분할·사이드바 단축키는 VS Code와 같다.
 const PADDOCK_COMMANDS = {
@@ -462,7 +472,17 @@ class PaddockWorkspace {
             }
         });
         this.shell.onDidAddWidget((widget) => {
-            widget.title.changed.connect(() => this.refreshSoon());
+            // 에이전트는 일하는 동안 제목 맨 앞 진행 기호를 1초쯤마다 바꾼다. 기호만 바뀐 변경은 목록을 다시 그리지 않는다.
+            // 터미널마다 다시 그리면 그동안 키 입력 처리가 밀려 글자가 늦게 나타난다.
+            const titleKey = () => JSON.stringify([agent.titleWithoutProgress(widget.title.label), agent.titleWithoutProgress(widget.title.caption), widget.title.className, widget.title.iconClass]);
+            let shownTitle = titleKey();
+            widget.title.changed.connect(() => {
+                const next = titleKey();
+                if (next !== shownTitle) {
+                    shownTitle = next;
+                    this.refreshSoon();
+                }
+            });
             if (this.isTerminal(widget)) this.agentActivity.watchTerminal(widget);
             if (widget instanceof WebviewWidget && widget.viewType === MARKDOWN_PREVIEW.VIEW_TYPE && this.pendingMarkdownSource) {
                 this.markdownPreviewSources.set(widget.id, this.pendingMarkdownSource);
@@ -782,6 +802,15 @@ class PaddockWorkspace {
         this.bindKeys();
         this.routeTerminalCommands();
         await this.shell.releasePanelWidgets();
+        // 마지막 키 입력 시각. 목록 다시 그리기를 입력 사이에 끼우지 않는 데 쓴다(refreshSoon). 한글 조합 중의 키도 센다.
+        window.addEventListener('keydown', () => { this.lastKeyAt = performance.now(); }, true);
+        // 화면의 긴 작업과 키 입력 지연을 logs/performance.log에 남긴다(renderer-probe.js). 보내지 못하면 그 주기는 버린다.
+        startRendererProbe(entry => fetch(new Endpoint({ path: '/paddock/performance' }).getRestUrl().toString(), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(entry),
+            signal: AbortSignal.timeout(3000),
+        }).catch(() => {}));
         this.layoutReady = true;
         void this.accountTerminals.updateAccountLabels().catch(() => {});
         this.statusBar.refreshRemote();
@@ -851,13 +880,25 @@ class PaddockWorkspace {
         }
     }
 
+    /**
+     * 목록(탭 줄·경로 줄·상태 줄·사이드바)을 곧 다시 그린다. 여러 번 불러도 한 번만 그린다.
+     * 방금 키를 눌렀으면 입력이 TYPING.QUIET_MS 동안 멎을 때까지 미루되, 처음 요청에서 TYPING.MAX_DEFER_MS가 지나면 그린다.
+     */
     refreshSoon() {
         if (this.layoutReady && !this.refreshQueued) {
             this.refreshQueued = true;
-            queueMicrotask(() => {
-                this.refreshQueued = false;
-                this.run(() => this.refresh());
-            });
+            const queuedAt = performance.now();
+            const flush = () => {
+                const now = performance.now();
+                const waitMs = Math.min((this.lastKeyAt ?? -Infinity) + TYPING.QUIET_MS, queuedAt + TYPING.MAX_DEFER_MS) - now;
+                if (waitMs > 0) {
+                    setTimeout(flush, waitMs);
+                } else {
+                    this.refreshQueued = false;
+                    this.run(() => this.refresh());
+                }
+            };
+            queueMicrotask(flush);
         }
     }
 

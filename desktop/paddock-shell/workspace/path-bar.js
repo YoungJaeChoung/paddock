@@ -82,7 +82,7 @@ class PathBar {
                 bar = element('div', 'path-bar');
                 tabBar.node.append(bar);
             }
-            bar.replaceChildren();
+            const content = document.createDocumentFragment();
             // 한 칸이거나 열의 맨 위 칸은 위쪽 탭 줄의 탭이 이름을 맡으므로 줄을 1px로 접는다. 아래 칸은 자기 실제 탭 줄이 이름을 맡는다.
             // 접는 기준은 화면 종류가 아니라 위쪽 줄에 실제로 오른 탭이 있는지다. 위쪽 줄에 없는 화면은 이름 줄이 이름과 닫기를 맡는다.
             const hasTabAbove = !isSplit || (topPanes.has(tabBar) && !showsTabs);
@@ -98,19 +98,27 @@ class PathBar {
             if (widget && !isCompactPane) {
                 const parts = this.filePathParts(widget);
                 // 파일이 아닌 화면(설정 등)은 폴더 없이 화면 이름만 보인다.
-                if (parts.folder) bar.append(codicon('file'), element('span', 'path-folder', parts.folder), codicon('chevron-right'));
-                bar.append(element('span', 'path-item', parts.item));
-                bar.append(element('span', 'path-space'));
+                if (parts.folder) content.append(codicon('file'), element('span', 'path-folder', parts.folder), codicon('chevron-right'));
+                content.append(element('span', 'path-item', parts.item));
+                content.append(element('span', 'path-space'));
                 // 브랜치는 위쪽 줄의 브랜치 버튼이 보이므로 위쪽 줄에 없는 화면에만 적는다(같은 정보 두 번 금지).
-                if (parts.branch && !listedIds.has(widget.id)) bar.append(codicon('git-branch'), element('span', 'path-branch', parts.branch));
+                if (parts.branch && !listedIds.has(widget.id)) content.append(codicon('git-branch'), element('span', 'path-branch', parts.branch));
                 // 닫기는 위쪽 탭 줄의 ×가 맡는다. 위쪽 줄에 없는 화면(설정 등)만 이름 줄에 닫기를 둔다.
                 if (!listedIds.has(widget.id)) {
                     const actions = element('span', 'path-actions');
                     const close = button([codicon('close')], 'path-action', () => this.workspace.run(() => this.workspace.closeWidget(widget)));
                     close.title = 'Close';
                     actions.append(close);
-                    bar.append(actions);
+                    content.append(actions);
                 }
+            }
+            // 내용이 같으면 바꾸지 않는다. 같은 내용으로 바꿔도 창 전체의 배치 계산이 일어나 키 입력 처리가 늦어진다.
+            // 닫기 버튼이 가리키는 화면이 달라지지 않도록 화면 id도 비교한다.
+            // 지금 화면의 HTML과 비교하므로, 눌린 뒤 꺼진 버튼처럼 그 사이 바뀐 상태는 다시 그려 되돌린다.
+            const html = [...content.childNodes].map(node => node.outerHTML).join('');
+            if (bar.paddockWidgetId !== widget?.id || bar.innerHTML !== html) {
+                bar.paddockWidgetId = widget?.id;
+                bar.replaceChildren(content);
             }
         }
         // 화면 이름 줄(30px)과 얇은 구분선(1px)이 바뀌면 본문 칸 배치를 다시 잰다.

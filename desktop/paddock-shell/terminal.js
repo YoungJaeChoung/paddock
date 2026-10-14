@@ -536,8 +536,13 @@ class PaddockTerminal extends TerminalWidgetImpl {
         };
         this.toDispose.push(this.webglAddon.onRemoveTextureAtlasCanvas(reuploadGlyphs));
         // 창을 오래 가려 두거나 절전에서 돌아오면 그래픽 연결은 살아 있어도 GPU에 올린 글자 그림이 손상될 수 있다. 창으로 돌아올 때 같은 방법으로 다시 올린다.
+        // 다른 탭에 가려진 터미널은 지금 다시 올리지 않고 보이게 될 때 올린다(onAfterShow). 창으로 돌아올 때마다 모든 터미널을
+        // 다시 그리면 그동안 키 입력 처리가 밀린다.
         const redrawText = () => {
-            if (document.visibilityState === 'visible') reuploadGlyphs();
+            if (document.visibilityState === 'visible') {
+                if (this.isVisible) reuploadGlyphs();
+                else this.isGlyphReuploadPending = true;
+            }
         };
         document.addEventListener('visibilitychange', redrawText);
         window.addEventListener('focus', redrawText);
@@ -547,6 +552,17 @@ class PaddockTerminal extends TerminalWidgetImpl {
                 window.removeEventListener('focus', redrawText);
             },
         });
+    }
+
+    /** 가려진 동안 창으로 돌아온 적이 있으면, 보이게 될 때 글자 그림을 다시 올린다(init의 redrawText). */
+    onAfterShow(
+        msg,
+    ) {
+        super.onAfterShow(msg);
+        if (this.isGlyphReuploadPending) {
+            this.isGlyphReuploadPending = false;
+            this.reuploadGlyphTextures();
+        }
     }
 
     /**
