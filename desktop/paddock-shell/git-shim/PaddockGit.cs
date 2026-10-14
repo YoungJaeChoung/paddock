@@ -8,6 +8,10 @@
 // 아니면 진짜 Windows git에 인자 그대로 넘긴다. 어느 쪽이든 표준 입출력 핸들을 자식 프로세스에 직접 물려 주고(바이너리 안전),
 // 종료 코드를 그대로 돌려준다. 이 프로세스가 강제 종료되면 자식도 함께 끝난다(작업 개체).
 //
+// 예외: 확장이 GIT_EDITOR·GIT_SEQUENCE_EDITOR로 Windows 노드 스크립트를 넘기는 호출(빈 입력란 커밋 등)은 WSL이 실행할 수 없어 Windows git으로 돌린다.
+// 편집기 대화는 드물어 9P 경쟁 위험이 작다. `true` 같은 단순 명령(rebase 계속)은 WSL로 그대로 넘긴다.
+// askpass 계열은 넘기지 않는다(WSL에서 동작할 수 없고, WSL 저장소의 인증은 WSL의 credential helper가 맡는다).
+//
 // 환경 변수
 //   PADDOCK_WINDOWS_GIT        분배 대상 Windows git 경로. 없으면 기본 설치 위치(확장과 같은 순서)와 PATH(자기 폴더 제외)에서 찾는다.
 //   PADDOCK_GIT_SHIM_TRACE     1이면 실행할 명령줄을 stderr에 찍고 실행한다. dry면 찍고 실행하지 않는다.
@@ -36,9 +40,11 @@ namespace Paddock
         /// <summary>`\\wsl.localhost\Ubuntu\home\me` 같은 경로에서 배포판 이름과 Linux 경로를 꺼낸다. WSL 경로가 아니면 false.</summary>
         public static bool TryParseWslPath(
             string path,
+            out string host,
             out string distro,
             out string linuxPath)
         {
+            host = null;
             distro = null;
             linuxPath = null;
             bool matched = false;
@@ -49,11 +55,11 @@ namespace Paddock
                 {
                     hostEnd++;
                 }
-                string host = path.Substring(2, hostEnd - 2);
+                string hostName = path.Substring(2, hostEnd - 2);
                 bool isWslHost = false;
                 foreach (string candidate in WslHosts)
                 {
-                    if (string.Equals(host, candidate, StringComparison.OrdinalIgnoreCase))
+                    if (string.Equals(hostName, candidate, StringComparison.OrdinalIgnoreCase))
                     {
                         isWslHost = true;
                     }
@@ -68,6 +74,7 @@ namespace Paddock
                     string name = path.Substring(hostEnd + 1, distroEnd - hostEnd - 1);
                     if (name.Length > 0)
                     {
+                        host = hostName;
                         distro = name;
                         string rest = path.Substring(distroEnd).Replace('\\', '/');
                         linuxPath = rest.Length == 0 ? "/" : rest;
@@ -112,13 +119,14 @@ namespace Paddock
                 }
             }
             string converted = value;
+            string pathHost;
             string pathDistro;
             string linuxPath;
             if (IsDrivePath(value))
             {
                 converted = "/mnt/" + char.ToLowerInvariant(value[0]) + value.Substring(2).Replace('\\', '/');
             }
-            else if (TryParseWslPath(value, out pathDistro, out linuxPath)
+            else if (TryParseWslPath(value, out pathHost, out pathDistro, out linuxPath)
                 && string.Equals(pathDistro, distro, StringComparison.OrdinalIgnoreCase))
             {
                 converted = linuxPath;
@@ -133,15 +141,17 @@ namespace Paddock
 
         /// <summary>git 출력에 든 Linux 절대 경로를 Windows git이 같은 저장소에서 내는 꼴로 되돌린다.</summary>
         /// <remarks>
-        /// | 입력                | distro | 결과                                 |
-        /// |---------------------|--------|--------------------------------------|
-        /// | /home/me/repo       | Ubuntu | //wsl.localhost/Ubuntu/home/me/repo  |
-        /// | /mnt/c/Users/me/r   | Ubuntu | C:/Users/me/r                        |
-        /// | .git                | Ubuntu | .git (절대 경로가 아니면 그대로)     |
+        /// | 입력                | wslRoot                | 결과                                 |
+        /// |---------------------|------------------------|--------------------------------------|
+        /// | /home/me/repo       | //wsl.localhost/Ubuntu | //wsl.localhost/Ubuntu/home/me/repo  |
+        /// | /home/me/repo       | //wsl$/Ubuntu          | //wsl$/Ubuntu/home/me/repo           |
+        /// | /mnt/c/Users/me/r   | //wsl.localhost/Ubuntu | C:/Users/me/r                        |
+        /// | .git                | //wsl.localhost/Ubuntu | .git (절대 경로가 아니면 그대로)     |
+        /// wslRoot는 현재 폴더가 들어온 표기(`wsl.localhost` 또는 `wsl$`)를 그대로 따른다. Windows git이 같은 폴더에서 내는 꼴과 같게 하려는 것이다.
         /// </remarks>
         public static string ToWindowsPath(
             string linuxPath,
-            string distro)
+            string wslRoot)
         {
             string converted = linuxPath;
             if (linuxPath.StartsWith("/"))
@@ -157,7 +167,7 @@ namespace Paddock
                 }
                 else
                 {
-                    converted = "//wsl.localhost/" + distro + linuxPath;
+                    converted = wslRoot + linuxPath;
                 }
             }
             return converted;
@@ -166,7 +176,7 @@ namespace Paddock
         /// <summary>줄 단위 출력에서 경로로 된 줄을 Windows 꼴로 바꾼다. `worktree <경로>`처럼 접두가 붙은 줄도 다룬다.</summary>
         public static string ToWindowsOutput(
             string text,
-            string distro)
+            string wslRoot)
         {
             string[] lines = text.Split('\n');
             for (int i = 0; i < lines.Length; i++)
@@ -176,15 +186,41 @@ namespace Paddock
                 string body = hasReturn ? line.Substring(0, line.Length - 1) : line;
                 if (body.StartsWith("worktree /"))
                 {
-                    body = "worktree " + ToWindowsPath(body.Substring("worktree ".Length), distro);
+                    body = "worktree " + ToWindowsPath(body.Substring("worktree ".Length), wslRoot);
                 }
                 else
                 {
-                    body = ToWindowsPath(body, distro);
+                    body = ToWindowsPath(body, wslRoot);
                 }
                 lines[i] = hasReturn ? body + "\r" : body;
             }
             return string.Join("\n", lines);
+        }
+
+        /// <summary>GIT_EDITOR·GIT_SEQUENCE_EDITOR 값이 WSL 안에서도 같은 뜻인지. 비었거나 경로·공백 없는 단순 명령(true, cat, `:`)이면 참.</summary>
+        /// <remarks>
+        /// 확장은 rebase 계속에 `GIT_EDITOR=true`를, 빈 입력란 커밋에 확장 폴더의 Windows 노드 스크립트(`C:\…\git-editor.sh`)를 넘긴다.
+        /// 앞은 WSL에서도 같으니 그대로 넘기고, 뒤는 WSL이 실행할 수 없으므로 그 호출만 Windows git으로 돌린다.
+        /// | 값                      | 결과 |
+        /// |-------------------------|------|
+        /// | (없음)·true·:·cat       | 참   |
+        /// | C:\x\git-editor.sh      | 거짓 |
+        /// | node /x/editor.js       | 거짓 |
+        /// </remarks>
+        public static bool IsPortableEditor(string value)
+        {
+            bool portable = true;
+            if (!string.IsNullOrEmpty(value) && value != ":")
+            {
+                foreach (char c in value)
+                {
+                    if (!(char.IsLetterOrDigit(c) || c == '_' || c == '-' || c == '.'))
+                    {
+                        portable = false;
+                    }
+                }
+            }
+            return portable;
         }
 
         /// <summary>전역 옵션(-C·-c 등)을 건너뛰고 서브커맨드 위치를 찾는다. 없으면 -1.</summary>
@@ -462,10 +498,10 @@ namespace Paddock
     {
         private const int EXIT_NOT_FOUND = 127;
 
-        /// <summary>WSLENV에 있어도 WSL로 넘기지 않는 변수. Windows 경로의 스크립트·Windows 프로세스 간 IPC를 가정한다.</summary>
+        /// <summary>WSLENV에 있어도 WSL로 넘기지 않는 변수. Windows 경로의 스크립트·Windows 프로세스 간 IPC를 가정한다. 편집기 변수는 값이 단순 명령일 때만 넘긴다(IsPortableEditor).</summary>
         private static readonly string[] NotForwarded = new string[]
         {
-            "GIT_ASKPASS", "SSH_ASKPASS", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "ELECTRON_RUN_AS_NODE",
+            "GIT_ASKPASS", "SSH_ASKPASS", "ELECTRON_RUN_AS_NODE",
         };
 
         /// <summary>실행할 프로그램과 인자. 분배 결과.</summary>
@@ -474,6 +510,7 @@ namespace Paddock
             public string Program;
             public List<string> Args = new List<string>();
             public string WslDistro;
+            public string WslRoot;
         }
 
         /// <summary>Windows git 위치. 환경 변수 → 기본 설치 위치 → PATH(자기 폴더 제외) 순. 못 찾으면 null.</summary>
@@ -535,11 +572,18 @@ namespace Paddock
             string[] args)
         {
             Plan plan = new Plan();
+            string host;
             string distro;
             string linuxDirectory;
-            if (GitPaths.TryParseWslPath(currentDirectory, out distro, out linuxDirectory))
+            // 배포판 공유가 열리지 않으면(등록 해제·이름 불일치) wsl.exe가 UTF-16 오류와 종료 코드 -1을 내므로 Windows git으로 돌린다.
+            // 편집기 변수가 WSL에서 못 쓰는 값이면(확장의 Windows 노드 스크립트) 그 호출만 Windows git으로 돌린다. 편집기 대화는 드물어 9P 경쟁 위험이 작다.
+            if (GitPaths.TryParseWslPath(currentDirectory, out host, out distro, out linuxDirectory)
+                && Directory.Exists("\\\\" + host + "\\" + distro)
+                && GitPaths.IsPortableEditor(Environment.GetEnvironmentVariable("GIT_EDITOR"))
+                && GitPaths.IsPortableEditor(Environment.GetEnvironmentVariable("GIT_SEQUENCE_EDITOR")))
             {
                 plan.WslDistro = distro;
+                plan.WslRoot = "//" + host + "/" + distro;
                 plan.Program = Path.Combine(Environment.GetEnvironmentVariable("SystemRoot") ?? "C:\\Windows", "System32", "wsl.exe");
                 plan.Args.Add("-d");
                 plan.Args.Add(distro);
@@ -565,7 +609,7 @@ namespace Paddock
         {
             string[] names = new string[]
             {
-                "GIT_OPTIONAL_LOCKS", "GIT_PAGER", "GIT_HTTP_USER_AGENT", "LC_ALL", "LANG", "VSCODE_GIT_COMMAND",
+                "GIT_OPTIONAL_LOCKS", "GIT_PAGER", "GIT_HTTP_USER_AGENT", "LC_ALL", "LANG", "VSCODE_GIT_COMMAND", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR",
             };
             string[] pathNames = new string[]
             {
@@ -693,7 +737,7 @@ namespace Paddock
                 {
                     byte[] raw = ReadAll(pipeRead);
                     string text = new UTF8Encoding(false).GetString(raw);
-                    WriteAll(realStdout, new UTF8Encoding(false).GetBytes(GitPaths.ToWindowsOutput(text, plan.WslDistro)));
+                    WriteAll(realStdout, new UTF8Encoding(false).GetBytes(GitPaths.ToWindowsOutput(text, plan.WslRoot)));
                 }
                 Native.WaitForSingleObject(info.hProcess, Native.INFINITE);
                 uint code;
@@ -744,6 +788,12 @@ namespace Paddock
                 {
                     bool capturePaths = plan.WslDistro != null && GitPaths.PrintsPaths(args);
                     exitCode = Run(plan, capturePaths);
+                    if (plan.WslDistro != null && exitCode == -1)
+                    {
+                        // git은 -1(0xFFFFFFFF)로 끝나지 않는다. wsl.exe 자체가 실패한 경우다.
+                        Console.Error.WriteLine("paddock-git: wsl.exe failed to run git in '" + plan.WslDistro + "' (exit -1)");
+                        exitCode = 1;
+                    }
                 }
             }
             return exitCode;
