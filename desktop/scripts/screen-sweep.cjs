@@ -5,6 +5,7 @@
 // 임시 HOME·임시 사용자 데이터 폴더로 앱을 새로 띄우고, 끝나면 이 스크립트가 띄운 프로세스만 종료한다.
 // 기본은 작업 공간(Theia workspace)을 열지 않고 띄운다(사용자의 일상 실행). `--workspace`를 주면 임시 폴더를 작업 공간으로 열어 띄운다.
 // 어느 모드든 점검용 파일은 임시 폴더에 있고 OpenerService로 그 폴더의 파일을 직접 연다.
+// 검색은 본문 화면이 아니라 사이드바 파일 영역 안의 위젯이라 따로 점검한다(`sweepSearch`): 버튼 → 검색어 → 결과 → 결과 클릭 → × → Ctrl+Shift+F.
 // 결과: captures/screen-sweep/<날짜시각>/report.md + 화면별 PNG
 // 회귀 확인 순서: npm test → npm run build → PADDOCK_CDP_PORT=<포트> npm run smoke:shell → npm run sweep:screens (기본, 작업 공간 없음) → npm run sweep:screens -- --workspace
 // 두 모드 모두 '실패 칸 0'(설정의 두 칸 칸 이동은 설계상 예외)이어야 한다. 사용자가 쓰는 앱이 떠 있으면 다른 --port를 쓴다.
@@ -79,14 +80,6 @@ const SCREENS = [
         slug: 'extensions-list',
         match: "w.id === 'vsx-extensions-view-container'",
         open: "svc('CommandRegistry').executeCommand('vsxExtensions.toggle')",
-    },
-    {
-        name: '검색(search-in-workspace)',
-        slug: 'search',
-        match: "w.id === 'search-in-workspace'",
-        open: "svc('CommandRegistry').executeCommand('search-in-workspace.open')",
-        // Theia가 이 명령을 열린 작업 공간이 있을 때만 켠다(isEnabled). 작업 공간 없는 모드에서는 열 수 없다.
-        needsWorkspace: true,
     },
     {
         name: '출력(Output)',
@@ -648,10 +641,113 @@ async function main() {
             return row;
         }
 
+        /**
+         * 검색 행 하나를 한 상태에서 점검한다. 검사 칸의 뜻은 본문 화면 행과 다르다:
+         * 1 파일 영역 제목 줄 버튼 → 파일 목록 자리에 검색 위젯, 2 검색어 → 결과 1건 이상, 3 결과 클릭 → 본문에 파일(줄 선택)·결과 유지,
+         * 4 × → 파일 목록 복귀, 5 Ctrl+Shift+F → 같은 자리, 6 로그, 7 캡처.
+         */
+        async function sweepSearch(
+            state,
+            context,
+        ) {
+            const row = { screen: '검색(search-in-workspace)', state, cells: {}, info: { search: true } };
+            const cell = (n, ok, note) => { row.cells[n] = { ok, note: String(note).replace(/\s+/g, ' ') }; };
+            const consoleStart = consoleErrors.length;
+            const backendStart = logSize(backendLogPath);
+            const stdoutStart = logSize(stdoutPath);
+            const searchState = () => evaluate(`(() => {
+                const workspace = window.__sweep.svc('PaddockWorkspace');
+                const host = document.querySelector('.files-search');
+                const widget = window.__sweep.svc('WidgetManager').tryGetWidget('search-in-workspace');
+                const tree = widget?.resultTreeWidget;
+                const list = document.querySelector('.file-list');
+                const rect = host.getBoundingClientRect();
+                return {
+                    isOpen: !host.hidden && rect.width > 0 && rect.height > 0 && Boolean(widget && host.contains(widget.node) && widget.isVisible),
+                    filesFolder: workspace.workSidebar.filesFolder(),
+                    isListShown: Boolean(list && list.getBoundingClientRect().height > 0),
+                    n_results: tree ? [...tree.resultTree.values()].reduce((sum, file) => sum + [...file.children.values()].reduce((n, group) => n + (group.children?.length ?? 0), 0), 0) : 0,
+                    notice: document.querySelector('.paddock-search-scope')?.textContent ?? null,
+                };
+            })()`);
+            const pointOf = (selector) => evaluate(`(() => { const node = document.querySelector(${JSON.stringify(selector)}); if (!node) return null; const r = node.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+            const clickAt = async (point) => {
+                for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) await send('Input.dispatchMouseEvent', { type, x: point.x, y: point.y, button: 'left', clickCount: 1 });
+            };
+            try {
+                if (context.slug === 'unassigned') {
+                    // 미배정 터미널은 임시 HOME에 있어 점검용 파일이 없다. 점검용 폴더로 옮긴 뒤 그 현재 폴더가 검색 범위가 된다.
+                    await evaluate(`window.__sweep.svc('PaddockWorkspace').terminals.all[0].sendText(${JSON.stringify(`cd ${sandbox.work}\n`)})`);
+                    await until(`window.__sweep.svc('PaddockWorkspace').workSidebar.filesFolder() === ${JSON.stringify(`file://${sandbox.work}`)}`, 20000);
+                    await sleep(1200);
+                }
+                // 1: 파일 영역 제목 줄의 검색 버튼
+                const button = await until("Boolean(document.querySelector('.file-search'))", 10000) && await pointOf('.file-search');
+                if (!button) throw new Error('파일 영역 제목 줄에 검색 버튼이 없음');
+                await clickAt(button);
+                const opened = await until("window.__sweep.svc('PaddockWorkspace').workSidebar.filesSearchOpen", 10000);
+                await sleep(800);
+                const afterOpen = await searchState();
+                cell(1, Boolean(opened) && afterOpen.isOpen && !afterOpen.isListShown, `${afterOpen.isOpen ? '검색 위젯이 파일 영역에 보임' : '검색 위젯이 안 보임'}·파일 목록 ${afterOpen.isListShown ? '그대로' : '가려짐'}·${afterOpen.notice ?? '범위 안내 없음'}`);
+                // 2: 검색어
+                await evaluate("document.querySelector('#search-input-field')?.focus()");
+                await send('Input.insertText', { text: 'export const value' });
+                for (const type of ['keyDown', 'keyUp']) await send('Input.dispatchKeyEvent', { type, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+                const found = await until("(() => { const w = window.__sweep.svc('WidgetManager').tryGetWidget('search-in-workspace'); return [...w.resultTreeWidget.resultTree.values()].length > 0; })()", 15000);
+                await sleep(800);
+                const afterSearch = await searchState();
+                cell(2, Boolean(found) && afterSearch.n_results >= 1, `결과 ${afterSearch.n_results}건`);
+                row.capture = await capture(`search-${context.slug}-${state}.png`);
+                // 3: 결과 줄 클릭 → 본문에 b.ts가 줄 선택으로 열리고 결과 목록은 남는다.
+                const line = await evaluate(`(() => { const node = [...document.querySelectorAll('.files-search .resultLine')].find((item) => /export const value/.test(item.textContent)); if (!node) return null; const r = node.getBoundingClientRect(); return { x: r.left + 20, y: r.top + r.height / 2 }; })()`);
+                if (line) await clickAt(line);
+                const editorOpened = line ? await until("window.__sweep.svc('EditorManager').currentEditor?.editor.uri.path.base === 'b.ts'", 10000) : false;
+                await sleep(800);
+                const selection = await evaluate("(() => { const e = window.__sweep.svc('EditorManager').currentEditor; return e && e.editor.uri.path.base === 'b.ts' ? e.editor.selection : null; })()");
+                const afterClick = await searchState();
+                const selected = Boolean(selection) && selection.start.line === 0 && selection.end.character > selection.start.character;
+                cell(3, Boolean(editorOpened) && selected && afterClick.isOpen && afterClick.n_results >= 1,
+                    `${editorOpened ? '본문에 b.ts 열림' : '본문에 안 열림'}·${selected ? '줄 선택됨' : '줄 선택 안 됨'}·결과 ${afterClick.isOpen ? `${afterClick.n_results}건 유지` : '검색 위젯 닫힘'}`);
+                // 4: ×
+                await evaluate("document.querySelector('.files-search-close').click()");
+                await sleep(800);
+                const afterClose = await searchState();
+                cell(4, !afterClose.isOpen && afterClose.isListShown, `${afterClose.isOpen ? '검색이 안 닫힘' : '검색 닫힘'}·파일 목록 ${afterClose.isListShown ? '복귀' : '안 보임'}`);
+                // 5: Ctrl+Shift+F — 같은 자리, 앞 검색 결과가 그대로
+                await evaluate("document.body.focus(); true");
+                await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'F', code: 'KeyF', windowsVirtualKeyCode: 70, modifiers: 2 | 8 });
+                await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'F', code: 'KeyF', windowsVirtualKeyCode: 70, modifiers: 2 | 8 });
+                await sleep(1200);
+                const afterKey = await searchState();
+                cell(5, afterKey.isOpen && !afterKey.isListShown && afterKey.n_results >= 1, `${afterKey.isOpen ? '같은 자리에 열림' : '안 열림'}·이전 결과 ${afterKey.n_results}건`);
+                // 정리: 검색을 닫고 열어 둔 파일을 닫는다.
+                await evaluate("window.__sweep.svc('PaddockWorkspace').workSidebar.hideFilesSearch()");
+                await evaluate("window.__sweep.closeByMatch(\"w.getResourceUri?.()?.path.base === 'b.ts'\")");
+                await sleep(600);
+            } catch (error) {
+                cell(1, false, `점검 오류: ${error.message.slice(0, 120)}`);
+            }
+            await sleep(500);
+            const newConsole = [...new Set(consoleErrors.slice(consoleStart))].filter((text) => !backgroundConsole.has(text));
+            const newBackend = [...new Set([
+                ...errorLines(readLogTail(backendLogPath, backendStart)),
+                ...errorLines(readLogTail(stdoutPath, stdoutStart)),
+            ])].filter((line) => !backgroundBackend.has(line));
+            const logNote = [
+                newConsole.length ? `프런트 error ${newConsole.length}건: ${newConsole[0].replace(/\s+/g, ' ').slice(0, 100)}` : '',
+                newBackend.length ? `백엔드 ERROR ${newBackend.length}건: ${newBackend[0].slice(0, 100)}` : '',
+            ].filter(Boolean).join(' / ');
+            cell(6, !logNote, logNote || '새 오류 없음');
+            row.cells[7] = { ok: null, note: row.capture ?? '-' };
+            return row;
+        }
+
         // 미배정 터미널(작업 폴더가 아직 없는 첫 실행 상태) 한 칸 → 작업 폴더가 생긴 뒤 한 칸 → 오른쪽에 터미널 칸을 더 나눈 두 칸 순으로 점검한다.
         // 미배정 상태의 두 칸은 점검하지 않는다(작업 폴더를 만들면 첫 터미널이 옮겨져 같은 배치를 다시 만들 수 없다).
         const results = new Map();
         for (const screen of SCREENS) results.set(screen.slug, { screen, rows: [] });
+        // 검색은 본문 화면이 아니라 사이드바 파일 영역의 위젯이라 SCREENS 밖에서 따로 점검한다.
+        results.set('search', { screen: { name: '검색(search-in-workspace)', slug: 'search' }, rows: [] });
         const PASSES = [
             { context: { slug: 'unassigned', label: '미배정' }, state: STATE.SINGLE },
             { context: { slug: 'work', label: '작업 폴더' }, state: STATE.SINGLE },
@@ -683,6 +779,9 @@ async function main() {
                     results.get(screen.slug).rows.push(row);
                 }
             }
+            const searchRow = await sweepSearch(pass.state, pass.context);
+            searchRow.state = `${pass.context.label}·${pass.state === STATE.SINGLE ? '한 칸' : '두 칸'}`;
+            results.get('search').rows.push(searchRow);
         }
         rows = [...results.values()];
     } finally {
@@ -713,6 +812,7 @@ async function writeReport(
         '- 시작 때 Pencil 확장이 자동으로 여는 pencil-welcome.pen 탭은 점검 대상이 아니라 점검 전에 닫음',
         '- 상태: 미배정 = 작업 폴더가 없는 첫 실행 상태의 터미널, 작업 폴더 = 가짜 claude를 실행해 폴더가 생긴 상태, 두 칸 = 오른쪽에 터미널 칸을 하나 더 나눔',
         '- △ = 위쪽 탭 줄 대신 이름 줄이 같은 일을 하는 일관된 상태(실패로 세지 않음)',
+        '- 검색 행의 칸 뜻은 다르다: 1 파일 영역 버튼 → 검색 위젯, 2 검색어 → 결과 1건 이상, 3 결과 클릭 → 본문에 파일(줄 선택)·결과 유지, 4 × → 파일 목록 복귀, 5 Ctrl+Shift+F → 같은 자리, 6 로그, 7 캡처',
         '- 3 기대: 위쪽 탭이 있는 한 칸 화면은 이름 줄 접힘(h<=1), 탭이 없는 화면은 펼친 이름 줄(h>1)과 닫기',
         '',
         `| ${headers.join(' | ')} |`,
