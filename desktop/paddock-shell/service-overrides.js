@@ -5,8 +5,10 @@ const os = require('node:os');
 const path = require('node:path');
 const { MultiRingBuffer } = require('@theia/process/lib/node/multi-ring-buffer');
 const { PluginPathsService } = require('@theia/plugin-ext/lib/main/common/plugin-paths-protocol');
+const bufferingStream = require('@theia/terminal/lib/node/buffering-stream');
 const { ShellProcessFactory } = require('@theia/terminal/lib/node/shell-process');
 const { PaddockReplayBuffer } = require('./terminal-replay-buffer');
+const { PaddockOutputStream } = require('./terminal-output-stream');
 const { PaddockPluginPathsService } = require('./plugin-paths');
 const { terminalHistoryService } = require('./terminal-history-service');
 const { ClaudeWrapper, withWrapperPath } = require('./claude-wrapper');
@@ -20,6 +22,7 @@ const { ClaudeWrapper, withWrapperPath } = require('./claude-wrapper');
  * |---|---|---|
  * | `MultiRingBuffer` | `PaddockReplayBuffer` | 터미널 지난 출력 재생이 링이 한 바퀴 돈 뒤 중복되고 한글이 깨진다 |
  * | `PluginPathsService` | `PaddockPluginPathsService` | 작업 공간을 열지 않으면 확장의 작업 공간 저장소가 저장되지 않는다 |
+ * | `StringBufferingStream` | `PaddockOutputStream` | 터미널 출력을 모두 16ms(Windows에서는 약 31ms) 붙잡아 키 에코가 늦게 보인다 |
  * | `ShellProcessFactory` | 같은 셸 프로세스를 만든 뒤 `TerminalHistory`에 추적을 맡기는 함수 | 앱이 터미널 프로세스째 사라져도 마지막 화면·폴더·대화를 파일에 남겨 되살린다 |
  *
  * `ShellProcessFactory` 교체는 셸의 PATH 맨 앞에 Paddock의 `claude` 실행 래퍼 폴더도 붙인다(claude-wrapper.js).
@@ -35,6 +38,9 @@ class PaddockServiceOverrides {
     initialize() {
         // MultiRingBuffer는 터미널을 새로 열 때마다 만들어지므로(일시 범위) 지금 바꾸면 이후 모든 터미널이 새 구현을 쓴다.
         this.container.rebind(MultiRingBuffer).to(PaddockReplayBuffer).inTransientScope();
+        // 터미널 출력 버퍼는 컨테이너가 아니라 터미널 연결이 열릴 때마다 모듈의 클래스를 직접 `new`로 만든다.
+        // 모듈이 내보낸 클래스를 바꿔 두면 이후 열리는 모든 터미널 연결이 새 구현을 쓴다.
+        bufferingStream.StringBufferingStream = PaddockOutputStream;
         // 확장 저장소 경로는 확장 호스트가 뜰 때와 확장이 저장할 때 처음 쓰이므로 지금 바꿔도 이전 구현이 주입된 곳이 없다.
         this.container.rebind(PluginPathsService).to(PaddockPluginPathsService).inSingletonScope();
         // 셸 터미널은 ShellProcessFactory로 만든다. 같은 프로세스를 돌려주되 화면 저장 장치에 추적을 맡긴다.
