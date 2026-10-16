@@ -89,7 +89,7 @@ test('outside WSL folders the Windows git runs', { skip }, context => {
     assert.match(out, /^git version .*windows/);
 });
 
-test('rebase-style editor "true" reaches WSL git, Windows-path editors send the call to Windows git', { skip }, context => {
+test('rebase-style editor "true" reaches WSL git, Windows-path editors send editor commands (commit, rebase) to Windows git', { skip }, context => {
     const { exe, repository } = prepare(context);
     const forwarded = 'GIT_EDITOR:GIT_SEQUENCE_EDITOR';
     // 단순 명령은 WSL 안 git이 받는다(WSL git 버전, Windows 표지 없음).
@@ -97,11 +97,24 @@ test('rebase-style editor "true" reaches WSL git, Windows-path editors send the 
     assert.equal(seen(exe, repository, 'GIT_EDITOR', simple), 'true\n');
     assert.equal(seen(exe, repository, 'GIT_SEQUENCE_EDITOR', simple), ':\n');
     assert.doesNotMatch(run(exe, ['--version'], { cwd: repository, env: { ...process.env, ...simple } }).out, /windows/);
-    // 확장 폴더의 Windows 스크립트면 그 호출만 Windows git이 실행한다.
+    // 확장 폴더의 Windows 스크립트면 편집기를 열 수 있는 명령(커밋 등)만 Windows git이 실행한다.
+    // 실행 계획만 보는 dry 모드로, 실제 커밋 없이 어느 git으로 가는지 확인한다.
+    const planned = (args, env) => run(exe, args, { cwd: repository, env: { ...process.env, ...env, PADDOCK_GIT_SHIM_TRACE: 'dry' } }).err;
     const script = { GIT_EDITOR: 'C:\\ext\\git-editor.sh', WSLENV: forwarded };
-    assert.match(run(exe, ['--version'], { cwd: repository, env: { ...process.env, ...script } }).out, /windows/);
+    assert.doesNotMatch(planned(['commit', '--quiet'], script), /wsl\.exe/);
     const sequence = { GIT_SEQUENCE_EDITOR: 'C:\\ext\\git-editor.sh', WSLENV: forwarded };
-    assert.match(run(exe, ['--version'], { cwd: repository, env: { ...process.env, ...sequence } }).out, /windows/);
+    assert.doesNotMatch(planned(['rebase', '--continue'], sequence), /wsl\.exe/);
+});
+
+test('Windows-path editors do not send non-editor commands (status) to Windows git', { skip }, context => {
+    const { exe, repository } = prepare(context);
+    // 확장은 이 편집기 변수를 status를 포함한 모든 호출에 붙인다. 편집기를 열지 않는 명령은 WSL git이 받는다.
+    const script = { GIT_EDITOR: 'C:\\ext\\git-editor.sh', GIT_SEQUENCE_EDITOR: 'C:\\ext\\git-editor.sh', WSLENV: 'GIT_EDITOR:GIT_SEQUENCE_EDITOR' };
+    assert.doesNotMatch(run(exe, ['--version'], { cwd: repository, env: { ...process.env, ...script } }).out, /windows/);
+    assert.equal(run(exe, ['status', '--porcelain'], { cwd: repository, env: { ...process.env, ...script } }).status, 0);
+    // WSL git에는 Windows 경로 대신 바로 실패하는 편집기가 넘어가, 편집기를 찾아도 입력을 기다리며 멈추지 않는다.
+    assert.equal(seen(exe, repository, 'GIT_EDITOR', script), 'false\n');
+    assert.equal(seen(exe, repository, 'GIT_SEQUENCE_EDITOR', script), 'false\n');
 });
 
 test('askpass variables and Windows-only settings never reach WSL git', { skip }, context => {

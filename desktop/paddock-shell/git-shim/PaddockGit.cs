@@ -223,6 +223,30 @@ namespace Paddock
             return portable;
         }
 
+        /// <summary>편집기를 열 수 있는 서브커맨드. 이 명령만 편집기 변수가 실제로 쓰인다.</summary>
+        private static readonly string[] EditorCommands = new string[]
+        {
+            "commit", "merge", "rebase", "tag", "cherry-pick", "revert", "am", "notes", "pull",
+        };
+
+        /// <summary>서브커맨드가 편집기를 열 수 있는 명령인지(커밋·병합·리베이스 등).</summary>
+        /// <remarks>
+        /// 확장은 편집기 변수(GIT_EDITOR에 확장 폴더의 Windows 스크립트)를 status·diff를 포함한 모든 git 호출에 붙인다.
+        /// 편집기 변수만 보고 Windows git으로 돌리면 WSL 폴더의 모든 호출이 9P 위 Windows git으로 가서, 큰 저장소의 status가 수십 배 느려지고
+        /// 분배기가 막으려던 파일 크기 경쟁("short read while indexing")도 그대로 생긴다. 그래서 편집기를 열 수 있는 명령만 Windows git으로 돌린다.
+        /// | 인자                         | 결과 |
+        /// |------------------------------|------|
+        /// | status -z -uall              | 거짓 |
+        /// | -c x=y commit --quiet        | 참   |
+        /// | rebase --continue            | 참   |
+        /// </remarks>
+        public static bool OpensEditor(string[] args)
+        {
+            int at = FindSubcommand(args);
+            bool opens = at >= 0 && Array.IndexOf(EditorCommands, args[at]) >= 0;
+            return opens;
+        }
+
         /// <summary>전역 옵션(-C·-c 등)을 건너뛰고 서브커맨드 위치를 찾는다. 없으면 -1.</summary>
         public static int FindSubcommand(string[] args)
         {
@@ -576,14 +600,22 @@ namespace Paddock
             string distro;
             string linuxDirectory;
             // 배포판 공유가 열리지 않으면(등록 해제·이름 불일치) wsl.exe가 UTF-16 오류와 종료 코드 -1을 내므로 Windows git으로 돌린다.
-            // 편집기 변수가 WSL에서 못 쓰는 값이면(확장의 Windows 노드 스크립트) 그 호출만 Windows git으로 돌린다. 편집기 대화는 드물어 9P 경쟁 위험이 작다.
+            // 편집기를 열 수 있는 명령(커밋 등)이고 편집기 변수가 WSL에서 못 쓰는 값이면(확장의 Windows 노드 스크립트) 그 호출만 Windows git으로 돌린다.
+            // 편집기 대화는 드물어 9P 경쟁 위험이 작다. status·diff처럼 편집기를 열지 않는 명령은 편집기 변수와 상관없이 WSL git이 실행한다(OpensEditor).
+            bool hasPortableEditors = GitPaths.IsPortableEditor(Environment.GetEnvironmentVariable("GIT_EDITOR"))
+                && GitPaths.IsPortableEditor(Environment.GetEnvironmentVariable("GIT_SEQUENCE_EDITOR"));
             if (GitPaths.TryParseWslPath(currentDirectory, out host, out distro, out linuxDirectory)
                 && Directory.Exists("\\\\" + host + "\\" + distro)
-                && GitPaths.IsPortableEditor(Environment.GetEnvironmentVariable("GIT_EDITOR"))
-                && GitPaths.IsPortableEditor(Environment.GetEnvironmentVariable("GIT_SEQUENCE_EDITOR")))
+                && (hasPortableEditors || !GitPaths.OpensEditor(args)))
             {
                 plan.WslDistro = distro;
                 plan.WslRoot = "//" + host + "/" + distro;
+                if (!hasPortableEditors)
+                {
+                    // 편집기를 열지 않는 명령이지만, 만에 하나 편집기를 찾으면 WSL 기본 편집기가 입력을 기다리며 멈추지 않도록 바로 실패하는 명령으로 바꿔 넘긴다.
+                    Environment.SetEnvironmentVariable("GIT_EDITOR", "false");
+                    Environment.SetEnvironmentVariable("GIT_SEQUENCE_EDITOR", "false");
+                }
                 plan.Program = Path.Combine(Environment.GetEnvironmentVariable("SystemRoot") ?? "C:\\Windows", "System32", "wsl.exe");
                 plan.Args.Add("-d");
                 plan.Args.Add(distro);
