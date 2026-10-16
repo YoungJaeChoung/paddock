@@ -20,6 +20,38 @@ function fixture(
     return { directory, configDir, join: path.join, toLocal: file => file };
 }
 
+test('a running CLI\'s conversation is found in the folder it writes to without scanning every project of the source folder', context => {
+    // 되살린 터미널의 출처는 기본 폴더(origin)인데 CLI는 계정 폴더(current)에 기록하는 경우.
+    const origin = fixture(context);
+    const current = fixture(context);
+    const transcript = path.join(current.configDir, 'projects', '-work-my-app', `${SESSION_ID}.jsonl`);
+    fs.mkdirSync(path.dirname(transcript));
+    fs.writeFileSync(transcript, 'conversation the CLI is writing');
+    const sessions = new AccountSessions({ accounts: null });
+    const readdir = context.mock.method(fs, 'readdirSync');
+    assert.equal(sessions.locateTranscript(origin, current, SESSION_ID, '/work/my.app'), transcript);
+    assert.equal(readdir.mock.callCount(), 0);
+});
+
+test('a conversation missing everywhere is scanned for at most once per retry window', context => {
+    const origin = fixture(context);
+    const sessions = new AccountSessions({ accounts: null });
+    const readdir = context.mock.method(fs, 'readdirSync');
+    assert.equal(sessions.locateTranscript(origin, origin, SESSION_ID, '/work/my.app'), null);
+    assert.equal(sessions.locateTranscript(origin, origin, SESSION_ID, '/work/my.app'), null);
+    assert.equal(readdir.mock.callCount(), 1);
+    // 그사이 CLI가 작업 폴더 위치에 기록하기 시작하면 다음 확인에서 바로 찾는다.
+    const transcript = path.join(origin.configDir, 'projects', '-work-my-app', `${SESSION_ID}.jsonl`);
+    fs.mkdirSync(path.dirname(transcript));
+    fs.writeFileSync(transcript, 'first message saved');
+    assert.equal(sessions.locateTranscript(origin, origin, SESSION_ID, '/work/my.app'), transcript);
+    // 기다리는 시간이 지나면 다른 프로젝트 폴더로 옮겨 간 대화도 전체 탐색으로 다시 찾는다.
+    fs.rmSync(transcript);
+    fs.writeFileSync(path.join(origin.configDir, 'projects', 'project', `${SESSION_ID}.jsonl`), 'moved');
+    sessions.missedScans.set(`${origin.configDir}\0${SESSION_ID}`, 0);
+    assert.equal(sessions.locateTranscript(origin, origin, SESSION_ID, '/work/my.app'), path.join(origin.configDir, 'projects', 'project', `${SESSION_ID}.jsonl`));
+});
+
 test('C-ACCOUNT-RESUME-B01 identifies a Claude record by live PID and process start, not the newest file', context => {
     const scope = fixture(context);
     const record = { pid: 42, procStart: '700', sessionId: SESSION_ID, cwd: '/work', kind: 'interactive' };

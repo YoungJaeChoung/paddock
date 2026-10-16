@@ -15,6 +15,8 @@ class SessionIdentity {
     static N_PROCESS_DEPTH = 8;
     static N_PROJECT_NAME_CHARS = 200;
     static STOP_TIMEOUT_MS = 10000;
+    // 전체 탐색으로도 못 찾은 대화를 다시 훑기까지 기다리는 시간(ms). 화면은 2초마다 묻는데, 훑기 한 번이 WSL 경로에서 수 초씩 백엔드를 멈춘다.
+    static SCAN_RETRY_MS = 5 * 60 * 1000;
     static MISSING_FILE = 'The saved conversation file is missing. Restore it before switching accounts; this terminal has not been changed.';
     static OTHER_FOLDER = 'This Claude runs with a different configuration folder than the selected account. Open it from its saved account to switch accounts.';
     static WSL_PROCESSES = `for file in $(grep -alz '^PADDOCK_TERMINAL=' /proc/[0-9]*/environ 2>/dev/null); do
@@ -102,6 +104,24 @@ function claudeProjectName(
 }
 
 /**
+ * 대화의 작업 폴더에 해당하는 프로젝트 폴더(CLI가 그 대화를 기록하는 위치)에 그 대화 파일이 있으면 그 경로, 없으면 null.
+ * 파일 세 개만 확인하므로 Windows에서 WSL 경로를 볼 때도 수 밀리초 안에 끝난다. 프로젝트 폴더 이름을 모르면(경로 200자 초과) null.
+ */
+function expectedTranscript(
+    scope,
+    sessionId,
+    cwd,
+) {
+    const directory = scope.join(scope.configDir, 'projects');
+    const projectName = claudeProjectName(cwd);
+    const expectedProject = projectName && scope.join(directory, projectName);
+    const expected = expectedProject && scope.join(expectedProject, `${sessionId}.jsonl`);
+    const found = expected && plainEntry(scope.toLocal(directory), 'directory') && plainEntry(scope.toLocal(expectedProject), 'directory')
+        && plainEntry(scope.toLocal(expected), 'file');
+    return found ? expected : null;
+}
+
+/**
  * Exact UUID filenames identify the saved conversation; modification times never choose a conversation.
  * 대화의 작업 폴더에 해당하는 프로젝트 폴더를 먼저 확인한다 — CLI가 그 대화를 기록하는 위치다.
  * 거기 없을 때만 projects 아래 모든 폴더를 훑는다. 폴더가 수천 개면 Windows에서 WSL 경로로 훑는 데 수 초가 걸리고,
@@ -115,11 +135,8 @@ function findClaudeTranscript(
     if (!SessionIdentity.UUID.test(sessionId || '')) throw new Error('The conversation identifier is invalid.');
     const directory = scope.join(scope.configDir, 'projects');
     const matches = [];
-    const projectName = claudeProjectName(cwd);
-    const expectedProject = projectName && scope.join(directory, projectName);
-    const expected = expectedProject && scope.join(expectedProject, `${sessionId}.jsonl`);
-    if (expected && plainEntry(scope.toLocal(directory), 'directory') && plainEntry(scope.toLocal(expectedProject), 'directory')
-        && plainEntry(scope.toLocal(expected), 'file')) {
+    const expected = expectedTranscript(scope, sessionId, cwd);
+    if (expected) {
         matches.push(expected);
     } else if (plainEntry(scope.toLocal(directory), 'directory')) {
         for (const entry of fs.readdirSync(scope.toLocal(directory), { withFileTypes: true })) {
@@ -258,6 +275,36 @@ class AccountSessions {
         this.stopping = new Set();
         this.stopped = new Map();
         this.unavailable = new Map();
+        // 전체 탐색으로 못 찾은 대화: `<설정 폴더>\0<대화 ID>` → 그 탐색 시각. SCAN_RETRY_MS 동안은 빠른 확인만 한다.
+        this.missedScans = new Map();
+    }
+
+    /**
+     * 실행 중인 CLI의 대화 파일 경로를 찾는다. 없으면 null.
+     *
+     * 왜 있는가: 대화 출처 계정(`origin`)과 CLI가 지금 기록하는 설정 폴더(`current`)가 다를 수 있다(예 되살린 터미널의 출처 정보가
+     * 기본 폴더를 가리키는데 CLI는 계정 폴더에서 실행 중). 출처 폴더만 보면 매번 못 찾고 전체 탐색을 되풀이해, 폴더가 수천 개인
+     * 기본 폴더에서는 화면이 묻는 2초마다 백엔드가 수 초씩 멈췄다.
+     * 두 폴더의 작업 폴더 위치를 먼저 확인하고(각 파일 세 개), 둘 다 없을 때만 출처 폴더를 전체 탐색한다.
+     * 전체 탐색으로도 못 찾으면 SCAN_RETRY_MS 동안 같은 대화의 전체 탐색을 건너뛴다(그동안 생긴 파일은 빠른 확인이 찾는다).
+     */
+    locateTranscript(
+        origin,
+        current,
+        sessionId,
+        cwd,
+    ) {
+        if (!SessionIdentity.UUID.test(sessionId || '')) throw new Error('The conversation identifier is invalid.');
+        let found = expectedTranscript(origin, sessionId, cwd);
+        if (!found && current.configDir !== origin.configDir) found = expectedTranscript(current, sessionId, cwd);
+        const missKey = `${origin.configDir}\0${sessionId}`;
+        const missedAt = this.missedScans.get(missKey);
+        if (!found && (missedAt === undefined || Date.now() - missedAt >= SessionIdentity.SCAN_RETRY_MS)) {
+            found = findClaudeTranscript(origin, sessionId, cwd);
+            if (found) this.missedScans.delete(missKey);
+            else this.missedScans.set(missKey, Date.now());
+        }
+        return found;
     }
 
     /** One WSL process read serves every terminal in that distribution in the observation batch. */
@@ -420,7 +467,7 @@ class AccountSessions {
                     if (retained === previous?.snapshot) {
                         transcriptPath = existingTranscript(origin, retained.transcriptPath);
                     } else {
-                        transcriptPath = findClaudeTranscript(origin, record.sessionId, record.cwd);
+                        transcriptPath = this.locateTranscript(origin, scope, record.sessionId, record.cwd);
                     }
                     if (transcriptPath) {
                         result = { provider: 'claude', sessionId: record.sessionId, sourceAccountId, runtime: request.runtime,
