@@ -1,0 +1,84 @@
+# 네이티브(GPUI) 앱의 Windows release 빌드를 windows-latest에서 만들어 exe를 올린다.
+# 설치 파일(NSIS)·서명·릴리스 올리기는 하지 않는다 — 앱·데몬 exe가 나오는지와 셰이더가 빌드 때 미리 컴파일되는지(fxc)만 확인한다.
+# Actions 탭에서 직접 실행하거나, native/로 시작하는 브랜치를 올리면 실행된다.
+# package.yml의 package/** 브랜치와 겹치지 않도록 브랜치 이름을 따로 두었다(겹치면 설치 파일 빌드도 함께 돈다).
+name: Native Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['native/**']
+    paths:
+      - 'native/**'
+      - '.github/workflows/native-windows.yml'
+
+# 저장소 내용을 읽기만 한다 — 기본 토큰 권한을 최소로 둔다.
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: native
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # rust-toolchain.toml이 고른 버전을 설치한다(처음 cargo를 부를 때 rustup이 내려받는다).
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: native
+
+      # release 빌드는 gpui-pre-windows의 build.rs가 Windows SDK의 fxc로 셰이더를 미리 컴파일한다.
+      # fxc가 없으면 이 단계에서 실패한다 — 그때는 셰이더를 실행 중 컴파일하는 쪽으로 돌아가야 한다.
+      - name: fxc is available
+        shell: pwsh
+        run: |
+          $fxc = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter fxc.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\x64\\' } | Sort-Object FullName | Select-Object -Last 1
+          if (-not $fxc) { throw "fxc.exe not found in the Windows SDK" }
+          Write-Output "fxc: $($fxc.FullName)"
+
+      - name: Build release
+        run: cargo build --release -p paddock-app -p paddock-daemon
+
+      # 셰이더를 미리 컴파일했다면 exe에 실행 중 컴파일(D3DCompileFromFile) 호출이 들어 있지 않다.
+      - name: No runtime shader compile in the exe
+        shell: pwsh
+        run: |
+          $exe = "target\release\paddock-app.exe"
+          $text = [System.Text.Encoding]::Latin1.GetString([System.IO.File]::ReadAllBytes($exe))
+          if ($text.Contains("D3DCompileFromFile")) { throw "paddock-app.exe still compiles shaders at run time" }
+          Get-ChildItem target\release\paddock-app.exe, target\release\paddock-daemon.exe | ForEach-Object { "{0} {1:N1} MB" -f $_.Name, ($_.Length / 1MB) }
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: paddock-native-win-x64
+          path: |
+            native/target/release/paddock-app.exe
+            native/target/release/paddock-daemon.exe
+          if-no-files-found: error
+
+  # 앱·데몬 시험(GUI 없이 도는 부분)을 Windows 실행기에서도 돌린다. 크로스 빌드한 시험 exe를 손으로 돌리던 것을 자동화한다.
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: native
+      # 시험이 띄우는 데몬 실행 파일을 먼저 만든다(make native-dev와 같은 순서).
+      - run: cargo build --workspace --no-default-features
+      - run: cargo test --workspace --no-default-features
+
+  # 라이선스 검사: GPL·AGPL·LGPL 계열이 의존에 들어오면 실패한다(설정은 native/deny.toml).
+  licenses:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+        with:
+          manifest-path: native/Cargo.toml
+          command: check licenses bans
