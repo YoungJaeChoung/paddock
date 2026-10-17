@@ -181,6 +181,32 @@ function promoteAgentTerminals(
 }
 
 /**
+ * 같은 폴더 안에서 터미널 한 개의 목록 순서를 바꾼다. 이 순서는 사이드바 목록에만 쓰이고 탭 줄의 차례와 무관하다.
+ *
+ * `after`가 false면 `targetId` 앞에, true면 뒤에 놓는다. 두 터미널이 같은 폴더에 있지 않거나 같은 터미널이면 상태를 그대로 돌려준다.
+ * 폴더 안 순서는 `terminals`의 키 순서(terminalsOf)이므로, 순서를 바꾼 키 배열로 객체를 다시 만든다.
+ *
+ * Examples:
+ *   폴더 [a, b, c], c를 a 앞으로 → [c, a, b] · a를 b 뒤로 → [b, a, c] · 다른 폴더의 d를 a 앞으로 → 그대로
+ */
+function moveTerminal(
+    state,
+    id,
+    targetId,
+    after,
+) {
+    const entry = state.terminals[id];
+    const target = state.terminals[targetId];
+    let result = state;
+    if (entry && target && id !== targetId && entry.folder === target.folder) {
+        const ids = Object.keys(state.terminals).filter(key => key !== id);
+        ids.splice(ids.indexOf(targetId) + (after ? 1 : 0), 0, id);
+        result = { ...state, terminals: Object.fromEntries(ids.map(key => [key, state.terminals[key]])) };
+    }
+    return result;
+}
+
+/**
  * 한 폴더의 터미널 행. 목록 순서대로 이름을 쓰고, 같은 이름은 두 번째부터 `suffix`에 ·2·3을 붙인다.
  * 사이드바 Work 보기와 작업 폴더 탭 줄이 같은 이름표를 쓰도록 둘 다 이 행을 쓴다.
  *
@@ -606,6 +632,7 @@ module.exports = {
     folderOf,
     folderContaining,
     terminalsOf,
+    moveTerminal,
     setExpanded,
     setFolderLabel,
     folderLabel,

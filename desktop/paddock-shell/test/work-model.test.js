@@ -340,3 +340,13 @@ test('C-work-mem.3: 가장 큰 터미널을 고르고 비었으면 null이다', 
     assert.equal(model.heaviestTerminal({}), null);
     assert.equal(model.heaviestTerminal({ t1: 0 }), null);
 });
+
+test('C-work-U1.x: 같은 폴더 안에서만 터미널 목록 순서를 바꾼다', () => {
+    let state = model.empty();
+    for (const [id, folder] of [['a', '/p'], ['b', '/p'], ['c', '/p'], ['d', '/q']]) state = model.assignTerminal(state, id, folder, id);
+    const order = next => model.terminalsOf(next, '/p');
+    assert.deepEqual(order(model.moveTerminal(state, 'c', 'a', false)), ['c', 'a', 'b']);
+    assert.deepEqual(order(model.moveTerminal(state, 'a', 'b', true)), ['b', 'a', 'c']);
+    assert.equal(model.moveTerminal(state, 'd', 'a', false), state, 'a terminal from another folder is not moved');
+    assert.equal(model.moveTerminal(state, 'a', 'a', true), state);
+});

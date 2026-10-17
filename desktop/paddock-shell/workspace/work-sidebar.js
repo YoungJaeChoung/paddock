@@ -431,6 +431,7 @@ class WorkSidebar {
             }
             this.forwardRowClicks(node, select);
             this.attachTerminalMenu(node, row.id);
+            if (!row.unassigned) this.attachRowReorder(node, row.id);
             node.dataset.widgetId = row.id;
             if (row.id === currentId) node.setAttribute('aria-current', 'true');
         } else {
@@ -440,6 +441,54 @@ class WorkSidebar {
             });
         }
         return node;
+    }
+
+    /**
+     * 사이드바의 터미널 줄을 끌어 같은 폴더 안 순서를 바꾼다. 줄의 위쪽 절반에 놓으면 앞, 아래쪽 절반이면 뒤에 들어간다.
+     * 다른 폴더의 줄·탐색기 파일 끌기와는 섞이지 않는다(끌기 종류 표지가 다르다).
+     */
+    attachRowReorder(
+        node,
+        id,
+    ) {
+        const type = 'application/x-paddock-terminal-row';
+        const folderOf = rowId => this.workspace.state.terminals[rowId]?.folder;
+        const clear = () => node.classList.remove('is-drop-before', 'is-drop-after');
+        node.draggable = true;
+        node.addEventListener('dragstart', (event) => {
+            event.dataTransfer.setData(type, id);
+            event.dataTransfer.effectAllowed = 'move';
+            this.draggedRow = id;
+        });
+        node.addEventListener('dragend', () => {
+            this.draggedRow = null;
+        });
+        node.addEventListener('dragover', (event) => {
+            if (this.draggedRow && this.draggedRow !== id && folderOf(this.draggedRow) === folderOf(id)) {
+                event.preventDefault();
+                event.stopPropagation();
+                event.dataTransfer.dropEffect = 'move';
+                const bounds = node.getBoundingClientRect();
+                const after = event.clientY > bounds.top + bounds.height / 2;
+                node.classList.toggle('is-drop-before', !after);
+                node.classList.toggle('is-drop-after', after);
+            }
+        });
+        node.addEventListener('dragleave', clear);
+        node.addEventListener('drop', (event) => {
+            const moved = this.draggedRow;
+            clear();
+            if (moved && moved !== id && folderOf(moved) === folderOf(id)) {
+                event.preventDefault();
+                event.stopPropagation();
+                const bounds = node.getBoundingClientRect();
+                this.workspace.state = model.moveTerminal(this.workspace.state, moved, id, event.clientY > bounds.top + bounds.height / 2);
+                this.workspace.run(async () => {
+                    await this.workspace.save();
+                    await this.workspace.refresh();
+                });
+            }
+        });
     }
 
     /**
