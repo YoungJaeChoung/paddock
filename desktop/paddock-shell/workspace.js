@@ -595,9 +595,12 @@ class PaddockWorkspace {
             accountMenu.hidePopover();
             accountPicker.focus();
         });
-        this.shell.folderBar.node.querySelector('.markdown-view-actions').addEventListener('click', (event) => {
-            const target = event.target.closest('[data-markdown-view]');
-            if (target) this.run(() => this.markdownPreview.setMarkdownView(target.dataset.markdownView));
+        // 보기 전환과 분할 버튼은 칸을 나누면 복제본이 그 칸의 탭 묶음 끝에 그려진다(folder-tabs.js). 원본·복제본 모두 받도록 줄에서 위임해 듣는다.
+        this.shell.folderBar.node.addEventListener('click', (event) => {
+            const view = event.target.closest('[data-markdown-view]');
+            const split = event.target.closest('.folder-split-down, .folder-split-right');
+            if (view) this.run(() => this.markdownPreview.setMarkdownView(view.dataset.markdownView));
+            else if (split) this.run(() => this.newTerminalHere({ split: split.classList.contains('folder-split-down') ? 'split-bottom' : 'split-right' }));
         });
         // 브랜치 표시를 누르면 Git 확장의 브랜치 전환 목록을 연다. 지금 작업 폴더의 저장소 경로를 넘겨 저장소를 다시 묻지 않게 한다.
         this.shell.folderBar.node.querySelector('.folder-bar-branch').addEventListener('click', () => this.run(async () => {
@@ -650,8 +653,6 @@ class PaddockWorkspace {
             // 창·사이드바 폭이 바뀌면 잘린 탭과 넘김 버튼을 맞춘다. 사용자가 다른 탭을 찾는 스크롤 위치는 유지한다.
             new ResizeObserver(() => this.folderTabs.updateTabOverflow(strip)).observe(strip);
         }
-        this.shell.folderBar.node.querySelector('.folder-split-down').addEventListener('click', () => this.run(() => this.newTerminalHere({ split: 'split-bottom' })));
-        this.shell.folderBar.node.querySelector('.folder-split-right').addEventListener('click', () => this.run(() => this.newTerminalHere({ split: 'split-right' })));
         const picker = sidebar.querySelector('.shell-picker');
         const menu = sidebar.querySelector('#shell-menu');
         menu.addEventListener('beforetoggle', (event) => {
@@ -2082,10 +2083,16 @@ class PaddockWorkspace {
         const fileBar = bars.find(bar => bar.titles.length && bar.titles.every(title => !this.isTerminal(title.owner)) && bar.currentTitle?.owner?.getResourceUri?.());
         const current = this.currentWidget();
         const terminal = this.isTerminal(current) ? current : bars.flatMap(bar => bar.titles.map(title => title.owner)).find(widget => this.isTerminal(widget));
-        // 파일은 터미널 옆 칸에 둔다. 이미 파일 칸이 있으면 그 칸의 탭을 재사용한다.
+        // 파일 칸이 없어도 터미널과 함께 파일이 든 칸이 있으면 그 칸의 파일 옆 탭으로 연다. 지금 칸을 먼저 본다.
+        // 새 칸을 만들면 나눈 칸 끝에 좁은 칸이 또 생겨 탭이 줄 끝 버튼에 가려진다(사용자 피드백 "맨 오른쪽 분할같이 생기고 터미널 탭도 안 생겼어").
+        const currentBar = current && this.shell.getTabBarFor(current);
+        const fileIn = bar => bar?.titles.map(title => title.owner).find(owner => !this.isTerminal(owner) && owner.getResourceUri?.());
+        const fileNeighbor = fileIn(currentBar) ?? bars.map(fileIn).find(Boolean);
+        // 파일은 터미널 옆 칸에 둔다. 이미 파일 칸(또는 파일이 든 칸)이 있으면 그 칸의 탭을 재사용한다.
         const widgetOptions = fileBar
             ? { area: 'main', ref: fileBar.currentTitle.owner }
-            : terminal ? { area: 'main', mode: 'split-right', ref: terminal } : { area: 'main' };
+            : fileNeighbor ? { area: 'main', ref: fileNeighbor }
+                : terminal ? { area: 'main', mode: 'split-right', ref: terminal } : { area: 'main' };
         const options = { mode: 'activate', widgetOptions, preview: false };
         const opener = await this.opener.getOpener(uri, options);
         if (uri.path.ext.toLowerCase() === '.pen' && !opener.id.startsWith('custom-editor-')) {

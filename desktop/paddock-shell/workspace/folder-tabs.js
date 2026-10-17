@@ -203,10 +203,19 @@ class FolderTabs {
             const at = pane ? panes.indexOf(pane) : -1;
             return at >= 0 ? { pane: at, index: pane.titles.findIndex(title => title.owner.id === id) } : null;
         }).filter(id => !lowerPanes.has(paneOf(id)));
+        // 파일·칸에 딸린 버튼(보기 전환, 분할)은 나눈 동안 그 칸의 묶음 끝에 복제해 둔다. 줄 끝에 두면 다른 칸 위에 떠, 어느 칸에 먹히는지 헷갈린다.
+        const viewActions = bar.node.querySelector(':scope > .markdown-view-actions');
+        const splitActions = bar.node.querySelector(':scope > .folder-bar-actions');
+        const columnOf = widget => {
+            const pane = widget ? paneOf(widget.id) : null;
+            return pane ? columns.findIndex(column => column.keys.includes(pane)) : -1;
+        };
         if (isSplit) {
             const groups = groupTabsByColumn(ids, paneOf, columns);
             const stripRect = strip.getBoundingClientRect();
             const spans = columnSpans(columns, stripRect.left, stripRect.width);
+            const viewColumn = viewActions.hidden ? -1 : columnOf(this.workspace.markdownPreview.markdownSourceWidget());
+            const splitColumn = columnOf(this.workspace.currentWidget());
             groups.forEach((ids, index) => {
                 const group = element('div', 'folder-tab-group');
                 group.style.left = `${spans[index].left}px`;
@@ -214,13 +223,21 @@ class FolderTabs {
                 const list = element('div', 'folder-tab-list');
                 list.append(...ids.map(id => tabsById.get(id)));
                 group.append(list, this.paneAddActions(addActions, columns[index].keys));
+                // 클릭은 줄이 위임해 받으므로(workspace.js) 복제본에 따로 듣기를 걸지 않는다.
+                const trailing = [index === viewColumn && viewActions, index === splitColumn && splitActions].filter(Boolean);
+                if (trailing.length) {
+                    const end = element('div', 'folder-tab-group-end');
+                    end.append(...trailing.map(item => item.cloneNode(true)));
+                    group.append(end);
+                }
                 contents.append(group);
             });
         } else {
             contents.append(...ids.map(id => tabsById.get(id)));
         }
-        // 한 칸일 때만 줄의 ＋를 쓴다. 나눈 동안은 묶음마다 복제한 ＋가 그 자리를 맡는다.
+        // 한 칸일 때만 줄의 ＋·보기 전환·분할 버튼을 쓴다. 나눈 동안은 묶음마다 복제한 버튼이 그 자리를 맡는다.
         addActions.hidden = isSplit;
+        bar.node.classList.toggle('has-pane-actions', isSplit);
         return contents;
     }
 

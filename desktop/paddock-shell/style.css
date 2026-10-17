@@ -384,6 +384,10 @@ body .theia-button.secondary:hover { background: var(--theia-button-secondaryHov
 .paddock-shell .folder-tab-group + .folder-tab-group .folder-tab-list { padding-left: 0; }
 /* 나눈 칸의 탭 묶음은 칸 폭만큼만 쓰므로, 넘쳐서 앞 탭이 가려지기 전에 탭이 먼저 줄어든다(이름은 말줄임). 그래도 넘치면 넘김 규칙(tab-overflow.js)을 따른다. */
 .paddock-shell .folder-bar .folder-tab-list .tab { flex: 0 1 150px; width: 150px; min-width: 72px; }
+/* 보기 전환·분할 버튼은 나눈 동안 그 파일·활성 칸의 묶음 오른쪽 끝에 복제돼 놓인다(VS Code·Orca처럼 칸마다 자기 버튼). 줄 끝의 원본은 숨긴다. */
+.paddock-shell .folder-tab-group-end { display: flex; flex: none; align-items: center; align-self: center; margin-left: auto; }
+.paddock-shell .folder-tab-group-end .markdown-view-actions { margin-right: 2px; }
+.paddock-shell .folder-bar.has-pane-actions > .markdown-view-actions, .paddock-shell .folder-bar.has-pane-actions > .folder-bar-actions { display: none; }
 
 /* 칸이 둘 이상일 때 입력이 가지 않는 칸은 흐리게(Ghostty의 unfocused-split-opacity와 같은 방식). */
 .paddock-shell .is-inactive-pane { opacity: 0.78; transition: opacity 120ms; }
