@@ -1,0 +1,32 @@
+# 메모리(PDF): 항목 1,000개 폴더에서 300쪽 PDF를 열어 20초 쉬고(보이는 쪽만 그려 둔 상태) Private 메모리를 잰 뒤 닫고 다시 잰다. 같은 실행 안의 열기 전·열림·닫은 뒤 값을 본다.
+# PDF 탭이 없는 기준 exe에도 같은 대본을 돌려(알 수 없는 `act`는 무시된다) 앱 증가분을 비교한다. 임시 홈에 prep-pdf-big.sh로 proj-big 폴더를 채우고 기본 셸을 PowerShell로 둔다. 실행 이름은 memory-pdf다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+mem start-1-terminal
+send $p = "$env:USERPROFILE\\proj-big"; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo READY-BIG\r
+waitline READY-BIG @60000
+send claude -n 60 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 5000
+mem before-open
+act openpath C:/Temp/pdk-run/home-memory-pdf/proj-big/many-300p.pdf
+wait 20000
+state pdf-open
+mem pdf-open-20s
+shot memory-pdf
+act pdfscroll 100
+wait 4000
+mem pdf-scrolled
+wait 5000
+mem pdf-open-30s
+act closefile
+wait 500
+wait 600
+wait 600
+wait 8000
+mem after-close
+quit

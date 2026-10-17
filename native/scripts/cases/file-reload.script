@@ -1,0 +1,60 @@
+# 열린 파일 탭의 다시 읽기: 텍스트·Markdown·이미지·PDF를 연 채 디스크의 파일을 바꾸면(에이전트가 README를 고치는 장면) 탭이 새 내용으로 바뀌고
+# 스크롤 위치(scroll-y=)·이미지 보기 방식(zoom=)·PDF 쪽 위치가 그대로다. 파일 목록은 폴더 안 파일 이름이 달라지지 않아도 내용 변경을 주기 확인(3초)이 잡는다.
+# 임시 홈에 prep-reload.sh로 proj-reload 폴더와 swap 폴더를 채우고 기본 셸을 PowerShell로 둔다. 실행 이름은 file-reload다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-reload"; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo READY-RELOAD\r
+waitline READY-RELOAD @20000
+send claude -n 300 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+act setfileratio 0.6
+wait 1000
+act openpath C:/Temp/pdk-run/home-file-reload/proj-reload/long.txt
+waitstate kind=text state=text lines=300 @10000
+act textscroll 600
+wait 1000
+state reload-text-before
+send Add-Content "$env:USERPROFILE\\proj-reload\\long.txt" "appended by an agent"\r
+waitstate lines=301 @10000
+wait 800
+state reload-text-after
+act openpath C:/Temp/pdk-run/home-file-reload/proj-reload/notes.md
+waitstate kind=markdown state=markdown view=preview @10000
+act mdview file
+waitstate view=file @5000
+act textscroll 700
+wait 1000
+state reload-md-before
+send Add-Content "$env:USERPROFILE\\proj-reload\\notes.md" "tail paragraph written by an agent"\r
+waitstate lines=200 @10000
+wait 800
+state reload-md-after
+act mdview preview
+waitstate view=preview @5000
+wait 500
+state reload-md-preview
+act openpath C:/Temp/pdk-run/home-file-reload/proj-reload/pic.png
+waitstate kind=image state=image size=320x200 @10000
+act imgzoom
+waitstate zoom=actual @5000
+state reload-image-before
+send Copy-Item "$env:USERPROFILE\\swap\\tall.png" "$env:USERPROFILE\\proj-reload\\pic.png" -Force\r
+waitstate size=800x6000 @10000
+wait 1500
+state reload-image-after
+act openpath C:/Temp/pdk-run/home-file-reload/proj-reload/doc.pdf
+waitstate kind=pdf state=pdf pages=3 @10000
+act pdfscroll 2
+wait 1500
+state reload-pdf-before
+send Copy-Item "$env:USERPROFILE\\swap\\many.pdf" "$env:USERPROFILE\\proj-reload\\doc.pdf" -Force\r
+waitstate pages=300 @10000
+wait 2000
+state reload-pdf-after
+quit

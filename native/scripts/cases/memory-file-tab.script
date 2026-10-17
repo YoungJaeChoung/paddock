@@ -1,0 +1,29 @@
+# 메모리(파일 탭): memory-files.script와 같은 항목 1,000개 폴더에 1 MiB 텍스트 파일(구문 강조 언어 .ts, 약 12,600줄)을 더하고 파일 탭 하나로 연 채 20초 쉰 뒤
+# Private 메모리를 잰다. 파일 탭이 없는 기준 exe에도 같은 대본을 돌려(알 수 없는 `act`는 무시된다) 앱 증가분을 비교한다.
+# 실행기가 임시 홈의 네이티브 설정에 기본 셸을 PowerShell로 둬야 한다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+mem start-1-terminal
+send $p = "$env:USERPROFILE\\proj-big"; mkdir "$p", "$env:USERPROFILE\\bin" -Force | Out-Null; 1..990 | ForEach-Object { Set-Content "$p\\file-$_.txt" x }; 1..10 | ForEach-Object { mkdir "$p\\dir-$_" -Force | Out-Null }; $line = "export const value = 'a long enough line of source text to fill the file quickly';`n"; $big = $line * [math]::Ceiling(1048576 / $line.Length); [IO.File]::WriteAllText("$p\\a-exact.ts", $big.Substring(0, 1048576)); Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo READY-BIG\r
+waitline READY-BIG @60000
+send claude -n 60 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 5000
+mem before-open
+# 행: dir-1 … dir-10 (폴더 10개) 다음에 a-exact.ts가 11번째다.
+act openfile 11
+wait 20000
+state file-tab
+mem file-tab-20s
+shot memory-file-tab
+wait 5000
+mem file-tab-25s
+# 탭을 닫으면 편집기 상태가 풀려 열기 전 수준으로 돌아온다.
+act closefile
+wait 8000
+mem after-close
+quit

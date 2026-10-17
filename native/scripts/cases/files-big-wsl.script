@@ -1,0 +1,20 @@
+# 파일 목록(WSL 공유 폴더, 항목 1,000개): 느린 공유에서 폴더 읽기에 걸리는 시간(files-read-ms)과 행 수를 남긴다.
+# 읽기는 작업 스레드가 하므로 창은 그동안 멈추지 않는다. 기본 셸은 WSL이다.
+waittabs 1 @30000
+send unset HISTFILE; rm -rf /tmp/pdk-files-big && mkdir -p /tmp/pdk-files-big/proj && cd /tmp/pdk-files-big/proj && for i in $(seq 1 990); do : > file-$i.txt; done; for i in $(seq 1 10); do mkdir dir-$i; done; ln -sf /bin/bash /tmp/pdk-files-big/claude && export PATH=/tmp/pdk-files-big:$PATH\r
+send echo READY-BIG\r
+waitline READY-BIG @60000
+send claude -c 'for i in $(seq 1 200); do echo work $i; sleep 0.5; done'\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @20000
+wait 1000
+state big-wsl
+shot files-big-wsl
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+send rm -rf /tmp/pdk-files-big\r
+wait 6000
+state big-wsl-after-delete
+quit

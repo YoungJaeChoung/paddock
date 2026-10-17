@@ -1,0 +1,41 @@
+# Accounts 창: 빈 목록에서 추가 양식이 열리고, 추가(Add & Open) → 이름 바꾸기 → 제거가 목록 파일(JS 형식)에 반영된다.
+# 첫 터미널은 PowerShell이라 계정 터미널이 Windows 폴더에서 열린다. 실행기는 가짜 claude·codex 명령을 PATH 앞에 둔다.
+waittabs 1 @30000
+act envmenu
+waitstate menu: environments @5000
+act menuitem PowerShell
+waittabs 2 @30000
+waitstate cwd=C: @30000
+act accounts
+waitoverlay accounts @5000
+waitstate acct dialog form=true @5000
+shot accounts-empty
+act acct name Main
+shot accounts-form
+act acct add
+waittabs 3 @30000
+waitoverlay none @5000
+waitstate account=Claude · Main @30000
+state added-claude
+act accounts
+waitoverlay accounts @5000
+act acct showform
+act acct provider codex
+act acct name Work
+act acct add
+waittabs 4 @30000
+waitoverlay none @5000
+waitstate account=Codex · Work @30000
+act accounts
+waitoverlay accounts @5000
+waitstate acct profile id= @5000
+shot accounts-list
+act acct rename 1 Renamed
+waitstate label=Renamed @5000
+shot accounts-renamed
+act acct remove 2
+wait 500
+state accounts-after-remove
+act acct close
+waitoverlay none @5000
+quit

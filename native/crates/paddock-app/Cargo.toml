@@ -1,0 +1,52 @@
+[package]
+name = "paddock-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Paddock window: terminals, work list and tabs drawn with GPUI."
+
+# 데몬 연결·터미널 세션·격자처럼 창 없이 시험할 수 있는 부분은 라이브러리에 두고,
+# GPUI로 그리는 부분(`gui` 기능)과 실행 진입점은 그 위에 얹는다. GPUI가 빌드되지 않는
+# Linux 환경에서는 `--no-default-features`로 라이브러리만 빌드·시험한다.
+[lib]
+name = "paddock_app"
+path = "src/lib.rs"
+
+[[bin]]
+name = "paddock-app"
+path = "src/main.rs"
+required-features = ["gui"]
+
+[dependencies]
+paddock-core.workspace = true
+paddock-protocol.workspace = true
+gpui-kit = { workspace = true, optional = true }
+rodio = { workspace = true, optional = true }
+alacritty_terminal.workspace = true
+interprocess.workspace = true
+chrono.workspace = true
+unicode-width = "0.2"
+notify.workspace = true
+serde_json.workspace = true
+rand.workspace = true
+# 미리보기: 래스터 이미지 디코드·축소, PDF 래스터라이저(순수 Rust).
+image.workspace = true
+hayro.workspace = true
+usvg.workspace = true
+resvg.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+raw-window-handle.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[features]
+default = ["gui"]
+gui = ["dep:gpui-kit", "dep:rodio"]
+# 자동 점검용 실행 대본(창 크기·키 주입·격자 덤프). release 빌드에서는 켜지 않는다.
+automation = []

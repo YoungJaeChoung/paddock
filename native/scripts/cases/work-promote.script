@@ -1,0 +1,24 @@
+# 작업 폴더 자동 생성: 터미널에서 폴더로 이동한 뒤 에이전트 이름의 프로그램(claude로 위장한 bash)을 실행하면
+# 그 폴더가 Work 목록에 생기고 그 터미널이 폴더 아래로 옮겨진다. 탭 줄은 그 폴더의 터미널만 보인다.
+# 위장 프로그램은 /tmp에만 둔다(홈 폴더에 아무것도 만들지 않는다).
+waittabs 1 @30000
+send unset HISTFILE; mkdir -p /tmp/paddock-fake/proj-a && ln -sf /bin/bash /tmp/paddock-fake/claude && export PATH=/tmp/paddock-fake:$PATH && cd /tmp/paddock-fake/proj-a\r
+send echo READY-PROMOTE\r
+waitline READY-PROMOTE @20000
+state before-promote
+send claude -c 'for i in 1 2 3 4 5 6 7 8 9 10; do echo work $i; sleep 0.5; done; sleep 20'\r
+waitstate program=claude @20000
+waitstate row folder @20000
+state promoted
+shot work-promoted
+daemonlist after-promote
+act workadd
+waittabs 2 @20000
+state second-group
+act selecttab 1
+wait 500
+state back-in-folder
+act selectgroup 1
+wait 500
+state back-in-group
+quit

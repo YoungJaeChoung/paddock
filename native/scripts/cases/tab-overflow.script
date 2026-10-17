@@ -1,0 +1,62 @@
+# 탭 넘침: 창 폭 900에서 탭 7개 → 넘김 단추가 생기고, Ctrl+→로 끝 탭을 고르면 그 탭이 보이는 곳으로 스크롤된다. 파일 탭도 같다.
+# 이 대본은 실행 이름이 tab-overflow일 때 임시 홈 경로(C:/Temp/pdk-run/home-tab-overflow)를 쓴다.
+waittabs 1 @30000
+resize 900 650
+wait 800
+key ctrl-shift-t
+waittabs 2 @20000
+key ctrl-shift-t
+waittabs 3 @20000
+key ctrl-shift-t
+waittabs 4 @20000
+key ctrl-shift-t
+waittabs 5 @20000
+key ctrl-shift-t
+waittabs 6 @20000
+key ctrl-shift-t
+waittabs 7 @20000
+wait 1500
+state seven-tabs
+shot seven-tabs
+# 처음 탭을 고른 뒤(왼쪽 끝) Ctrl+↓로 마지막 탭을 키보드로 고른다
+key ctrl-up
+wait 1000
+state first-tab
+shot first-tab
+key ctrl-down
+wait 1500
+state last-tab
+shot last-tab
+# 다시 Ctrl+←: 오른쪽 끝에 닿았던 상자에서 선택이 이동해도 보인다
+key ctrl-left
+wait 1000
+state previous-tab
+shot previous-tab
+# 파일 탭이 칸 폭을 넘치게 열려도(`openpath`로 경로가 긴 파일 여러 개) Ctrl+→로 파일 탭의 끝까지 가면 그 탭이 줄 안에 보인다.
+# 파일 칸은 본문의 절반이고 탭 줄 오른쪽 구역이 그 위쪽을 일부 덮으므로, 파일 탭이 보이는 폭을 확보하려고 창을 넓힌다.
+resize 1500 650
+wait 800
+send for ($i = 1; $i -le 8; $i++) { Set-Content "$env:USERPROFILE\overflow-file-number-$i.txt" "x" }\r
+wait 1500
+act openpath C:/Temp/pdk-run/home-tab-overflow/overflow-file-number-1.txt
+act openpath C:/Temp/pdk-run/home-tab-overflow/overflow-file-number-2.txt
+act openpath C:/Temp/pdk-run/home-tab-overflow/overflow-file-number-3.txt
+act openpath C:/Temp/pdk-run/home-tab-overflow/overflow-file-number-4.txt
+act openpath C:/Temp/pdk-run/home-tab-overflow/overflow-file-number-5.txt
+act openpath C:/Temp/pdk-run/home-tab-overflow/overflow-file-number-6.txt
+act openpath C:/Temp/pdk-run/home-tab-overflow/overflow-file-number-7.txt
+act openpath C:/Temp/pdk-run/home-tab-overflow/overflow-file-number-8.txt
+wait 1500
+key ctrl-up
+wait 600
+state files-first
+key ctrl-down
+wait 1500
+state files-last
+shot files-last
+act selecttab 7
+wait 600
+key ctrl-right
+wait 1500
+state ctrl-right-into-files
+quit

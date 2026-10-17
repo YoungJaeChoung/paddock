@@ -1,0 +1,43 @@
+# 구문 강조: .ts·.py·.yaml을 열면 확장자에 맞는 언어로 강조된다(`file-view language=`). 라이트 테마에서도 색이 나온다(캡처).
+# 실행기가 임시 홈의 네이티브 설정에 기본 셸을 PowerShell로 둬야 한다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-hl"; mkdir $p, "$env:USERPROFILE\\bin" -Force | Out-Null; Set-Content "$p\\a.ts" "// comment`nexport function add(a: number, b: number): number {`n  const text = 'hello';`n  return a + b + 42;`n}"; Set-Content "$p\\b.py" "# comment`nclass Greeter:`n    def hello(self, name: str) -> str:`n        return f'hello {name}' + str(42)"; Set-Content "$p\\c.yaml" "# comment`nname: paddock`nitems:`n  - one: 1`n  - two: 'text'"; Set-Content "$p\\d.json" '{"name": "paddock", "n": 42, "ok": true}'; Set-Content "$p\\e.rs" "fn main() {`n    let n: u32 = 42;`n    println!(`"hi`");`n}"; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo READY-HL\r
+waitline READY-HL @30000
+send claude -n 300 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+# 행: a.ts · b.py · c.yaml · d.json · e.rs
+act openfile 1
+waitstate language=typescript @10000
+state ts
+shot highlight-ts-dark
+act openfile 2
+waitstate language=python @10000
+state py
+shot highlight-py-dark
+act openfile 3
+waitstate language=yaml @10000
+state yaml
+act openfile 4
+waitstate language=json @10000
+state json
+act openfile 5
+waitstate language=rust @10000
+state rust
+shot highlight-rust-dark
+# 라이트 테마
+act quick open
+act quick expand theme
+act quick choose theme Mermaid Light
+waitstate theme=Mermaid Light @5000
+act quick close
+act filetab 1
+wait 800
+shot highlight-ts-light
+act filetab 2
+wait 800
+shot highlight-py-light
+quit

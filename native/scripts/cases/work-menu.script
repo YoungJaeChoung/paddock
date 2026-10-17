@@ -1,0 +1,45 @@
+# 정리 메뉴: 우클릭 메뉴로 이름 바꾸기(행·탭·state.json에 반영), 폴더 이름 바꾸기, 목록에서 빼기(폴더의 터미널은 닫히고 디스크 폴더는 남는다).
+waittabs 1 @30000
+send unset HISTFILE; mkdir -p /tmp/paddock-fake/proj-a && ln -sf /bin/bash /tmp/paddock-fake/claude && export PATH=/tmp/paddock-fake:$PATH && cd /tmp/paddock-fake/proj-a\r
+send echo READY-MENU\r
+waitline READY-MENU @20000
+act menu terminal 1
+waitstate menu: terminal @5000
+shot menu-terminal
+act menuitem Rename terminal
+waitoverlay rename @5000
+shot rename-dialog
+text renamed
+key enter
+waitoverlay none @5000
+waitstate name=renamed @5000
+state renamed
+send claude -c 'sleep 60; echo end'\r
+waitstate row folder @20000
+act menu folder 1
+waitstate menu: folder @5000
+shot menu-folder
+act menuitem Rename in list
+waitoverlay rename @5000
+text mind
+key enter
+waitoverlay none @5000
+waitstate name=mind @5000
+state folder-renamed
+act workadd
+waittabs 2 @20000
+send echo SECOND-SHELL\r
+waitline SECOND-SHELL @20000
+act selectgroup 1
+act menu folder 1
+act menuitem Remove from list
+waitoverlay remove-folder @5000
+shot remove-confirm
+act confirm
+waitoverlay none @5000
+wait 1000
+state removed
+daemonlist after-remove
+send ls /tmp/paddock-fake/proj-a && echo DISK-KEPT\r
+waitline DISK-KEPT @10000
+quit

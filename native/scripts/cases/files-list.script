@@ -1,0 +1,79 @@
+# 파일 목록(FILES): 작업 폴더로 올라간 터미널의 폴더가 사이드바에 `<폴더> FILES`로 보인다.
+# 숨김 이름(.git·__pycache__)은 없고 폴더가 파일보다 먼저 온다. 폴더를 펼치고, 새 파일·새 폴더를 만들면 디스크에 생기고(펼친 폴더 안),
+# 밖에서 만든 파일은 1초 안에 행으로 나타난다(폴더 감시). 홈 폴더의 터미널에서는 FILES가 없고, 접으면 행이 사라졌다 돌아온다.
+# 실행기가 임시 홈의 네이티브 설정에 기본 셸을 PowerShell로 둬야 한다(작업 폴더는 임시 홈 아래의 일반 폴더).
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-files"; mkdir "$p\\src", "$p\\.git", "$p\\__pycache__", "$p\\Docs", "$env:USERPROFILE\\bin" -Force | Out-Null; Set-Content "$p\\src\\a.js" x; Set-Content "$p\\README.md" x; Set-Content "$p\\zeta.txt" x; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo READY-FILES\r
+waitline READY-FILES @20000
+send claude -n 120 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+state listed
+shot files-listed
+# 첫 행부터 폴더(Docs·src 순, 대소문자 무시)이고 파일(README.md·zeta.txt)이 뒤따른다. 숨김 이름은 없다.
+act files 2
+waitstate file-row 1 file a.js @5000
+state src-expanded
+shot files-src-expanded
+# 마지막으로 펼친 폴더(src)가 새 파일의 자리다.
+act newfile b.txt
+waitstate file-row 1 file b.txt @5000
+state newfile
+act newfolder sub
+waitstate file-row 1 dir sub @5000
+state newfolder
+# 이미 있는 이름은 덮어쓰지 않고 상태 줄에 알린다.
+act newfile a.js
+wait 1500
+shot files-exists
+# 이름 규칙에 어긋나면 입력칸 아래에 이유가 보이고 OK가 꺼진다.
+act filesmenu 2 New File...
+waitoverlay new-entry @5000
+text a/b
+wait 800
+shot files-invalid-name
+key escape
+waitoverlay none @5000
+# 폴더 우클릭 메뉴(New File...·New Folder...·Reveal)와 파일 우클릭 메뉴(Reveal).
+act filesmenu 2
+waitstate menu: entry @5000
+shot files-menu-folder
+key escape
+wait 300
+act filesmenu 5
+waitstate menu: entry @5000
+shot files-menu-file
+key escape
+wait 300
+# 새로 고침 단추.
+act filesrefresh
+wait 800
+# 옆 칸 터미널에서 만든 파일이 폴더 감시로 1초 안에 나타난다.
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+mark touch-sent
+send Set-Content "$env:USERPROFILE\\proj-files\\c.txt" x\r
+waitstate file-row 0 file c.txt @1000
+state watched
+# 홈 폴더의 새 터미널에서는 FILES가 없다. 폴더의 터미널로 돌아오면 다시 보인다.
+act workadd
+waittabs 3 @20000
+wait 3000
+state home
+act selecttab 1
+waitstate files-loaded=true @10000
+state back
+# 접으면 행이 사라지고 읽기도 멈춘다. 다시 펼치면 펼쳐 둔 폴더까지 돌아온다.
+act filestoggle
+wait 600
+state folded
+shot files-folded
+act filestoggle
+waitstate file-row 1 file a.js @10000
+state unfolded
+shot files-unfolded
+quit

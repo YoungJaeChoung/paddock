@@ -1,0 +1,10 @@
+# 재실행: state.json의 터미널에 다시 붙는다(셸 pid·화면·탭·선택이 같아야 한다)
+waittabs 2 @30000
+waitline TWO @20000
+wait 1500
+dumptab 1 after-1
+dumptab 2 after-2
+state after
+shot after-restore
+daemonlist after-restore
+quit

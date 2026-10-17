@@ -1,0 +1,12 @@
+[package]
+name = "paddock-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Pure models and rules shared by the Paddock app and daemon."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+unicode-properties.workspace = true
+chrono.workspace = true

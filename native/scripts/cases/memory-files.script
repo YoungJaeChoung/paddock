@@ -1,0 +1,21 @@
+# 메모리(파일 목록): 항목 1,000개 폴더를 작업 폴더로 올려 사이드바에 FILES가 보이는 상태에서 20초 쉰 뒤 Private 메모리를 잰다.
+# 같은 대본을 파일 목록이 없는 기준 exe에도 돌려 앱 증가분을 비교한다(상태 글을 기다리지 않는다).
+# 실행기가 임시 홈의 네이티브 설정에 기본 셸을 PowerShell로 둬야 한다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+mem start-1-terminal
+send $p = "$env:USERPROFILE\\proj-big"; mkdir "$p", "$env:USERPROFILE\\bin" -Force | Out-Null; 1..990 | ForEach-Object { Set-Content "$p\\file-$_.txt" x }; 1..10 | ForEach-Object { mkdir "$p\\dir-$_" -Force | Out-Null }; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo READY-BIG\r
+waitline READY-BIG @60000
+send claude -n 60 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 20000
+state big
+mem files-1000-20s
+shot memory-files
+wait 5000
+mem files-1000-25s
+quit

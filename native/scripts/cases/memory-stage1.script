@@ -1,0 +1,50 @@
+# 메모리(1단계 전체 상태): 터미널 4개(PowerShell 3개 + Claude 계정 터미널 1개), 작업 폴더 2개, 옆 칸 분할 2칸이 보이는 상태로 20초 쉰 뒤
+# Private 메모리를 재고, 4개 모두에 5만 줄을 출력한 뒤 다시 잰다.
+# 실행기가 임시 홈의 네이티브 설정에 기본 셸을 PowerShell로 둬야 한다(첫 터미널이 PowerShell이 된다). 가짜 claude는 이 대본이 임시 홈의 bin 폴더에 만든다.
+waittabs 1 @30000
+wait 1500
+mem start-1-terminal
+waitstate cwd=C: @30000
+send $a = "$env:USERPROFILE\\proj-a"; $b = "$env:USERPROFILE\\proj-b"; mkdir $a, $b, "$env:USERPROFILE\\bin" -Force | Out-Null; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $a\r
+send echo READY-A\r
+waitline READY-A @20000
+send claude -n 20 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+# 같은 폴더에 옆 칸 터미널을 하나 더 연다(분할 2칸).
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+# 두 번째 폴더: 새 묶음의 터미널에서 폴더를 바꾸고 가짜 claude를 실행한다.
+act workadd
+waittabs 3 @20000
+waitstate cwd=C: @30000
+send cd "$env:USERPROFILE\\proj-b"\r
+send echo READY-B\r
+waitline READY-B @20000
+send claude -n 20 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+# 계정 터미널: Accounts 창에서 Claude 계정을 추가하면서 연다.
+act accounts
+waitoverlay accounts @5000
+waitstate acct dialog form=true @5000
+act acct name Main
+act acct add
+waittabs 4 @30000
+waitoverlay none @5000
+waitstate account=Claude · Main @30000
+# 분할 2칸이 보이는 묶음으로 돌아간다.
+act selecttab 1
+wait 20000
+state stage1-final
+mem stage1-20s
+shot memory-stage1
+sendto 1 1..50000\r
+sendto 2 1..50000\r
+sendto 3 1..50000\r
+sendto 4 1..50000\r
+wait 20000
+mem after-50k-x4
+shot memory-stage1-final
+quit

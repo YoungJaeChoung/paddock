@@ -1,0 +1,26 @@
+# WSL 저장소 폴더의 놀 때·변경 중 `wsl.exe` 호출 수와 CPU(바깥 실행기 git-cpu.ps1이 표지 구간을 잰다).
+# 놀 때: 변경도 터미널 출력도 없는 60초. 변경 중: 1초마다 새 파일을 만들며 출력하는 60초(9P 수정 시각 비교 + 터미널 출력 게이트).
+# 기본 셸은 WSL이다. 임시 폴더는 /tmp/pdk-gitcpu 하나이고 끝에 지운다.
+waittabs 1 @30000
+send unset HISTFILE; rm -rf /tmp/pdk-gitcpu && mkdir -p /tmp/pdk-gitcpu/proj && cd /tmp/pdk-gitcpu/proj && git init -q -b main && git config user.name Tester && git config user.email t@example.com && echo one > a.js && git add -A && git commit -q -m base && ln -sf /bin/bash /tmp/pdk-gitcpu/claude && export PATH=/tmp/pdk-gitcpu:$PATH\r
+send echo READY-GITCPU\r
+waitline READY-GITCPU @30000
+send claude -c 'read -t 900'\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @15000
+waitstate scm state=ready @30000
+key ctrl-shift-c
+waittabs 2 @20000
+# 시작 출력과 첫 읽기가 가라앉도록 기다린 뒤 구간을 표지로 알린다.
+wait 15000
+state idle-before
+act filestoggle
+wait 3000
+mark idle-start
+wait 60000
+mark idle-end
+state idle-after
+send rm -rf /tmp/pdk-gitcpu\r
+wait 800
+quit

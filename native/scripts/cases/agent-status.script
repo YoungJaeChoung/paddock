@@ -1,0 +1,28 @@
+# 에이전트 상태·완료 알림: 에이전트 이름의 프로그램(claude로 위장한 bash)이 6초 출력한 뒤 끝나면,
+# 다른 탭을 보는 동안 미확인 점과 소리 요청이 남고, 그 탭을 고르면 점이 지워진다. 소리는 요청만 기록한다.
+# 위장 프로그램은 /tmp에만 둔다(홈 폴더에 아무것도 만들지 않는다).
+waittabs 1 @30000
+send unset HISTFILE; mkdir -p /tmp/paddock-fake && ln -sf /bin/bash /tmp/paddock-fake/claude && export PATH=/tmp/paddock-fake:$PATH\r
+send echo READY-1\r
+waitline READY-1 @20000
+key ctrl-shift-t
+waittabs 2 @20000
+send unset HISTFILE\r
+send echo READY-2\r
+waitline READY-2 @20000
+key ctrl-left
+state before-agent
+send claude -c 'for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo work $i; sleep 0.5; done; sleep 3'\r
+waitstate program=claude @20000
+waitstate activity=working @20000
+shot agent-working
+key ctrl-right
+waitstate unseen=yes @40000
+waitstate sound-requested 1 @5000
+state finished-unseen
+shot agent-unseen
+key ctrl-left
+waitstate unseen=no @5000
+state acknowledged
+shot agent-acknowledged
+quit

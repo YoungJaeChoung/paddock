@@ -1,0 +1,82 @@
+# PDF 미리보기 (D54): sample-3p.pdf를 열면 file-view kind=pdf pages=3, 보이는 쪽 visible=이 스크롤(act pdfscroll)에 따라 바뀌고,
+# act pdfzoom in|out|fit(탭 줄의 + − 단추)으로 배율이 한 단계씩 바뀐다. 쪽당 그리는 시간은 render-ms=로 읽는다(≤ 1000).
+# 암호 PDF·깨진 PDF는 안내 탭(reason=PdfEncrypted·PdfUnreadable)이고 Open with default app 단추가 있다. 300쪽 PDF는 보이는 쪽만 그려 cached=가 3쪽을 넘지 않는다.
+# 닫은 뒤 메모리가 열기 전 수준으로 돌아오는지는 mem 표본으로 본다. 임시 홈에 prep-pdf.sh로 proj-pdf 폴더를 채우고 기본 셸을 PowerShell로 두며 실행 이름은 pdf-open이다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-pdf"; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo READY-PDF\r
+waitline READY-PDF @20000
+send claude -n 300 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+act setfileratio 0.6
+wait 1000
+mem baseline
+act resetgap
+act openpath C:/Temp/pdk-run/home-pdf-open/proj-pdf/sample-3p.pdf
+waitstate kind=pdf state=pdf pages=3 @15000
+wait 2500
+state pdf-open
+shot pdf-open
+mem open-3p
+act pdfscroll 3
+waitstate 3 cached= @10000
+wait 2000
+state pdf-scrolled-3
+act resetgap
+shot pdf-scrolled-3
+act pdfscroll 1
+waitstate visible=1 @10000
+wait 1500
+state pdf-scrolled-1
+act pdfzoom in
+wait 2500
+state pdf-zoom-in-1
+act resetgap
+act pdfzoom in
+wait 2500
+state pdf-zoom-in-2
+shot pdf-zoom-in-2
+act pdfzoom out
+wait 2000
+state pdf-zoom-out
+act pdfzoom fit
+waitstate zoom=fit @5000
+wait 2000
+state pdf-fit
+act closefile
+wait 4000
+mem closed-3p
+# 암호·깨진 PDF는 안내 탭.
+act openpath C:/Temp/pdk-run/home-pdf-open/proj-pdf/encrypted.pdf
+waitstate reason=PdfEncrypted @10000
+state pdf-encrypted
+act resetgap
+shot pdf-encrypted
+act openpath C:/Temp/pdk-run/home-pdf-open/proj-pdf/broken.pdf
+waitstate reason=PdfUnreadable @10000
+state pdf-broken
+act closefile
+act closefile
+wait 1500
+# 300쪽: 보이는 쪽만 그린다.
+act openpath C:/Temp/pdk-run/home-pdf-open/proj-pdf/many-300p.pdf
+waitstate kind=pdf state=pdf pages=300 @15000
+wait 2500
+state pdf-many-open
+act resetgap
+mem many-open
+act pdfscroll 150
+waitstate visible=150 @10000
+wait 2500
+state pdf-many-150
+act resetgap
+shot pdf-many-150
+act pdfscroll 300
+waitstate visible=299,300 @10000
+wait 2500
+state pdf-many-300
+mem many-end
+quit

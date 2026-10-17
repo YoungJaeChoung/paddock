@@ -1,0 +1,96 @@
+# 이미지 미리보기 (C-D9): png·jpg·gif·webp·svg를 열면 칸에 맞춰 보이고(file-view kind=image|svg state=image size=가로x세로),
+# act imgzoom(더블클릭)으로 1:1 ↔ 맞춤이 바뀐다. 5천만 픽셀을 넘는 이미지는 안내 탭, 깨진 이미지도 안내 탭이다.
+# 7000×7000(49 MP)은 올릴 때 줄여서 decoded=가 size=보다 작다. 4K를 열고 닫은 뒤 메모리가 열기 전 수준으로 돌아오는지는 mem 표본으로 본다.
+# 실행기가 임시 홈에 prep-md.sh로 proj-md 폴더를 채우고, 기본 셸을 PowerShell로 둬야 한다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-md"; mkdir "$env:USERPROFILE\\bin" -Force | Out-Null; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo READY-IMG\r
+waitline READY-IMG @20000
+send claude -n 300 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+act setfileratio 0.7
+wait 1000
+mem baseline
+act openpath C:/Temp/pdk-run/home-image-open/proj-md/a.png
+waitstate kind=image state=image size=320x200 @10000
+wait 800
+state img-png
+shot img-png
+act openpath C:/Temp/pdk-run/home-image-open/proj-md/b.jpg
+waitstate kind=image state=image size=640x480 @10000
+wait 800
+state img-jpg
+shot img-jpg
+act openpath C:/Temp/pdk-run/home-image-open/proj-md/c.gif
+waitstate kind=image state=image size=100x100 @10000
+wait 800
+state img-gif
+shot img-gif
+act openpath C:/Temp/pdk-run/home-image-open/proj-md/d.webp
+waitstate kind=image state=image size=200x150 @10000
+wait 800
+state img-webp
+shot img-webp
+act openpath C:/Temp/pdk-run/home-image-open/proj-md/e.svg
+waitstate kind=svg state=image size=200x100 @10000
+wait 800
+state img-svg
+shot img-svg
+# 더블클릭 = 1:1(스크롤) ↔ 맞춤.
+act openpath C:/Temp/pdk-run/home-image-open/proj-md/b.jpg
+waitstate kind=image state=image size=640x480 @10000
+state img-fit
+act imgzoom
+waitstate zoom=actual @5000
+wait 500
+state img-actual
+shot img-actual
+act imgzoom
+waitstate zoom=fit @5000
+# 세로로 아주 긴 그림은 폭에 맞추고 스크롤한다.
+act openpath C:/Temp/pdk-run/home-image-open/proj-md/tall.png
+waitstate kind=image state=image size=800x6000 @10000
+wait 800
+state img-tall
+shot img-tall
+# 49 MP: 열 수 있는 상한 안이고 올릴 때 줄인다.
+act openpath C:/Temp/pdk-run/home-image-open/proj-md/h-49mp.png
+waitstate kind=image state=image size=7000x7000 @30000
+state img-49mp
+mem open-49mp
+act closefile
+wait 3000
+mem closed-49mp
+# 64 MP와 깨진 파일은 안내 탭.
+act openpath C:/Temp/pdk-run/home-image-open/proj-md/toolarge.png
+waitstate reason=ImageTooLarge @10000
+state img-toolarge
+shot img-toolarge
+act openpath C:/Temp/pdk-run/home-image-open/proj-md/broken.png
+waitstate reason=ImageUnreadable @10000
+state img-broken
+# 4K를 열고 닫는다.
+act openpath C:/Temp/pdk-run/home-image-open/proj-md/g-4k.png
+waitstate kind=image state=image size=3840x2160 @20000
+wait 2000
+state img-4k
+mem open-4k
+shot img-4k
+# 맞춤으로 볼 때는 칸 크기로 줄여 올린 그림만 쥐고(decoded=가 size=보다 작음), 1:1로 바꾸면 원본 크기를 다시 읽고(full=yes), 맞춤으로 돌아오면 버린다(full=no).
+act imgzoom
+waitstate full=yes @20000
+wait 1500
+state img-4k-actual
+mem open-4k-actual
+act imgzoom
+waitstate full=no @5000
+wait 2500
+state img-4k-fit-again
+mem fit-again-4k
+act closefile
+wait 3000
+mem closed-4k
+quit

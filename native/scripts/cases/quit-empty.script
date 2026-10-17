@@ -1,0 +1,9 @@
+# 터미널이 없으면 묻지 않고 닫는다. 데몬은 10초 뒤 스스로 끝난다
+waittabs 1 @30000
+key ctrl-shift-w
+waitoverlay close-terminal @5000
+key enter
+waittabs 0 @5000
+state empty
+closewindow
+wait 3000

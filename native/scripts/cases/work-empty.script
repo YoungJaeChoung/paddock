@@ -1,0 +1,7 @@
+# 첫 실행: 작업 폴더가 없으면 Work 목록 위에 안내가 보이고, 터미널 하나가 열려 선택돼 있다.
+waittabs 1 @30000
+wait 800
+state first-run
+shot work-empty
+daemonlist first-run
+quit

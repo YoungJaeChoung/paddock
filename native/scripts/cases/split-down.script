@@ -1,0 +1,22 @@
+# 아래 칸 분할: Ctrl+Shift+`로 아래 칸에 새 터미널이 열리고, 아래 칸은 자기 위에 탭 줄을 가진다
+waittabs 1 @30000
+send echo TOP\r
+waitline TOP @20000
+key ctrl-shift-`
+waittabs 2 @20000
+wait 1500
+send echo BOTTOM\r
+waitline BOTTOM @20000
+sendto 1 echo ONLY-IN-TOP\r
+wait 1500
+dumptab 1 top-pane
+dumptab 2 bottom-pane
+state split-down
+shot split-down
+# 아래 칸을 다시 옆으로 나누면 가로 분할이 세로 분할 안에 들어간다
+key ctrl-shift-c
+waittabs 3 @20000
+wait 1500
+state split-down-then-right
+shot split-down-then-right
+quit

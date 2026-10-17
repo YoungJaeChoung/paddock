@@ -1,0 +1,10 @@
+# Quit and Stop All Terminals: 설정이 keep이어도 이번만 모든 터미널을 끝내고 앱을 닫는다. 설정 파일은 그대로 keep이고 데몬은 곧 끝난다.
+waittabs 1 @30000
+send echo STOP-ME\r
+waitline STOP-ME @20000
+files before
+act quick open
+waitstate quick=open @5000
+shot panel-before-quit
+act quick quitstop
+wait 3000

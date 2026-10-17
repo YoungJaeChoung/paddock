@@ -1,0 +1,7 @@
+# restoreOnRestart=never: 데몬이 바뀐 뒤 앱을 다시 열어도 이전 터미널이 돌아오지 않는다(새 터미널 하나, 안내 줄 없음).
+waittabs 1 @40000
+wait 5000
+state never
+dump never
+daemonlist never
+quit

@@ -1,0 +1,27 @@
+# 한 폴더에 터미널이 9개이면 8줄과 "Show 1 more"가 보이고, 현재 터미널이 9번째면 그 터미널이 보인다. Show N more로 모두 펼친다.
+waittabs 1 @30000
+send unset HISTFILE; mkdir -p /tmp/paddock-fake/proj-a && ln -sf /bin/bash /tmp/paddock-fake/claude && export PATH=/tmp/paddock-fake:$PATH && cd /tmp/paddock-fake/proj-a\r
+send echo READY-MORE\r
+waitline READY-MORE @20000
+send claude -c 'sleep 90; echo end'\r
+waitstate row folder @20000
+act folderadd 1
+act folderadd 1
+act folderadd 1
+act folderadd 1
+act folderadd 1
+act folderadd 1
+act folderadd 1
+act folderadd 1
+waittabs 9 @60000
+wait 1500
+state ninth-selected
+shot more-current-visible
+key ctrl-right
+wait 800
+state first-selected
+shot more-hidden
+act showmore 1
+wait 500
+state shown-all
+quit

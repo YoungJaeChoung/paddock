@@ -1,0 +1,66 @@
+# Markdown 미리보기 (C-D9): README.md를 열면 미리보기(기본)이고, 탭 줄의 File·Preview·Both 단추(act mdview)로 원문·미리보기·나란히를 오간다.
+# 본문 폭은 칸이 넓어도 760을 넘지 않는다(file-view preview-width=, 칸을 넓힌 shot으로도 잰다). 본문 속 로컬 이미지는 읽히고(images=읽음/전체),
+# 원격 이미지·script·HTML 블록은 네트워크에 닿지 않는다(net.log에 연결 없음, 시험용 수신기 로그 0건 — 바깥 실행기가 확인한다). 파일마다 보기 방식을 기억한다.
+# 실행기가 임시 홈에 prep-md.sh로 proj-md 폴더(README.md, img/, docs/other.md)를 채우고, 기본 셸을 PowerShell로 두며, 포트 18765에 수신기를 띄워 둬야 한다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-md"; mkdir "$env:USERPROFILE\\bin" -Force | Out-Null; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo READY-MD\r
+waitline READY-MD @20000
+send claude -n 300 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+resize 1500 900
+net before-open
+act openpath C:/Temp/pdk-run/home-markdown-preview/proj-md/README.md
+waitstate kind=markdown state=markdown view=preview @15000
+act setfileratio 0.85
+wait 3000
+state md-preview-wide
+shot md-preview-wide
+net md-preview
+# 칸을 좁히면 본문은 칸을 따른다.
+act setfileratio 0.4
+wait 1500
+state md-preview-narrow
+shot md-preview-narrow
+act setfileratio 0.85
+wait 1000
+# 나란히: 두 열(원문 + 미리보기).
+act mdview both
+waitstate view=both @5000
+wait 1500
+state md-both
+shot md-both
+# 원문(File): 읽기 전용 텍스트 보기.
+act mdview file
+waitstate view=file @5000
+wait 800
+state md-file
+shot md-file
+act mdview preview
+waitstate view=preview @5000
+wait 800
+# 파일마다 보기 방식을 기억한다: README는 Both로 두고 다른 Markdown은 기본 Preview로 열린다.
+act mdview both
+waitstate view=both @5000
+act openpath C:/Temp/pdk-run/home-markdown-preview/proj-md/docs/other.md
+waitstate kind=markdown state=markdown view=preview @10000
+wait 1500
+state md-other-default
+shot md-other-preview
+act mdview file
+waitstate view=file @5000
+act filetab 1
+waitstate view=both @5000
+state md-readme-remembered
+act filetab 2
+waitstate view=file @5000
+state md-other-remembered
+# 키를 쳐도 내용이 바뀌지 않는다(읽기 전용).
+text zzz
+wait 600
+state md-typed
+net md-done
+quit

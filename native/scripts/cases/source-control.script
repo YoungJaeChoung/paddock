@@ -1,0 +1,96 @@
+# Source control: 저장소 폴더에서 보기를 열면 변경이 구획별로 보이고, 스테이징·커밋(메시지의 `;`·`$(…)`가 그대로 제목)·비교 탭·되돌리기(확인 창 문구, 취소하면 불변,
+# 승인하면 복원·삭제)·저장소 없음 안내·Work 보기 복귀와 배지 수를 확인한다. 실행기가 임시 홈의 네이티브 설정에 기본 셸을 PowerShell로 둬야 한다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-scm"; mkdir "$p\\src", "$env:USERPROFILE\\bin", "$env:USERPROFILE\\plain" -Force | Out-Null; cd $p; git init -q -b main; git config user.name Tester; git config user.email t@example.com; Set-Content a.txt one; Set-Content src\\b.txt two; git add -A; git commit -q -m base; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"\r
+send echo READY-SCM\r
+waitline READY-SCM @30000
+send claude -n 400 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate scm state=ready @15000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+send Set-Content a.txt changed; Set-Content src\\b.txt changed2; Set-Content new.txt fresh; Write-Host EDITED-SCM\r
+waitline EDITED-SCM @10000
+waitstate changes=2 untracked=1 @10000
+# Source control 보기를 연다: 변경 수 배지 3.
+act view scm
+waitstate view=scm @5000
+waitstate badge=3 @5000
+state opened
+shot scm-opened
+# 첫 변경 행(a.txt)을 스테이징한다.
+act stage 1
+waitstate staged=1 changes=1 untracked=1 @10000
+state staged-one
+shot scm-staged
+# 스테이징 취소와 모두 스테이징·모두 취소.
+act unstage 1
+waitstate staged=0 changes=2 untracked=1 @10000
+act stageall
+waitstate staged=3 changes=0 untracked=0 @10000
+state staged-all
+act unstageall
+waitstate staged=0 changes=2 untracked=1 @10000
+act stage 1
+waitstate staged=1 @10000
+# 커밋: 메시지의 셸 문자가 그대로 제목이 된다.
+act commit first; $(x) `y`
+waitstate staged=0 changes=1 untracked=1 @10000
+state committed
+send Write-Host ("SUBJ[" + (git log -1 --format=%s) + "]")\r
+waitline SUBJ[first; $(x) `y`] @10000
+shot scm-committed
+# 비교 탭: 변경 행(src/b.txt)은 비교 탭, 추적하지 않는 new.txt는 읽기 전용 파일 탭(Untracked 표지).
+act scmrow 1
+waitstate file-view kind=diff state=diff @10000
+state diff-tab
+shot scm-diff
+act scmrow 2
+waitstate untracked=yes @10000
+state untracked-tab
+shot scm-untracked
+# 되돌리기: 확인 창이 뜨고 취소하면 파일은 그대로다.
+act discard 1
+waitoverlay discard @5000
+state discard-asked
+shot scm-discard-tracked
+act cancel
+waitoverlay none @5000
+wait 800
+send Write-Host ("B[" + (Get-Content src\\b.txt) + "]")\r
+waitline B[changed2] @10000
+# 승인하면 index 내용으로 복원되고 비교 탭이 닫힌다.
+act discard 1
+waitoverlay discard @5000
+act confirm
+waitstate changes=0 untracked=1 @10000
+state discarded-tracked
+send Write-Host ("B[" + (Get-Content src\\b.txt) + "]")\r
+waitline B[two] @10000
+# 추적하지 않는 새 파일은 삭제임을 문구로 알리고, 승인하면 파일이 사라진다.
+act discard 1
+waitoverlay discard @5000
+state discard-untracked-asked
+shot scm-discard-untracked
+act confirm
+waitstate untracked=0 @10000
+send Write-Host ("EXISTS=" + (Test-Path new.txt))\r
+waitline EXISTS=False @10000
+state discarded-untracked
+# 저장소가 아닌 폴더의 터미널을 고르면 안내가 보인다.
+act workadd
+waittabs 3 @20000
+wait 1500
+send cd "$env:USERPROFILE\\plain"; Write-Host IN-PLAIN\r
+waitline IN-PLAIN @10000
+waitstate scm state=none @10000
+state no-repository
+shot scm-no-repository
+# Work 보기로 돌아온다.
+act view work
+waitstate view=work @5000
+state back-to-work
+quit

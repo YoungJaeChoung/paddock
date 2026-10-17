@@ -1,0 +1,36 @@
+# 계정 터미널: 등록 계정이 있으면 ＋가 메뉴를 열고, 계정을 고르면 같은 폴더에 PowerShell 계정 터미널이 열려
+# CLAUDE_CONFIG_DIR가 계정 폴더이고 로그인 변수(ANTHROPIC_API_KEY)는 비어 있다. 가짜 claude 명령이 그 값을 출력한다.
+waittabs 1 @30000
+act envmenu
+waitstate menu: environments @5000
+act menuitem PowerShell
+waittabs 2 @30000
+waitstate cwd=C: @30000
+act plusmenu
+waitstate menu: new-terminal @5000
+shot plus-menu
+act menuitem Claude · Main
+waittabs 3 @30000
+waitfor ACCOUNT_FIXTURE @30000
+wait 1500
+dump account-claude
+shot account-claude
+state account-claude
+act pickermenu
+waitstate menu: new-terminal @5000
+shot picker-menu
+act menuitem Terminal
+waittabs 4 @30000
+wait 500
+act pickermenu
+act menuitem Codex · Work
+waittabs 5 @30000
+waitfor ACCOUNT_FIXTURE @30000
+wait 1500
+dump account-codex
+shot account-codex
+state account-codex
+send echo $env:CODEX_HOME\r
+wait 800
+dump account-codex-after
+quit

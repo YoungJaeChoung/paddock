@@ -1,0 +1,84 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+paddock-core = { path = "crates/paddock-core" }
+paddock-protocol = { path = "crates/paddock-protocol" }
+# GPUI와 부품 라이브러리는 gpui-component의 한 커밋에 고정한다 — Windows 크로스 빌드와
+# 한글 입력 동작이 검증한 판과 같아야 한다.
+gpui-kit = { git = "https://github.com/longbridge/gpui-component", rev = "9b7655158f5581c58025af7f8fe1753de274e291", features = [
+    # 텍스트 보기의 구문 강조: 주요 12개 언어만 켠다(언어당 파서 하나).
+    "tree-sitter-javascript",
+    "tree-sitter-typescript",
+    "tree-sitter-tsx",
+    "tree-sitter-python",
+    "tree-sitter-yaml",
+    "tree-sitter-markdown",
+    "tree-sitter-bash",
+    "tree-sitter-html",
+    "tree-sitter-css",
+    "tree-sitter-rust",
+    "tree-sitter-toml",
+] }
+alacritty_terminal = "0.26"
+interprocess = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+rand = "0.8"
+polling = "3"
+widestring = "1"
+libc = "0.2"
+chrono = "0.4"
+# 완료 소리: 두 음을 합성해 재생할 때만 출력 장치를 연다. 파일 디코더는 쓰지 않으므로 끈다.
+rodio = { version = "0.23", default-features = false, features = ["playback"] }
+unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
+tempfile = "3"
+notify = "8"
+# 이미지 미리보기: gpui가 이미 쓰는 판(0.25)에 맞춘다. 켜는 형식은 gpui가 켠 것과 같다.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "ico", "tiff"] }
+# PDF 미리보기(순수 Rust, unsafe 금지).
+hayro = "0.8"
+# SVG를 직접 읽고 그린다(<image href>를 거부하는 리졸버를 주려고 gpui의 SVG 렌더러를 쓰지 않는다). gpui가 쓰는 판(0.46)에 맞춘다.
+usvg = "0.46"
+resvg = "0.46"
+tracing = "0.1"
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Threading",
+    "Win32_System_Pipes",
+    "Win32_System_ProcessStatus",
+    "Win32_System_JobObjects",
+    "Win32_System_Memory",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Wdk_System_Threading",
+    "Win32_Storage_FileSystem",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Input_Ime",
+    "Win32_UI_Shell",
+    "Win32_System_Com",
+] }
+# GPUI 창의 운영체제 창 핸들을 얻어 입력기 조합을 마치게 하는 데 쓴다(Windows).
+raw-window-handle = "0.6"
+
+# 배포 exe에서 디버그 심볼을 뺀다. 크기가 줄고, 심볼에 들어 있는 빌드 환경의 경로·이름이 배포물에 남지 않는다.
+[profile.release]
+strip = "symbols"
+
+# Windows 개발 빌드: release 최적화를 쓰되, 크로스 빌드에는 셰이더를 미리 컴파일할 fxc가
+# 없어 gpui-pre-windows가 실행 때 HLSL을 컴파일하게 한다. 배포(release) 빌드는 그대로 두고
+# Windows CI에서 만든다.
+[profile.dev-win]
+inherits = "release"
+
+[profile.dev-win.package.gpui-pre-windows]
+debug-assertions = true

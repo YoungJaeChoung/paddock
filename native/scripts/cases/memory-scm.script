@@ -1,0 +1,31 @@
+# 메모리(Source control): 파일 1,000개 저장소에서 30개를 고치고 10개를 새로 만든 뒤 Source control 보기와 비교 탭 하나를 연 채 20초 쉬고 앱 Private 메모리를 잰다.
+# 기준 exe(1단계 마감)에도 같은 대본을 돌려(없는 동작은 무시된다) 증가분을 비교한다. 고정 대기만 쓴다 — 기준 exe는 새 상태 글이 없다.
+# 실행기가 임시 홈의 네이티브 설정에 기본 셸을 PowerShell로 둬야 한다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+mem start-1-terminal
+send $p = "$env:USERPROFILE\\proj-mem"; mkdir "$p", "$env:USERPROFILE\\bin" -Force | Out-Null; cd $p; git init -q -b main; git config user.name Tester; git config user.email t@example.com; 1..1000 | ForEach-Object { Set-Content "file-$_.txt" "line $_" }; git add -A; git commit -q -m base; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"\r
+send echo READY-MEM\r
+waitline READY-MEM @120000
+send claude -n 120 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 3000
+send 1..30 | ForEach-Object { Set-Content "file-$_.txt" "changed $_" }; 1..10 | ForEach-Object { Set-Content "new-$_.txt" "new" }; Write-Host EDITED-MEM\r
+waitline EDITED-MEM @30000
+wait 8000
+mem before-scm
+act view scm
+wait 2000
+act scmrow 1
+wait 20000
+state scm-open
+mem scm-open-20s
+shot memory-scm
+act closefile
+act view work
+wait 8000
+mem after-close
+quit

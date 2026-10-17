@@ -1,0 +1,56 @@
+# 읽기 전용 보장과 활성 탭 규칙. (1) 파일 탭이 활성일 때 글자·Delete·Backspace·Enter·Tab·전체 선택·잘라내기·붙여넣기·되돌리기 키를 흘려도
+# 편집기 내용(`content-hash`)과 디스크 파일(SHA-256·수정 시각)이 그대로다. (2) 파일 탭이 활성일 때 새 터미널을 열면 터미널이 활성이 되고(포커스 포함),
+# 다시 파일 탭을 고른 뒤 시작 터미널이 아닌/인 터미널을 닫아도 같은 묶음이라 파일 탭이 활성인 채다.
+# 이 대본은 실행 이름이 file-readonly일 때 임시 홈 경로(C:/Temp/pdk-run/home-file-readonly)를 쓴다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = $env:USERPROFILE; Set-Content "$p\\ro.txt" "line one`nline two"; $h = (Get-FileHash "$p\\ro.txt").Hash; $t = (Get-Item "$p\\ro.txt").LastWriteTimeUtc.Ticks; Write-Host ("BE" + "FORE-$h-$t")\r
+waitfor BEFORE- @20000
+act openpath C:/Temp/pdk-run/home-file-readonly/ro.txt
+waitstate file-view kind=text state=text @10000
+wait 800
+state before-keys
+text zzz
+key delete
+key backspace
+key enter
+key tab
+key ctrl-a
+key ctrl-x
+key ctrl-v
+key ctrl-z
+key ctrl-y
+wait 800
+state after-keys
+sendto 1 $h2 = (Get-FileHash "$p\\ro.txt").Hash; $t2 = (Get-Item "$p\\ro.txt").LastWriteTimeUtc.Ticks; Write-Host ("AF" + "TER-$h2-$t2")\r
+waitfor AFTER- @20000
+dumptab 1 hashes
+# 파일 탭이 활성일 때 새 터미널 → 터미널이 활성(포커스도 터미널).
+key ctrl-shift-t
+waittabs 2 @20000
+wait 1200
+state new-terminal-while-file-active
+key ctrl-shift-t
+waittabs 3 @20000
+wait 1200
+act filetab 1
+wait 600
+state file-active-again
+# 시작 터미널(선택하지 않은 것)을 닫아도, 선택한 터미널을 닫아도 같은 묶음이라 파일 탭이 활성인 채다.
+act menu terminal 1
+act menuitem Close terminal
+waitoverlay close-terminal @5000
+act confirm
+waitoverlay none @5000
+waittabs 2 @10000
+wait 800
+state closed-root-unselected
+act menu terminal 2
+act menuitem Close terminal
+waitoverlay close-terminal @5000
+act confirm
+waitoverlay none @5000
+waittabs 1 @10000
+wait 800
+state closed-selected
+quit

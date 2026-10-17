@@ -1,0 +1,39 @@
+# Git 변경 표시(네이티브 폴더): 저장소 파일을 고치면 파일 행에 상태 글자와 색이, 품은 폴더에 색이 붙는다(C-D7: 반영 ≤ 1.5초).
+# 이름에 공백·한글·`-` 시작이 든 파일도 같다. 터미널에서 한 `git add`는 .git/index 사건으로 표시에 반영된다.
+# 반영 시간: 터미널이 찍은 편집 시각(EDITED hh:mm:ss.fff)과 `state-seen.txt`의 수정 시각을 바깥에서 뺀다.
+# 실행기가 임시 홈의 네이티브 설정에 기본 셸을 PowerShell로 둬야 한다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-git"; mkdir "$p\\src", "$p\\sub dir", "$env:USERPROFILE\\bin" -Force | Out-Null; cd $p; git init -q -b main; git config user.name Tester; git config user.email t@example.com; Set-Content a.txt one; Set-Content src\\b.txt two; Set-Content -LiteralPath "sub dir\\c d.txt" three; git add -A; git commit -q -m base; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"\r
+send echo READY-GIT\r
+waitline READY-GIT @30000
+send claude -n 300 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+waitstate scm state=ready @15000
+state clean
+shot git-clean
+# 바뀐 것이 없으면 표시도 없다. 두 번째 터미널에서 파일을 고친다.
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+mark edit-sent
+send Set-Content a.txt changed; Set-Content src\\b.txt changed2; Set-Content "new file.txt" fresh; Set-Content -LiteralPath "한글.txt" x; Set-Content -LiteralPath "-rf" x; Write-Host ("EDITED " + (Get-Date -Format HH:mm:ss.fff))\r
+waitstate file-row 0 file a.txt mark=M color=modified @8000
+state seen
+shot git-marks
+dumptab 2 term-after-edit
+wait 1000
+state seen-later
+# 폴더 색: src·루트에 수정 색. 새 파일은 U.
+# 터미널에서 한 git add는 .git/index 사건으로 반영된다.
+send git add a.txt\r
+waitstate staged=1 @8000
+state staged-by-terminal
+# 파일 행을 되돌리면(커밋) 표시가 사라진다.
+send git add -A; git commit -q -m second; Write-Host COMMITTED\r
+waitstate staged=0 changes=0 untracked=0 @10000
+state after-commit
+shot git-after-commit
+quit

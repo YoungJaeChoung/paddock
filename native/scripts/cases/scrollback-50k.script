@@ -1,0 +1,13 @@
+# 5만 줄: 터미널 1개가 자리 잡은 뒤 seq 1 50000을 출력하고, 입력 응답까지 걸린 시간을 이벤트 기록에서 읽는다
+waittabs 1 @30000
+wait 12000
+mem before-50k
+mark seq-start
+send seq 1 50000\r
+waitline 50000 @60000
+mark seq-end
+wait 3000
+mem after-50k
+send echo AFTER\r
+waitline AFTER @10000
+quit

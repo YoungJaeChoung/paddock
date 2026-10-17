@@ -1,0 +1,24 @@
+[package]
+name = "paddock-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Owns terminal processes so they outlive the Paddock window."
+
+[dependencies]
+paddock-core.workspace = true
+paddock-protocol.workspace = true
+alacritty_terminal.workspace = true
+interprocess.workspace = true
+polling.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

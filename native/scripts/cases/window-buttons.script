@@ -1,0 +1,9 @@
+# 창 버튼 회귀: 창 폭 1000·1380에서 최소화·최대화·닫기 버튼 간격(48px)과 글리프가 잘리지 않는지 캡처로 본다
+waittabs 1 @30000
+resize 1000 650
+wait 800
+shot width-1000
+resize 1380 650
+wait 800
+shot width-1380
+quit

@@ -1,0 +1,22 @@
+# 파일 목록(WSL 공유 폴더): 파일 사건이 오지 않는 폴더는 3초 주기 수정 시각 비교로 지켜본다(`files-watch=polling`).
+# 폴더 읽기 시간(files-read-ms)을 남기고, 밖에서 만든 파일이 한 주기(+읽기) 안에 행으로 나타나는지 본다. 기본 셸은 WSL이다.
+waittabs 1 @30000
+send unset HISTFILE; rm -rf /tmp/pdk-files && mkdir -p /tmp/pdk-files/proj/src /tmp/pdk-files/proj/.git /tmp/pdk-files/proj/__pycache__ && touch /tmp/pdk-files/proj/README.md /tmp/pdk-files/proj/src/a.js && ln -sf /bin/bash /tmp/pdk-files/claude && export PATH=/tmp/pdk-files:$PATH && cd /tmp/pdk-files/proj\r
+send echo READY-WSL\r
+waitline READY-WSL @20000
+send claude -c 'for i in $(seq 1 200); do echo work $i; sleep 0.5; done'\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+state wsl-listed
+shot files-wsl
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+mark touch-sent
+send touch /tmp/pdk-files/proj/c.txt\r
+waitstate file-row 0 file c.txt @6000
+state wsl-watched
+send rm -rf /tmp/pdk-files\r
+wait 500
+quit

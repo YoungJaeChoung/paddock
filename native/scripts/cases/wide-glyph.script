@@ -1,0 +1,7 @@
+# 전각 맞춤 캡처: 한글·일본어·원문자를 한 줄에, 영문 열이 어긋나는지 보는 줄을 아래에 출력한다
+waittabs 1 @30000
+send clear; echo "한글한글한글 日本語日本語 ①②③ ABC"; echo "abcdefghijklmnopqrstuvwxyz0123456789"; echo "가나다라마바사아자차카타파하 DONE"\r
+waitfor DONE @20000
+wait 1500
+shot wide-glyph
+quit

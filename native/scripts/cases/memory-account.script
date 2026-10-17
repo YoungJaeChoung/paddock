@@ -1,0 +1,26 @@
+# 메모리 예산(덩어리 10): 터미널 4개(PowerShell 터미널과 PowerShell 계정 터미널 1개 포함, 1개 보임)를 열고 20초 쉰 뒤 Private 메모리를 잰다.
+# 등록 계정 파일(Claude · Main)과 가짜 claude 명령이 PATH에 있어야 한다(실행기가 둔다).
+waittabs 1 @30000
+wait 1500
+mem start-1-terminal
+act envmenu
+act menuitem PowerShell
+waittabs 2 @20000
+waitstate cwd=C: @30000
+act plusmenu
+act menuitem Claude · Main
+waittabs 3 @30000
+waitfor ACCOUNT_FIXTURE @30000
+key ctrl-shift-t
+waittabs 4 @20000
+wait 20000
+mem four-terminals-20s
+sendto 1 seq 1 50000\r
+sendto 2 seq 1 50000\r
+sendto 3 seq 1 50000\r
+send seq 1 50000\r
+waitline 50000 @90000
+wait 5000
+mem after-50k-x4
+shot memory-account-final
+quit

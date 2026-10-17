@@ -1,0 +1,106 @@
+# 파일 탭 (1/2): 파일 행을 누르면 터미널 배치 오른쪽 칸에 읽기 전용 텍스트 탭이 열리고, 탭 줄 마지막 열에 파일 탭이, 오른쪽에 `Open in external editor` 단추가 생긴다.
+# 같은 칸에 둘째 파일이 탭으로 붙고(칸 재사용), 같은 파일을 다시 누르면 탭 수가 그대로다. Ctrl+→는 터미널 열 끝에서 파일 탭으로 이어지고 PTY에는 바이트가 가지 않는다.
+# 파일 탭 닫기는 Ctrl+Shift+W(활성 탭 닫기)와 act closefile. 다른 묶음으로 가면 파일이 안 보이고 돌아오면 보인다. 이진 파일(.zip)은 안내 탭이고
+# `Open as text anyway`로 텍스트 탭이 된다. 경계 비율을 바꾼 뒤 앱을 닫는다 → file-open-2.script가 재실행 복원을 확인한다.
+# 실행기가 임시 홈의 네이티브 설정에 기본 셸을 PowerShell로 둬야 한다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-open"; mkdir "$p\\src", "$env:USERPROFILE\\bin" -Force | Out-Null; Set-Content "$p\\src\\a.ts" "const answer: number = 42;"; Set-Content "$p\\notes.txt" "first line"; Set-Content "$p\\README.md" "# Title"; Set-Content "$p\\data.zip" "PK plain bytes"; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo READY-OPEN\r
+waitline READY-OPEN @20000
+send claude -n 300 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+# 두 번째 터미널(옆 칸). 여기서 키 입력을 그대로 보여 주는 읽기 루프를 돌려 PTY로 가는 바이트를 가려 낸다.
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+send while ($true) { $k = [Console]::ReadKey($true); Write-Host ("GOT-" + [int]$k.Key) }\r
+wait 1500
+state before-open
+# 파일 행: src(폴더) · data.zip · notes.txt · README.md
+act openfile 3
+waitstate file-view kind=text state=text @10000
+state opened-notes
+shot opened-notes
+# 읽기 전용: 파일이 활성인 동안 글자 키를 쳐도 내용이 바뀌지 않고 PTY로도 가지 않는다.
+text zzz
+wait 600
+state typed-into-view
+dumptab 2 pty-after-typing
+act openfile 4
+waitstate file-view kind=markdown state=markdown @10000
+state second-file
+shot second-file
+# 같은 파일 다시 누르기 → 탭 수 그대로, 그 탭 선택.
+act openfile 3
+wait 800
+state same-file-again
+# 터미널 열 끝에서 Ctrl+→ → 첫 파일 탭, 다시 Ctrl+→ → 둘째 파일 탭, Ctrl+←로 되돌아가 첫 파일 탭 앞에서 Ctrl+← → 터미널(편집기에 포커스가 있어도 앱이 받는다).
+act selecttab 2
+wait 600
+key ctrl-right
+wait 800
+state ctrl-right-into-files
+key ctrl-right
+wait 800
+state ctrl-right-next-file
+key ctrl-left
+wait 800
+state ctrl-left-previous-file
+key ctrl-left
+wait 800
+state ctrl-left-back-to-terminal
+key ctrl-left
+wait 800
+state ctrl-left-previous-terminal
+dumptab 2 pty-after-arrows
+# 파일 탭 닫기: 파일이 활성일 때 Ctrl+Shift+W는 활성 탭을 닫고 PTY로 가지 않는다. act closefile은 선택한 파일 탭 닫기.
+act filetab 2
+wait 500
+key ctrl-shift-w
+wait 800
+state closed-by-shortcut
+act openfile 4
+wait 800
+act closefile
+wait 800
+state closed-by-act
+dumptab 2 pty-after-close
+# 묶음 전환: 새 Unassigned 묶음에는 파일이 없다. 돌아오면 파일 탭이 그대로다.
+act openfile 3
+waitstate file-view kind=text state=text @10000
+act workadd
+waittabs 3 @20000
+wait 1500
+state other-group
+# 다른 묶음을 보는 중에 작업 폴더가 품은 파일을 열면(여기서는 대본의 openpath; 기존 앱도 열린 파일이 속한 폴더로 화면을 옮긴다) 그 폴더 묶음으로 전환된다.
+act openpath C:/Temp/pdk-run/home-file-open/proj-open/README.md
+wait 1500
+state folder-file-switches-group
+act selecttab 1
+wait 800
+state back-in-group
+# 이진 파일: 안내 탭(이름·크기·문구·단추)이고 Open as text anyway로 텍스트 탭이 된다.
+act openfile 2
+waitstate state=notice @10000
+state zip-notice
+shot zip-notice
+act notice astext
+waitstate kind=text state=text @10000
+state zip-as-text
+shot zip-as-text
+# 텍스트로 연 탭은 다시 눌러 읽어도 이진 판정을 건너뛴다(표지를 탭이 기억한다).
+act openfile 2
+wait 1500
+state zip-as-text-again
+# 경계 끌기의 결과: 파일 칸 비율 0.3. 앱을 닫는다(Keep running).
+act setfileratio 0.3
+wait 600
+state ratio-set
+shot ratio-set
+closewindow
+waitoverlay quit @5000
+key enter
+wait 3000

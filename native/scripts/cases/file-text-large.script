@@ -1,0 +1,35 @@
+# 텍스트 보기 크기 상한: 정확히 1 MiB는 텍스트 탭으로 열리고(창 스레드가 막힌 시간의 최댓값은 `ui-max-gap-ms=`), 1 MiB + 1 바이트는 안내 탭이다.
+# 앞 8 KB에 NUL이 든 파일은 확장자를 몰라도 이진 안내이고, 8 KB 뒤의 NUL은 무시된다. 파일을 읽는 일은 작업 스레드가 한다.
+# 실행기가 임시 홈의 네이티브 설정에 기본 셸을 PowerShell로 둬야 한다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-large"; mkdir $p, "$env:USERPROFILE\\bin" -Force | Out-Null; $line = "export const value = 'a long enough line of source text to fill the file quickly';`n"; $big = $line * [math]::Ceiling(1048576 / $line.Length); [IO.File]::WriteAllText("$p\\a-exact.ts", $big.Substring(0, 1048576)); [IO.File]::WriteAllText("$p\\b-over.ts", $big.Substring(0, 1048577)); [IO.File]::WriteAllBytes("$p\\c-nul.xyz", [byte[]](97,0,98)); $late = New-Object byte[] 9000; for ($i = 0; $i -lt 9000; $i++) { $late[$i] = 97 }; $late[8999] = 0; [IO.File]::WriteAllBytes("$p\\d-late-nul.xyz", $late); [IO.File]::WriteAllText("$p\\e-mid.ts", $big.Substring(0, 409600)); Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo READY-LARGE\r
+waitline READY-LARGE @30000
+send claude -n 300 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+state listed
+# 행: a-exact.ts · b-over.ts · c-nul.xyz · d-late-nul.xyz · e-mid.ts
+# 구문 강조는 512 KiB 이하 파일만 한다: 정확히 1 MiB는 강조 없이(language=text), 400 KiB는 강조한다(language=typescript).
+act resetgap
+act openfile 1
+waitstate file-view kind=text state=text @20000
+wait 3000
+state exact
+shot exact
+act openfile 2
+waitstate state=notice reason=TooLarge @20000
+state over
+shot over
+act openfile 3
+waitstate reason=Binary @10000
+state nul
+act openfile 4
+waitstate kind=text state=text @10000
+state late-nul
+act openfile 5
+waitstate language=typescript @10000
+state mid-highlighted
+quit
