@@ -284,8 +284,10 @@ class WorkSidebar {
                 node.append(toolbar);
                 if (this.workspace.filesExpanded) {
                     const files = element('div', 'file-list');
-                    // 목록의 빈 곳에 놓은 파일은 이 폴더 맨 위에 복사한다.
-                    this.workspace.fileTree.acceptFileDrops(files, new URI(filesFolder));
+                    // 빈 곳을 눌러도 목록이 초점을 받아, 그 뒤의 Ctrl+V가 이 폴더 맨 위로 들어온다.
+                    files.tabIndex = -1;
+                    // 목록의 빈 곳에 놓거나 붙여 넣은 파일은 이 폴더 맨 위에 복사한다.
+                    this.workspace.fileTree.acceptFiles(files, new URI(filesFolder));
                     this.workspace.fileTree.appendDirectory(files, directory, 0, fileMarks(this.workspace.fileTree.gitChanges()));
                     node.append(files);
                 }
@@ -297,11 +299,16 @@ class WorkSidebar {
                 const content = this.workspace.shell.sidebar.node.querySelector('.work-content');
                 const focused = content.contains(document.activeElement) ? document.activeElement.closest('[data-widget-id]')?.dataset.widgetId : null;
                 const wasClose = document.activeElement?.classList.contains('work-close');
+                // 파일 행·목록의 초점도 되살린다. 잃으면 그 뒤의 Ctrl+V가 파일 목록으로 오지 않는다(file-tree.js listenForPaste).
+                const focusedFile = content.contains(document.activeElement) ? document.activeElement.closest('.file-row')?.dataset.uri : null;
+                const wasFileList = document.activeElement?.classList.contains('file-list');
                 const host = content.parentElement;
                 const scrollTop = host.scrollTop;
                 content.replaceChildren(node);
                 host.scrollTop = scrollTop;
                 if (focused) content.querySelector(`[data-widget-id="${focused}"] ${wasClose ? '.work-close' : '.row-main'}`)?.focus({ preventScroll: true });
+                else if (focusedFile) [...content.querySelectorAll('.file-row')].find(item => item.dataset.uri === focusedFile)?.focus({ preventScroll: true });
+                else if (wasFileList) content.querySelector('.file-list')?.focus({ preventScroll: true });
                 this.workRenderKey = key;
             }
         }

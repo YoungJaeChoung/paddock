@@ -4,7 +4,9 @@ const { OS } = require('@theia/core/lib/common/os');
 const { ConfirmDialog, SingleTextInputDialog } = require('@theia/core/lib/browser/dialogs');
 const model = require('../work-model');
 const { fileMarks, colorVariable } = require('../file-marks');
-const { validateEntryName } = require('../entry-name');
+const { BinaryBuffer } = require('@theia/core/lib/common/buffer');
+const { validateEntryName, copyEntryName } = require('../entry-name');
+const { imageExtension } = require('../paste-paths');
 const { element, codicon, button, menuItem, createPopupMenu, showPopupMenuAt } = require('./shared');
 
 /**
@@ -16,6 +18,7 @@ class FileTree {
     ) {
         this.workspace = workspace;
         this.expandedDirectories = new Set();
+        this.listenForPaste();
     }
 
     /** 표시할 파일·폴더와 펼친 하위 목록. 읽기 실패와 빈 폴더를 구별하고, 화면에 쓰지 않는 파일 내용·수정 시각은 담지 않는다. */
@@ -114,8 +117,8 @@ class FileTree {
             if (markColor) name.style.color = colorVariable(markColor);
             row.title = mark?.tooltip ? `${uri.path.toString()} · ${mark.tooltip}` : uri.path.toString();
             row.dataset.uri = key;
-            // 밖에서 끌어 온 파일은 폴더 행이면 그 폴더에, 파일 행이면 그 파일이 있는 폴더에 복사한다.
-            this.acceptFileDrops(row, entry.isDirectory ? uri : uri.parent);
+            // 밖에서 끌어 오거나 붙여 넣은 파일은 폴더 행이면 그 폴더에, 파일 행이면 그 파일이 있는 폴더에 복사한다.
+            this.acceptFiles(row, entry.isDirectory ? uri : uri.parent);
             row.addEventListener('contextmenu', (event) => {
                 event.preventDefault();
                 const point = { x: event.clientX, y: event.clientY };
@@ -193,14 +196,16 @@ class FileTree {
     }
 
     /**
-     * 탐색기·Finder에서 끌어 온 파일·폴더를 받으면 대상 폴더에 복사한다.
+     * 탐색기·Finder에서 끌어 오거나 복사해 붙여 넣은(Ctrl+V·메뉴 Paste) 파일·폴더와 캡처한 그림을 대상 폴더에 받는다.
      *
-     * 같은 이름이 이미 있으면 덮어쓰지 않고 이유를 알린다. 안쪽 행이 받은 놓기는 바깥 목록으로 다시 전달하지 않는다.
+     * 같은 이름이 이미 있으면 덮어쓰지 않고 `이름 copy`로 받는다. 안쪽 행이 받은 놓기는 바깥 목록으로 다시 전달하지 않는다.
+     * 붙여넣기는 창 전체의 한 듣기(listenForPaste)가 초점이 든 행·목록의 대상 폴더(`data-paste-directory`)로 보낸다.
      */
-    acceptFileDrops(
+    acceptFiles(
         target,
         directory,
     ) {
+        target.dataset.pasteDirectory = directory.toString();
         const hasFiles = event => [...(event.dataTransfer?.items || [])].some(item => item.kind === 'file');
         target.addEventListener('dragover', (event) => {
             if (hasFiles(event)) {
@@ -217,25 +222,73 @@ class FileTree {
             if (files.length) {
                 event.preventDefault();
                 event.stopPropagation();
-                this.workspace.run(() => this.copyDroppedFiles(files, directory));
+                this.workspace.run(() => this.copyIncomingFiles(files, directory));
             }
         });
     }
 
-    async copyDroppedFiles(
+    async copyIncomingFiles(
         files,
         directory,
     ) {
         for (const file of files) {
+            // 디스크에 있는 파일은 경로가 있어 그대로 복사한다. 캡처한 화면처럼 경로가 없는 그림은 내용을 `image.<확장자>`로 쓴다.
             const filePath = window.electronTheiaCore?.getPathForFile(file);
-            if (!filePath) throw new Error(`Cannot read the path of ${file.name}. Drag the file from a folder on this computer.`);
-            const source = FileUri.create(filePath);
-            const destination = directory.resolve(source.path.base);
-            if (await this.workspace.files.exists(destination)) throw new Error(`“${source.path.base}” already exists in this folder. Rename one of them first.`);
-            await this.workspace.files.copy(source, destination);
+            const isImage = file.type.startsWith('image/');
+            if (!filePath && !isImage) throw new Error(`Cannot read the path of ${file.name || 'the pasted item'}. Copy the file from a folder on this computer.`);
+            const source = filePath ? FileUri.create(filePath) : null;
+            const name = source ? source.path.base : `image.${imageExtension(file.type)}`;
+            let destination = directory.resolve(name);
+            for (let n_copies = 1; await this.workspace.files.exists(destination); n_copies += 1) destination = directory.resolve(copyEntryName(name, n_copies));
+            if (source) await this.workspace.files.copy(source, destination);
+            else await this.workspace.files.createFile(destination, BinaryBuffer.wrap(new Uint8Array(await file.arrayBuffer())));
         }
         this.showAddedEntries(directory);
         await this.workspace.refresh();
+    }
+
+    /**
+     * 파일 목록에 초점이 있을 때의 붙여넣기(Ctrl+V)를 받는다. 앱 시작 때 한 번 건다.
+     *
+     * 붙여넣기 사건은 초점이 아니라 글자 선택이 남은 곳(대개 편집기)으로 가므로, 목록 행에 걸면 받지 못한다.
+     * 그래서 창 전체에서 듣고 초점이 든 행(없으면 목록)의 대상 폴더로 보낸다. 클립보드에 파일·그림이 없으면 다른 처리에 맡긴다.
+     */
+    listenForPaste() {
+        window.addEventListener('paste', (event) => {
+            const holder = document.activeElement?.closest?.('.file-list [data-paste-directory], .file-list[data-paste-directory]');
+            const files = [...(event.clipboardData?.files || [])];
+            if (holder && files.length) {
+                event.preventDefault();
+                event.stopPropagation();
+                this.workspace.run(() => this.copyIncomingFiles(files, new URI(holder.dataset.pasteDirectory)));
+            }
+        }, true);
+    }
+
+    /**
+     * 메뉴의 Paste. 메뉴 클릭에는 클립보드 내용이 실려 오지 않아, 그 행에 초점을 둔 채 붙여넣기를 실행해 Ctrl+V와 같은 길(listenForPaste)로 받는다.
+     * 실행이 막히면(브라우저가 스크립트의 붙여넣기를 거절) 클립보드 그림만 직접 읽어 받는다. 파일·그림이 없으면 알린다.
+     */
+    async pasteInto(
+        uri,
+        directory,
+    ) {
+        const row = [...document.querySelectorAll('.file-list .file-row')].find(item => item.dataset.uri === uri.toString());
+        let n_received = 0;
+        const count = event => { if (event.clipboardData?.files.length) n_received += 1; };
+        window.addEventListener('paste', count, true);
+        row?.focus();
+        document.execCommand('paste');
+        window.removeEventListener('paste', count, true);
+        if (n_received === 0) {
+            const images = [];
+            for (const item of await navigator.clipboard.read().catch(() => [])) {
+                const type = item.types.find(name => name.startsWith('image/'));
+                if (type) images.push(new File([await item.getType(type)], '', { type }));
+            }
+            if (!images.length) throw new Error('The clipboard has no files or images. Copy a file or take a screenshot first.');
+            await this.copyIncomingFiles(images, directory);
+        }
     }
 
     /** 운영체제의 파일 관리자(탐색기·Finder)를 열고 그 항목을 선택해 보여 준다. */
@@ -254,9 +307,12 @@ class FileTree {
         const menu = createPopupMenu();
         const systemName = OS.backend.type() === OS.Type.Windows ? 'File Explorer' : OS.backend.type() === OS.Type.OSX ? 'Finder' : 'File Manager';
         const reveal = ['folder-opened', `Reveal in ${systemName}`, () => this.revealInSystem(uri)];
+        // 붙여 넣은 파일은 폴더면 그 안, 파일이면 그 파일이 있는 폴더에 들어간다(Ctrl+V와 같다).
+        const paste = ['clippy', 'Paste', () => this.pasteInto(uri, isDirectory ? uri : uri.parent)];
         const items = isDirectory ? [
             ['new-file', 'New File...', () => this.createFileEntry(uri, false)],
             ['new-folder', 'New Folder...', () => this.createFileEntry(uri, true)],
+            paste,
             reveal,
         ] : [
             ['file', 'Open', () => this.workspace.openFile(uri)],
@@ -267,6 +323,7 @@ class FileTree {
                 else await this.workspace.openFile(uri);
                 await this.workspace.commands.executeCommand('workbench.action.showCommands');
             }],
+            paste,
             reveal,
         ];
         for (const [icon, label, action] of items) {

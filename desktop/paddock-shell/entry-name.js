@@ -26,4 +26,33 @@ function validateEntryName(
     return result;
 }
 
-module.exports = { validateEntryName };
+/**
+ * 같은 이름이 있는 폴더에 붙여 넣거나 끌어 놓은 항목에 붙일 n번째 다른 이름.
+ *
+ * 덮어쓰지도, 이름을 묻지도 않고 이어 받을 수 있게 한다. 호출자는 0부터 n을 올리며 비어 있는 이름을 찾는다.
+ * 점으로 시작하고 다른 점이 없는 이름(`.env`)은 이름 전체를 앞부분으로 본다.
+ *
+ * Examples
+ * --------
+ * | name        | n | 결과                |
+ * | ----------- | - | ------------------- |
+ * | `image.png` | 0 | `image.png`         |
+ * | `image.png` | 1 | `image copy.png`    |
+ * | `image.png` | 2 | `image copy 2.png`  |
+ * | `a.tar.gz`  | 1 | `a.tar copy.gz`     |
+ * | `.env`      | 1 | `.env copy`         |
+ * | `Makefile`  | 3 | `Makefile copy 3`   |
+ */
+function copyEntryName(
+    name,
+    n,
+) {
+    const dot = name.lastIndexOf('.');
+    const hasExtension = dot > 0;
+    const stem = hasExtension ? name.slice(0, dot) : name;
+    const extension = hasExtension ? name.slice(dot) : '';
+    const suffix = n === 0 ? '' : n === 1 ? ' copy' : ` copy ${n}`;
+    return `${stem}${suffix}${extension}`;
+}
+
+module.exports = { validateEntryName, copyEntryName };
