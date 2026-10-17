@@ -39,6 +39,7 @@ const { MainPluginApiProvider } = require('@theia/plugin-ext/lib/common/plugin-e
 const { PaddockPluginApiOverrides } = require('./plugin-api-overrides');
 const { PaddockReconnectGuard } = require('./reconnect-guard');
 const { PaddockGitShim } = require('./git-shim');
+const { BackgroundGitRefresh } = require('./background-git-refresh');
 require('./controls.css');
 
 // Paddock 설정. 설정 화면(Preferences)에서 "paddock"로 찾을 수 있다.
@@ -186,6 +187,8 @@ exports.default = new ContainerModule((bind, unbind, isBound, rebind, unbindAsyn
     bind(OpenHandler).toDynamicValue(({ container }) => new PaddockPdfOpener(container)).inSingletonScope();
     bind(OpenHandler).toDynamicValue(({ container }) => new PaddockBinaryNoticeOpener(container)).inSingletonScope();
     bind(PreferenceContribution).toConstantValue({ schema: PaddockPreferenceSchema });
+    // 백그라운드 Git 다시 읽기의 반복 실패 알림을 거른다. 작업 화면(보내는 쪽)과 메시지 등록기(알림 쪽)가 함께 쓴다.
+    bind(BackgroundGitRefresh).toDynamicValue(() => new BackgroundGitRefresh()).inSingletonScope();
     // 확장의 오류 모달을 알림으로 바꾸고 Git 출력 채널의 오류를 로그에 남긴다(plugin-api-overrides.js).
     bind(MainPluginApiProvider).toConstantValue(new PaddockPluginApiOverrides());
     // Windows에서 WSL 폴더의 저장소는 WSL 안의 git으로 실행한다: Git 보기의 `git.path` 기본값을 분배기로 정한다(git-shim.js).

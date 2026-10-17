@@ -34,6 +34,7 @@ const { WorkspaceService } = require('@theia/workspace/lib/browser/workspace-ser
 const model = require('./work-model');
 const { searchRoots } = require('./search-scope');
 const { fileRootFor } = require('./file-owner');
+const { BackgroundGitRefresh } = require('./background-git-refresh');
 const layoutModel = require('./layout-model');
 const tabOverflow = require('./tab-overflow');
 const { attachTabDrag, attachNativeTabDrag } = require('./tab-detach');
@@ -432,6 +433,7 @@ class PaddockWorkspace {
             fetch(url, { method: 'DELETE', keepalive: true }).catch(() => {});
         });
         this.scm = this.container.get(ScmService);
+        this.backgroundGitRefresh = this.container.get(BackgroundGitRefresh);
         this.env = this.container.get(EnvVariablesServer);
         this.remoteStatus = this.container.get(RemoteStatusService);
         this.preferences = this.container.get(PreferenceService);
@@ -1784,7 +1786,10 @@ class PaddockWorkspace {
                     // 경로가 열린 저장소에 속하므로 Git 확장이 저장소 고르기 창을 띄우지 않는다.
                     // 경로는 주소의 호스트까지 담아 바꾼다. 경로 부분만 쓰면 WSL 폴더(\\wsl.localhost\…)가 \<배포판>\…로 바뀌어
                     // Git 확장이 저장소를 못 찾고, 5초마다 다시 읽을 때마다 "Choose a repository" 창이 뜬다.
-                    this.commands.executeCommand('git.refresh', root).catch(() => undefined);
+                    // 실패하면 Git 확장이 오류 알림을 띄운다. 같은 실패의 반복 알림은 BackgroundGitRefresh가 거른다.
+                    this.backgroundGitRefresh.run(() => this.commands.executeCommand('git.refresh', root)).then((recovered) => {
+                        if (recovered) console.warn(`Background Git refresh succeeded again after "${recovered.failure}" (${recovered.n_repeats} repeated failures hidden).`);
+                    });
                 }, 500));
             }
         }
