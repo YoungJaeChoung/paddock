@@ -70,6 +70,11 @@ windows-sys = { version = "0.59", features = [
 # GPUI 창의 운영체제 창 핸들을 얻어 입력기 조합을 마치게 하는 데 쓴다(Windows).
 raw-window-handle = "0.6"
 
+# 개발·시험 빌드의 디버깅 정보는 줄 번호만 남긴다. 전체 정보는 Windows 디버깅 정보 파일(.pdb)이 개당 300~400MB라
+# 빌드 결과물이 수십 GB로 쌓인다. 오류의 호출 순서·줄 번호는 그대로 보이고, 디버거에서 변수 값만 못 본다.
+[profile.dev]
+debug = "line-tables-only"
+
 # 배포 exe에서 디버그 심볼을 뺀다. 크기가 줄고, 심볼에 들어 있는 빌드 환경의 경로·이름이 배포물에 남지 않는다.
 [profile.release]
 strip = "symbols"
