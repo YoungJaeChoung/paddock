@@ -820,10 +820,12 @@ namespace Paddock
                 {
                     bool capturePaths = plan.WslDistro != null && GitPaths.PrintsPaths(args);
                     exitCode = Run(plan, capturePaths);
-                    if (plan.WslDistro != null && exitCode == -1)
+                    if (plan.WslDistro != null && (exitCode < 0 || exitCode > 255))
                     {
-                        // git은 -1(0xFFFFFFFF)로 끝나지 않는다. wsl.exe 자체가 실패한 경우다.
-                        Console.Error.WriteLine("paddock-git: wsl.exe failed to run git in '" + plan.WslDistro + "' (exit -1)");
+                        // git의 종료 코드는 0~255다. 그 밖(-1·0x8007…처럼 음수로 읽히는 HRESULT 등)은 wsl.exe 자체가 실패한 경우다.
+                        // wsl.exe는 자기 오류 문구를 표준 출력에 쓰므로 stderr가 비고, Git 보기에는 "Failed to execute git"만 남는다.
+                        // 실패 코드를 stderr에 적어 Git 보기의 알림과 로그에서 원인을 알 수 있게 한다.
+                        Console.Error.WriteLine("paddock-git: wsl.exe failed to run git in '" + plan.WslDistro + "' (exit " + exitCode + ", 0x" + exitCode.ToString("X8") + ")");
                         exitCode = 1;
                     }
                 }
