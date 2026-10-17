@@ -54,8 +54,19 @@ jobs:
         with:
           path: installers
           merge-multiple: true
+      # 릴리스 본문은 저장소의 release-notes/<태그>.md(make release가 만든다). 파일이 없으면 GitHub 자동 목록으로 대신한다.
       - if: startsWith(github.ref, 'refs/tags/v')
-        run: gh release create "$GITHUB_REF_NAME" installers/* --repo "$GITHUB_REPOSITORY" --title "Paddock $GITHUB_REF_NAME" --generate-notes
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: release-notes
+      - if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          notes="release-notes/$GITHUB_REF_NAME.md"
+          if [ -f "$notes" ]; then
+            gh release create "$GITHUB_REF_NAME" installers/* --repo "$GITHUB_REPOSITORY" --title "Paddock $GITHUB_REF_NAME" --notes-file "$notes"
+          else
+            gh release create "$GITHUB_REF_NAME" installers/* --repo "$GITHUB_REPOSITORY" --title "Paddock $GITHUB_REF_NAME" --generate-notes
+          fi
         env:
           GH_TOKEN: ${{ github.token }}
       # main에서 직접 실행했을 때: 새 태그를 만들지 않고 최신 릴리스의 설치 파일만 바꿔 latest/download 주소가 새 빌드를 준다.
