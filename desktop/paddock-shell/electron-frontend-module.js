@@ -9,6 +9,9 @@ const { ElectronSecondaryWindowService } = require('@theia/core/lib/electron-bro
 const { forgetRestoredWidgets, attachDetachedTabDrag } = require('./tab-detach');
 const { FileSystemWatcherErrorHandler } = require('@theia/filesystem/lib/browser/filesystem-watcher-error-handler');
 const { OS } = require('@theia/core/lib/common/os');
+const { URI } = require('@theia/core/lib/common/uri');
+const { ElectronUriHandlerContribution } = require('@theia/core/lib/electron-browser/electron-uri-handler');
+const { markOpenedWidgetActive } = require('./open-url-active');
 
 /**
  * 메인 창으로 되돌린 위젯이 보조 창 닫기를 막지 않게 하는 보조 창 서비스.
@@ -85,10 +88,28 @@ class PaddockSecondaryWindowService extends ElectronSecondaryWindowService {
 }
 decorate(injectable(), PaddockSecondaryWindowService);
 
+/** 주소 열기로 연 위젯이 포커스 없는 창에서도 활성 위젯이 되게 하는 처리기. 이유는 `markOpenedWidgetActive`에 있다. */
+class PaddockUriHandlerContribution extends ElectronUriHandlerContribution {
+    initialize() {
+        window.electronTheiaCore.setOpenUrlHandler(async url => {
+            const uri = new URI(url);
+            try {
+                const handler = await this.openenerService.getOpener(uri);
+                markOpenedWidgetActive(await handler.open(uri));
+                return true;
+            } catch {
+                return false;
+            }
+        });
+    }
+}
+decorate(injectable(), PaddockUriHandlerContribution);
+
 // 기본 데스크톱 메뉴가 등록된 뒤 제품 제목줄로 바꾼다.
 exports.default = new ContainerModule((bind, unbind, isBound, rebind) => {
     rebind(ElectronMenuContribution).to(PaddockMenuContribution).inSingletonScope();
     rebind(SecondaryWindowService).to(PaddockSecondaryWindowService).inSingletonScope();
+    rebind(ElectronUriHandlerContribution).to(PaddockUriHandlerContribution).inSingletonScope();
     // The terminal module may load later; use its initialized singleton after all modules have loaded.
     bind(FrontendApplicationContribution).toDynamicValue(({ container }) => ({
         onStart: () => {
