@@ -103,7 +103,7 @@ const PaddockPreferenceSchema = {
             enum: ['ask', 'on', 'off'],
             enumDescriptions: [
                 'Ask once when Paddock starts on Windows with WSL.',
-                'Keep one line in the WSL ~/.bashrc that puts Paddock\'s claude launcher first in PATH, so a claude you type in a WSL terminal also gets Paddock\'s status line and memory notice.',
+                'Keep one line in the WSL ~/.bashrc that defines a claude shell function running Paddock\'s launcher (a PATH entry would lose to ~/.local/bin in login shells), so a claude you type in a WSL terminal also gets Paddock\'s status line, memory notice and agent status.',
                 'Do not change the WSL ~/.bashrc. Turning this off removes the line Paddock added.',
             ],
             default: 'ask',

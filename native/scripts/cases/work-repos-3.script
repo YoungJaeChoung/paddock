@@ -1,0 +1,11 @@
+# 같은 저장소의 워크트리 폴더 묶음(3/3): 워크트리 폴더(wt2)를 지운 뒤 앱을 다시 열어도 그 폴더가 저장된 저장소 키로 묶음 아래에 남는다(`.git`을 읽지 못해도
+# 저장된 값을 지킨다). 끝에 만든 폴더를 지운다. session-run.ps1로 2번 뒤에 같은 임시 홈에서 돌린다.
+waittabs 5 @30000
+waitstate name=main expanded=true n=3 @15000
+wait 6000
+waitstate name=main expanded=true n=3 @5000
+state after-delete
+shot after-delete
+send rm -rf /tmp/paddock-repos /tmp/paddock-fake && echo CLEANED\r
+waitline CLEANED @20000
+quit
