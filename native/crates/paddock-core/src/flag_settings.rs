@@ -14,6 +14,8 @@ pub struct FlagSettings;
 impl FlagSettings {
     pub const DIRECTORY: &'static str = "claude";
     pub const FILE: &'static str = "flag-settings.json";
+    /// Pen 연동 MCP 서버 등록(`--mcp-config`)을 담은 파일. 같은 폴더에 둔다.
+    pub const PEN_MCP_FILE: &'static str = "pen-mcp.json";
 }
 
 /// 메모리 안내 훅의 이름과 기준값.
@@ -41,6 +43,21 @@ pub fn flag_settings_path(
 ) -> String {
     let base = config_dir.trim_end_matches(separator);
     format!("{base}{separator}{}{separator}{}", FlagSettings::DIRECTORY, FlagSettings::FILE)
+}
+
+/// 설정 폴더 기준 Pen 연동 MCP 설정 파일 경로. `separator`는 그 경로를 읽을 환경의 구분자다(WSL 안은 `/`).
+///
+/// Examples
+/// --------
+/// | config_dir                | separator | 결과                                          |
+/// |---------------------------|-----------|-----------------------------------------------|
+/// | `/home/me/.paddock/config`| `/`       | `/home/me/.paddock/config/claude/pen-mcp.json` |
+pub fn pen_mcp_config_path(
+    config_dir: &str,
+    separator: char,
+) -> String {
+    let base = config_dir.trim_end_matches(separator);
+    format!("{base}{separator}{}{separator}{}", FlagSettings::DIRECTORY, FlagSettings::PEN_MCP_FILE)
 }
 
 /// 값을 POSIX 셸 한 단어로 감싼다. 작은따옴표는 닫고 이스케이프한 뒤 다시 연다.

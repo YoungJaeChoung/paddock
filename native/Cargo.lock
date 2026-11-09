@@ -4904,6 +4904,7 @@ version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
  "chrono",
+ "embed-resource",
  "gpui-kit",
  "grep-matcher",
  "grep-regex",
@@ -4953,6 +4954,17 @@ dependencies = [
  "polling",
  "serde_json",
  "tempfile",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "paddock-pen-mcp"
+version = "0.1.0"
+dependencies = [
+ "paddock-core",
+ "serde_json",
+ "tempfile",
+ "windows 0.62.2",
  "windows-sys 0.59.0",
 ]
 

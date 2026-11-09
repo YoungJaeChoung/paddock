@@ -20,6 +20,7 @@ use crate::agent_account::Scope;
 use crate::file_kind::{FileKind, kind_of};
 use crate::file_pane::{DEFAULT_RATIO, FilePane, FilePanes, FileTab};
 use crate::layout_model::Layout;
+use crate::pen_paths::is_pen_file;
 use crate::usage_scopes::UsageSelection;
 use crate::work_model::{Group, GroupKey, GroupMember, Member, WorkState, same_folder};
 
@@ -282,7 +283,8 @@ fn restore_pane(saved: Option<&Value>) -> Option<FilePane> {
             .filter(|path| !path.is_empty())
             .collect();
         let wanted = saved.get("selected").and_then(Value::as_u64).and_then(|index| usize::try_from(index).ok());
-        let kept: Vec<(usize, &str)> = paths.iter().copied().enumerate().filter(|(_, path)| !is_pen_file(path)).collect();
+        let kept: Vec<(usize, &str)> =
+            paths.iter().copied().enumerate().filter(|(_, path)| !is_pen_file(path)).collect();
         let selected = wanted.map_or(0, |wanted| {
             kept.iter().position(|(index, _)| *index >= wanted).unwrap_or(kept.len().saturating_sub(1))
         });
@@ -463,16 +465,25 @@ mod tests {
                 "{{\"version\":3,\"daemon\":\"7@t0\",\"work\":{{\"folders\":[{{\"key\":\"/a\",\"expanded\":true,\"files\":{{\"tabs\":{tabs},\"selected\":{selected},\"ratio\":0.5}}}}],\"terminals\":[]}},\"groups\":[],\"layouts\":[]}}"
             );
             let restored = SessionState::restore(&text, &live(&[]), "7@t0");
-            restored.files.get(&GroupKey::Folder("/a".into())).map(|pane| {
-                (pane.tabs.iter().map(|tab| tab.path.clone()).collect::<Vec<_>>(), pane.selected)
-            })
+            restored
+                .files
+                .get(&GroupKey::Folder("/a".into()))
+                .map(|pane| (pane.tabs.iter().map(|tab| tab.path.clone()).collect::<Vec<_>>(), pane.selected))
         };
         let kept = |list: &[&str]| list.iter().map(ToString::to_string).collect::<Vec<_>>();
         let middle = r#"[{"path":"/a/x.rs"},{"path":"/a/d.pen"},{"path":"/a/y.rs"}]"#;
         // | 저장된 선택 | 되살린 선택 | 이유 |
         assert_eq!(pane_of(middle, 0), Some((kept(&["/a/x.rs", "/a/y.rs"]), 0)));
-        assert_eq!(pane_of(middle, 1), Some((kept(&["/a/x.rs", "/a/y.rs"]), 1)), "the selected pen tab moves to the next kept tab");
-        assert_eq!(pane_of(middle, 2), Some((kept(&["/a/x.rs", "/a/y.rs"]), 1)), "indexes after a removed tab shift down");
+        assert_eq!(
+            pane_of(middle, 1),
+            Some((kept(&["/a/x.rs", "/a/y.rs"]), 1)),
+            "the selected pen tab moves to the next kept tab"
+        );
+        assert_eq!(
+            pane_of(middle, 2),
+            Some((kept(&["/a/x.rs", "/a/y.rs"]), 1)),
+            "indexes after a removed tab shift down"
+        );
         let tail = r#"[{"path":"/a/x.rs"},{"path":"/a/D.PEN"}]"#;
         assert_eq!(pane_of(tail, 1), Some((kept(&["/a/x.rs"]), 0)), "no tab after it: the last kept tab");
         assert_eq!(pane_of(r#"[{"path":"/a/d.pen"}]"#, 0), None, "a pane of only pen tabs is gone");

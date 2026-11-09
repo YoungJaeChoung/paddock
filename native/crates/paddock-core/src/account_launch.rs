@@ -191,6 +191,8 @@ pub struct AccountLaunchInput<'a> {
     pub permissions: Permissions,
     /// Claude에 `--settings`로 덧붙일 Paddock 전용 설정 파일. 시작 때 파일이 있을 때만 붙는다.
     pub flag_settings_file: Option<Location>,
+    /// Claude에 `--mcp-config=<파일>`로 덧붙일 Pen 연동 MCP 설정 파일. `flag_settings_file`과 같은 규칙으로, 시작 때 파일이 있을 때만 붙는다.
+    pub mcp_config_file: Option<Location>,
     /// 이어 열 Claude 대화: 같은 계정 폴더면 식별자, 다른 계정이 이어 받으면 대화 파일 경로.
     pub resume: Option<&'a Resume>,
 }
@@ -242,6 +244,7 @@ fn bash_arguments(
     browser_directory: Option<&Location>,
     cli_arguments: &[String],
     flag_settings_file: Option<&Location>,
+    mcp_config_file: Option<&Location>,
 ) -> Vec<String> {
     let name = provider_label(provider);
     let mut lines = vec![
@@ -278,10 +281,19 @@ fn bash_arguments(
             file.posix_word()
         ));
     }
+    if let Some(file) = mcp_config_file {
+        // 같은 규칙으로 Pen 설정 파일이 있을 때만 붙인다. `--mcp-config`는 값을 여러 개 받아 뒤의 인자를 삼키므로 `=`로 한 단어로 잇는다.
+        lines.push(format!(
+            "__paddock_pen=(); if [ -f {} ]; then __paddock_pen=(--mcp-config={}); fi",
+            file.posix_word(),
+            file.posix_word()
+        ));
+    }
     let flag = if flag_settings_file.is_some() { " \"${__paddock_flag[@]}\"" } else { "" };
+    let pen = if mcp_config_file.is_some() { " \"${__paddock_pen[@]}\"" } else { "" };
     let arguments: String = cli_arguments.iter().map(|argument| format!(" {}", quote_posix(argument))).collect();
     lines.push(format!(
-        "if command -v {provider} >/dev/null 2>&1; then command {provider}{flag}{arguments}; else printf '%s\\n' {}; fi",
+        "if command -v {provider} >/dev/null 2>&1; then command {provider}{flag}{pen}{arguments}; else printf '%s\\n' {}; fi",
         quote_posix(&format!("{name} CLI was not found. Install it in this environment, then run {provider}."))
     ));
     lines.push("}".to_string());
@@ -300,6 +312,7 @@ fn powershell_arguments(
     config_dir: &str,
     cli_arguments: &[String],
     flag_settings_file: Option<&str>,
+    mcp_config_file: Option<&str>,
 ) -> Vec<String> {
     let name = provider_label(provider);
     let mut parts = vec![POWERSHELL_SCRIPT.to_string()];
@@ -319,10 +332,18 @@ fn powershell_arguments(
             quote_powershell(file)
         ));
     }
+    if let Some(file) = mcp_config_file {
+        // Bash 시작 파일과 같은 규칙: Pen 설정 파일이 있을 때만 --mcp-config=<파일>을 더한다.
+        parts.push(format!(
+            "$paddockPen = @(); if (Test-Path -LiteralPath {0}) {{ $paddockPen = @('--mcp-config=' + {0}) }}",
+            quote_powershell(file)
+        ));
+    }
     let flag = if flag_settings_file.is_some() { " @paddockFlag" } else { "" };
+    let pen = if mcp_config_file.is_some() { " @paddockPen" } else { "" };
     let arguments: String = cli_arguments.iter().map(|argument| format!(" {}", quote_powershell(argument))).collect();
     parts.push(format!(
-        "if ($paddockCli) {{ & $paddockCli.Source{flag}{arguments} }} else {{ Write-Host {} }}",
+        "if ($paddockCli) {{ & $paddockCli.Source{flag}{pen}{arguments} }} else {{ Write-Host {} }}",
         quote_powershell(&format!("{name} CLI was not found. Install it in this environment, then run {provider}."))
     ));
     vec![
@@ -364,6 +385,12 @@ pub fn account_terminal_spec(input: &AccountLaunchInput) -> Result<Launch, Launc
             LaunchError::InvalidSettingsPath,
         )?;
     }
+    if let Some(file) = &input.mcp_config_file {
+        ensure(
+            provider == "claude" && !file.text().is_empty() && !has_control(file.text()),
+            LaunchError::InvalidSettingsPath,
+        )?;
+    }
     let mut cli_arguments: Vec<String> = input.permissions.flags(provider).iter().map(ToString::to_string).collect();
     if let Some(resume) = input.resume {
         ensure(provider == "claude", LaunchError::ResumeTool)?;
@@ -389,6 +416,7 @@ pub fn account_terminal_spec(input: &AccountLaunchInput) -> Result<Launch, Launc
                 Some(&browser),
                 &cli_arguments,
                 input.flag_settings_file.as_ref(),
+                input.mcp_config_file.as_ref(),
             ));
             (WINDOWS_WSL.to_string(), args, Vec::new(), None)
         }
@@ -396,7 +424,8 @@ pub fn account_terminal_spec(input: &AccountLaunchInput) -> Result<Launch, Launc
             let variable = (config_variable(provider).to_string(), config_text.to_string());
             if input.is_windows {
                 let flag = input.flag_settings_file.as_ref().map(Location::text);
-                let args = powershell_arguments(provider, config_text, &cli_arguments, flag);
+                let pen = input.mcp_config_file.as_ref().map(Location::text);
+                let args = powershell_arguments(provider, config_text, &cli_arguments, flag, pen);
                 (WINDOWS_POWERSHELL.to_string(), args, vec![variable], Some(input.cwd.to_string()))
             } else {
                 let args = bash_arguments(
@@ -405,6 +434,7 @@ pub fn account_terminal_spec(input: &AccountLaunchInput) -> Result<Launch, Launc
                     None,
                     &cli_arguments,
                     input.flag_settings_file.as_ref(),
+                    input.mcp_config_file.as_ref(),
                 );
                 ("/bin/bash".to_string(), args, vec![variable], Some(input.cwd.to_string()))
             }
@@ -489,6 +519,7 @@ mod tests {
             is_windows,
             permissions: Permissions::Ask,
             flag_settings_file: None,
+            mcp_config_file: None,
             resume: None,
         }
     }
@@ -767,7 +798,8 @@ mod tests {
         let plain = account_terminal_spec(&input(&claude, "/tmp/x", "/tmp", false)).unwrap();
         assert!(!plain.args.last().unwrap().contains("--settings"));
         assert!(!plain.args.last().unwrap().contains("--mcp-config"));
-        let mut codex_with_pen = input(&profile("codex", Runtime::Native), "/tmp/x", "/tmp", false);
+        let codex_account = profile("codex", Runtime::Native);
+        let mut codex_with_pen = input(&codex_account, "/tmp/x", "/tmp", false);
         codex_with_pen.mcp_config_file = Some(Location::Absolute("/tmp/p.json".into()));
         assert_eq!(account_terminal_spec(&codex_with_pen).unwrap_err(), LaunchError::InvalidSettingsPath);
         let codex = profile("codex", Runtime::Native);

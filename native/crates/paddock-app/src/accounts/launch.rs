@@ -9,6 +9,7 @@ use paddock_core::account_launch::{
 };
 use paddock_core::account_session::Resume;
 use paddock_core::agent_account::{AccountProfile, Runtime};
+use paddock_core::flag_settings::FlagSettings;
 use paddock_core::shell_catalog::wsl_folder;
 use paddock_protocol::shared_config::{config_dir, native_profile_directory};
 
@@ -59,14 +60,22 @@ fn want_in_folder(
     resume: Option<&Resume>,
 ) -> Result<Want, String> {
     let cwd = account_launch_cwd(profile, folder, Some(home), is_windows).map_err(|error| error.to_string())?;
-    let (config, flag) = match profile.runtime {
+    let (config, flag, pen) = match profile.runtime {
         Runtime::Native => (
             Location::Absolute(native_profile_directory(profile)),
             Location::Absolute(config_dir().join("claude").join("flag-settings.json").to_string_lossy().into_owned()),
+            Location::Absolute(
+                config_dir()
+                    .join(FlagSettings::DIRECTORY)
+                    .join(FlagSettings::PEN_MCP_FILE)
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
         ),
         Runtime::Wsl => (
             Location::UnderHome(format!(".paddock/agent-profiles/{}/{}", profile.id, profile.provider)),
             Location::UnderHome(".paddock/config/claude/flag-settings.json".to_string()),
+            Location::UnderHome(format!(".paddock/config/{}/{}", FlagSettings::DIRECTORY, FlagSettings::PEN_MCP_FILE)),
         ),
     };
     let launch = account_terminal_spec(&AccountLaunchInput {
@@ -76,6 +85,7 @@ fn want_in_folder(
         is_windows,
         permissions,
         flag_settings_file: (profile.provider == "claude").then_some(flag),
+        mcp_config_file: (profile.provider == "claude").then_some(pen),
         resume,
     })
     .map_err(|error| error.to_string())?;

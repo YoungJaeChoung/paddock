@@ -29,9 +29,7 @@ fn main() {
 /// |----------------|-------------------------------------------------------------------------|
 /// | `0.1.0`        | `PADDOCK_VERSION_NUMBERS=0,1,0,0`, `PADDOCK_VERSION_TEXT="0.1.0"`        |
 /// | `1.2.3-beta.1` | `PADDOCK_VERSION_NUMBERS=1,2,3,0`, `PADDOCK_VERSION_TEXT="1.2.3-beta.1"` |
-fn version_macros(
-    version: &str,
-) -> [String; 2] {
+fn version_macros(version: &str) -> [String; 2] {
     let release = version.split(['-', '+']).next().unwrap_or(version);
     let mut numbers: Vec<String> = release
         .split('.')
