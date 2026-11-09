@@ -63,6 +63,49 @@ pub fn find_by_title<T: Copy>(
     }
 }
 
+/// 이름이 같은 창 하나가 대상의 창인지, 대상을 활성 문서로 만들기 전후의 문서 창으로 가른 결과.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Identified<T> {
+    /// 대상은 이미 그 창에 열려 있었다(활성으로 만들어도 새 창이 생기지 않았다).
+    Open(T),
+    /// 대상은 열려 있지 않았다. 활성으로 만들며 새로 열린 이 창이 대상의 창이고, 이름이 같던 창은 다른 파일의 창이다.
+    OpenedForCheck(T),
+    /// 어느 쪽인지 가를 수 없다(새 창이 대상 이름이 아니거나 여럿, 이름이 같은 창이 사라지거나 늘어남).
+    Unknown,
+}
+
+/// 창 제목에는 파일 이름만 있어, 이름이 같은 창 하나(`named`)가 대상의 창인지는 제목만으로 알 수 없다. 대상을 활성 문서로 만들면
+/// 열려 있던 파일은 그 창이 쓰이고, 열려 있지 않던 파일은 새 창이 열린다. 그래서 만들기 전의 문서 창(`before`)과 만든 뒤의 문서 창·제목
+/// (`after`)을 견주어 가른다.
+///
+/// Examples
+/// --------
+/// | named | before    | after                         | 결과                  |
+/// |-------|-----------|-------------------------------|-----------------------|
+/// | 1     | 0, 1      | (0 Dashboard), (1 a.pen)      | `Open(1)`             |
+/// | 1     | 0, 1      | 0, (1 a.pen), (2 a.pen)       | `OpenedForCheck(2)`   |
+/// | 1     | 0, 1      | 0, (1 a.pen), (2 Pen)         | `Unknown`(제목 전)    |
+/// | 1     | 0, 1      | 0, (1 a.pen), 2, 3            | `Unknown`             |
+pub fn identify_target<T: Copy + PartialEq>(
+    named: T,
+    before: &[T],
+    after: &[(T, String)],
+    file_name: &str,
+) -> Identified<T> {
+    let new: Vec<T> = after.iter().map(|(window, _)| *window).filter(|window| !before.contains(window)).collect();
+    let named_after: Vec<T> =
+        after.iter().filter(|(_, title)| title_matches(title, file_name)).map(|(window, _)| *window).collect();
+    match (new.as_slice(), named_after.as_slice()) {
+        ([], [only]) if *only == named => Identified::Open(named),
+        ([opened], [first, second])
+            if (*first, *second) == (named, *opened) || (*first, *second) == (*opened, named) =>
+        {
+            Identified::OpenedForCheck(*opened)
+        }
+        _ => Identified::Unknown,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,5 +137,35 @@ mod tests {
         assert_eq!(find_by_title(&titled(&["A.pen"]), "a.pen"), Found::One(0));
         assert_eq!(find_by_title(&titled(&["a.pen", "A.PEN"]), "a.pen"), Found::Ambiguous);
         assert_eq!(find_by_title(&titled(&["a.pen", "a.pen"]), "A.pen"), Found::Ambiguous);
+    }
+
+    #[test]
+    fn test_titles_4_a_window_is_the_target_only_if_making_the_target_active_opened_no_new_window() {
+        let titled = |pairs: &[(u32, &str)]| {
+            pairs.iter().map(|(window, title)| (*window, title.to_string())).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            identify_target(1, &[0, 1], &titled(&[(0, "Dashboard"), (1, "a.pen")]), "a.pen"),
+            Identified::Open(1)
+        );
+        assert_eq!(
+            identify_target(1, &[0, 1], &titled(&[(0, "Dashboard"), (1, "a.pen"), (2, "a.pen")]), "a.pen"),
+            Identified::OpenedForCheck(2)
+        );
+        assert_eq!(
+            identify_target(1, &[0, 1], &titled(&[(2, "A.PEN"), (0, "Dashboard"), (1, "a.pen")]), "a.pen"),
+            Identified::OpenedForCheck(2)
+        );
+        // 새 창의 제목이 아직 파일 이름이 아니면 가를 수 없다(호출자가 다시 본다).
+        assert_eq!(
+            identify_target(1, &[0, 1], &titled(&[(0, "Dashboard"), (1, "a.pen"), (2, "Pen")]), "a.pen"),
+            Identified::Unknown
+        );
+        assert_eq!(
+            identify_target(1, &[0, 1], &titled(&[(0, "x"), (1, "a.pen"), (2, "a.pen"), (3, "a.pen")]), "a.pen"),
+            Identified::Unknown
+        );
+        // 이름이 같던 창이 사라졌으면 가를 수 없다.
+        assert_eq!(identify_target(1, &[0, 1], &titled(&[(0, "Dashboard")]), "a.pen"), Identified::Unknown);
     }
 }

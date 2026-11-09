@@ -1,4 +1,4 @@
-# 사용: verify-install.ps1 -Installer <PaddockNative-Setup-….exe> -ExeDir <설치 파일에 담은 실행 파일 폴더> [-Version <버전>] [-Smoke] [-AllowSmokeOnThisPc]
+﻿# 사용: verify-install.ps1 -Installer <PaddockNative-Setup-….exe> -ExeDir <설치 파일에 담은 실행 파일 폴더> [-Version <버전>] [-Smoke] [-AllowSmokeOnThisPc]
 #
 # 네이티브 설치 파일을 실제로 설치·제거해 보고, 같은 PC의 Electron Paddock과 피드백 사본이 그대로인지 확인한다.
 #   V0 준비      실제 설치(PaddockNative 키·Paddock Native.lnk)가 있으면 멈춘다. Electron 쪽 키·폴더·바로 가기·프로세스를 기록한다

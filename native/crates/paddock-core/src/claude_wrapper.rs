@@ -196,6 +196,22 @@ mod tests {
             fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
         }
 
+        /// 명령을 실행해 출력을 받는다. 방금 쓴 실행 파일은, 다른 시험 스레드가 그 사이 띄운 자식 프로세스가 쓰기 핸들을 잠깐 물려받으면
+        /// 실행이 `ExecutableFileBusy`(ETXTBSY)로 실패한다. 그때만 잠깐 쉬고 다시 실행한다.
+        fn output_of(command: &mut Command) -> std::process::Output {
+            const MAX_TRIES: u32 = 50;
+            let mut n_tries = 1;
+            loop {
+                match command.output() {
+                    Err(error) if error.kind() == std::io::ErrorKind::ExecutableFileBusy && n_tries < MAX_TRIES => {
+                        n_tries += 1;
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                    }
+                    result => break result.unwrap(),
+                }
+            }
+        }
+
         fn fake_claude(directory: &std::path::Path) {
             fs::create_dir_all(directory).unwrap();
             executable(&directory.join("claude"), "#!/bin/sh\nprintf \"REAL|%s\\n\" \"$*\"\nexit 7\n");
@@ -217,8 +233,7 @@ mod tests {
                 &claude_wrapper_script(WrapperKind::Sh, flag_file.to_str().unwrap(), "/no/such/pen-mcp.json", ""),
             );
             let path = format!("{}:{}:/usr/bin:/bin", bin.display(), real.display());
-            let output =
-                Command::new(&wrapper).args(["-p", "two words", "--model", "x"]).env("PATH", &path).output().unwrap();
+            let output = output_of(Command::new(&wrapper).args(["-p", "two words", "--model", "x"]).env("PATH", &path));
             assert_eq!(output.status.code(), Some(7));
             assert_eq!(
                 String::from_utf8_lossy(&output.stdout).trim(),
@@ -245,7 +260,7 @@ mod tests {
             );
             let path = format!("{}:{}:/usr/bin:/bin", bin.display(), real.display());
             let run = |args: &[&str]| {
-                let output = Command::new(&wrapper).args(args).env("PATH", &path).output().unwrap();
+                let output = output_of(Command::new(&wrapper).args(args).env("PATH", &path));
                 String::from_utf8_lossy(&output.stdout).trim().to_string()
             };
             // 두 파일이 있으면 --settings 다음에 --mcp-config=<파일>이 오고, 프롬프트 인자는 그 뒤에 그대로 온다.
@@ -283,7 +298,7 @@ mod tests {
                 ),
             );
             let path = format!("{}:{}:/usr/bin:/bin", bin.display(), real.display());
-            let output = Command::new(&wrapper).arg("--version").env("PATH", &path).output().unwrap();
+            let output = output_of(Command::new(&wrapper).arg("--version").env("PATH", &path));
             assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "REAL|--version");
             let _ = fs::remove_dir_all(&root);
         }
@@ -304,14 +319,11 @@ mod tests {
             );
             let path = format!("{}:{}:/usr/bin:/bin", bin.display(), real.display());
             let server =
-                Command::new(&wrapper).args(["remote-control", "--name", "my pc"]).env("PATH", &path).output().unwrap();
+                output_of(Command::new(&wrapper).args(["remote-control", "--name", "my pc"]).env("PATH", &path));
             assert_eq!(String::from_utf8_lossy(&server.stdout).trim(), "REAL|remote-control --name my pc");
             // 대화 세션의 --remote-control 플래그와 프롬프트 속 단어는 하위 명령이 아니므로 --settings가 그대로 붙는다.
-            let session = Command::new(&wrapper)
-                .args(["--remote-control", "remote-control"])
-                .env("PATH", &path)
-                .output()
-                .unwrap();
+            let session =
+                output_of(Command::new(&wrapper).args(["--remote-control", "remote-control"]).env("PATH", &path));
             assert_eq!(
                 String::from_utf8_lossy(&session.stdout).trim(),
                 format!("REAL|--settings {} --remote-control remote-control", flag_file.display())
@@ -342,11 +354,8 @@ mod tests {
                 format!("{}//bin", root.display()),
             ];
             for spelling in spellings {
-                let output = Command::new(&wrapper)
-                    .arg("--version")
-                    .env("PATH", format!("{spelling}:/usr/bin:/bin"))
-                    .output()
-                    .unwrap();
+                let output =
+                    output_of(Command::new(&wrapper).arg("--version").env("PATH", format!("{spelling}:/usr/bin:/bin")));
                 assert_eq!(output.status.code(), Some(127), "{spelling}: {}", String::from_utf8_lossy(&output.stderr));
                 assert!(String::from_utf8_lossy(&output.stderr).contains("claude was not found in PATH"), "{spelling}");
             }

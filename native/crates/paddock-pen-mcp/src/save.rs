@@ -90,18 +90,36 @@ pub fn changed_files(recorded: &[(PenTarget, Option<SystemTime>)]) -> Vec<String
         .collect()
 }
 
-/// 파일 수정 시각이 `before`와 달라지기를 `SAVE_DEADLINE`까지 기다린다.
+/// 저장을 부른 뒤 디스크의 대상 파일 상태.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FileChange {
+    /// 수정 시각이 바뀌었다(저장됨).
+    Changed,
+    /// 수정 시각이 그대로다.
+    Unchanged,
+    /// 파일을 읽지 못한다(사라졌거나 옮겨졌다).
+    Missing,
+}
+
+/// 파일 수정 시각이 `before`와 달라지기를 `SAVE_DEADLINE`까지 기다리고, 마지막으로 본 상태를 돌려준다.
+///
+/// 파일을 읽지 못하는 동안은 바뀐 것으로 보지 않고 계속 기다린다: 지우고 다시 쓰는 저장은 잠깐 파일이 없다가 다시 생긴다.
+/// 시한까지 읽지 못하면 `Missing`이다.
 fn wait_for_file_change(
     local_path: &str,
     before: Option<SystemTime>,
-) -> bool {
+) -> FileChange {
     let deadline = Instant::now() + Limits::SAVE_DEADLINE;
-    let mut changed = false;
-    while !changed && Instant::now() < deadline {
+    let mut change = FileChange::Unchanged;
+    while change != FileChange::Changed && Instant::now() < deadline {
         std::thread::sleep(Limits::SAVE_INTERVAL);
-        changed = modified_time(local_path) != before;
+        change = match modified_time(local_path) {
+            None => FileChange::Missing,
+            Some(now) if Some(now) != before => FileChange::Changed,
+            Some(_) => FileChange::Unchanged,
+        };
     }
-    changed
+    change
 }
 
 /// 활성 문서 표기가 대상인지 확인한다. 아니면 그 표기(열린 문서가 없으면 `none`)를 오류로 돌려준다.
@@ -176,21 +194,27 @@ fn save_once<S: SaveSteps>(
     let before = std::fs::metadata(&target.local).map_err(|error| SaveError::Fatal(error.to_string()))?;
     let others = modified_times(steps.opened_besides());
     let note = steps.invoke_save(route)?;
-    let is_saved = wait_for_file_change(&target.local, before.modified().ok());
+    let change = wait_for_file_change(&target.local, before.modified().ok());
     let changed_others = changed_files(&others);
+    // 바뀐 것을 확인한 뒤에 크기를 읽는다. 그 사이 파일이 사라졌으면 저장된 것으로 보지 않는다.
+    let after = std::fs::metadata(&target.local).ok().map(|metadata| metadata.len());
+    let note = note.map(|note| format!("{note} ")).unwrap_or_default();
     if !changed_others.is_empty() {
         Err(SaveError::Fatal(format!(
             "Saving {} also changed another file this tool opened: {}. The save may have gone to the wrong document, so check those files; it was not tried again.",
             target.windows,
             changed_others.join(", ")
         )))
-    } else if is_saved {
-        let after = std::fs::metadata(&target.local).map_or(0, |metadata| metadata.len());
+    } else if change == FileChange::Missing || (change == FileChange::Changed && after.is_none()) {
+        Err(SaveError::Fatal(format!(
+            "{note}The file disappeared during save, so it is not known to be saved; it was not tried again: {}",
+            target.windows
+        )))
+    } else if let (FileChange::Changed, Some(after)) = (change, after) {
         Ok(format!("Saved: {} ({} -> {after} bytes, {})", target.windows, before.len(), route.label()))
     } else {
         Err(SaveError::Fatal(format!(
-            "{}The file's modified time did not change. It was not saved: {}",
-            note.map(|note| format!("{note} ")).unwrap_or_default(),
+            "{note}The file's modified time did not change. It was not saved: {}",
             target.windows
         )))
     }
@@ -627,6 +651,20 @@ mod tests {
         assert!(result.is_err_and(|message| message.contains("did not change")));
         let steps = app.steps();
         assert_eq!(steps[steps.len() - 3..], ["restore_active", "minimize", "release"]);
+    }
+
+    #[test]
+    fn test_save_12_a_target_that_disappears_after_save_is_not_reported_as_saved() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = file_target(&directory, "a.pen");
+        let removed = target.clone();
+        let app = FakeApp {
+            on_save: Box::new(move || std::fs::remove_file(&removed.local).unwrap()),
+            ..FakeApp::new(&[&target.windows])
+        };
+        let result = save_with(&app, SaveRoute::Menu, &target);
+        assert!(result.as_ref().is_err_and(|message| message.contains("disappeared")), "{result:?}");
+        assert_eq!(app.n_saves.get(), 1);
     }
 
     #[test]

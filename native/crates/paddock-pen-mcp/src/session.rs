@@ -3,6 +3,21 @@ use std::sync::Mutex;
 
 use paddock_core::pen_paths::{PenHost, PenTarget, is_pen_file, normalize_document, resolve_target};
 
+/// 두 대상이 같은 파일인지. 표기를 맞춘 경로(`normalize_document`)가 같거나, 디스크에서 읽은 실제 경로가 같으면 같은 파일이다.
+///
+/// 실제 경로는 표기만으로 가를 수 없는 별칭(짧은 이름(8.3), 연결 드라이브와 그 공유 경로, 비ASCII 대소문자, 링크)을 푼다. 파일이 없어 실제
+/// 경로를 못 읽으면 표기만 비교한다.
+fn is_same_file(
+    one: &PenTarget,
+    other: &PenTarget,
+) -> bool {
+    normalize_document(&one.windows) == normalize_document(&other.windows)
+        || matches!(
+            (std::fs::canonicalize(&one.local), std::fs::canonicalize(&other.local)),
+            (Ok(one), Ok(other)) if one == other
+        )
+}
+
 /// 이 프로그램을 띄운 Claude의 환경. 프로그램 자체는 항상 이 운영체제의 프로세스다.
 pub struct Session {
     host: PenHost,
@@ -26,14 +41,13 @@ impl Session {
         Self { host, wsl_distribution, opened: Mutex::new(Vec::new()) }
     }
 
-    /// 연 파일 목록에 더한다. 같은 파일(대소문자·경로 표기만 다른 것 포함)은 한 번만 남는다.
+    /// 연 파일 목록에 더한다. 같은 파일(대소문자·경로 표기·별칭만 다른 것 포함, `is_same_file`)은 한 번만 남는다.
     pub fn remember_opened(
         &self,
         target: &PenTarget,
     ) {
         let mut opened = self.opened.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let wanted = normalize_document(&target.windows);
-        if !opened.iter().any(|known| normalize_document(&known.windows) == wanted) {
+        if !opened.iter().any(|known| is_same_file(known, target)) {
             opened.push(target.clone());
         }
     }
@@ -45,19 +59,17 @@ impl Session {
         target: &PenTarget,
     ) {
         let mut opened = self.opened.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let wanted = normalize_document(&target.windows);
-        opened.retain(|known| normalize_document(&known.windows) != wanted);
+        opened.retain(|known| !is_same_file(known, target));
     }
 
-    /// 연 파일 가운데 `target`이 아닌 것.
+    /// 연 파일 가운데 `target`과 같은 파일(`is_same_file`)이 아닌 것.
     #[cfg_attr(not(windows), allow(dead_code))]
     pub fn opened_besides(
         &self,
         target: &PenTarget,
     ) -> Vec<PenTarget> {
         let opened = self.opened.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let excluded = normalize_document(&target.windows);
-        opened.iter().filter(|known| normalize_document(&known.windows) != excluded).cloned().collect()
+        opened.iter().filter(|known| !is_same_file(known, target)).cloned().collect()
     }
 
     /// 입력 경로를 Pen 대상으로 바꾼다. 경로가 비었거나 변환할 수 없으면 에이전트에게 보일 문장을 오류로 돌려준다.
@@ -134,6 +146,30 @@ mod tests {
         session.forget_opened(&target("C:\\W\\B.pen"));
         assert_eq!(session.opened_besides(&a), Vec::<PenTarget>::new());
         assert_eq!(session.opened_besides(&b), vec![a]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_session_6_another_spelling_of_the_same_file_on_disk_is_the_same_opened_file() {
+        // 표기로는 다르지만(`..` 조각, 링크) 디스크에서는 같은 파일인 철자는 다른 연 파일로 남지 않는다.
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        std::fs::create_dir(root.join("sub")).unwrap();
+        std::fs::write(root.join("a.pen"), "x").unwrap();
+        std::os::unix::fs::symlink(root.join("a.pen"), root.join("link.pen")).unwrap();
+        let target = |path: std::path::PathBuf| {
+            let path = path.to_string_lossy().to_string();
+            PenTarget { local: path.clone(), windows: path }
+        };
+        let session = session(&[]);
+        let plain = target(root.join("a.pen"));
+        session.remember_opened(&target(root.join("sub").join("..").join("a.pen")));
+        session.remember_opened(&target(root.join("link.pen")));
+        session.remember_opened(&plain);
+        assert_eq!(session.opened_besides(&target(root.join("missing.pen"))).len(), 1);
+        assert_eq!(session.opened_besides(&plain), Vec::<PenTarget>::new());
+        session.forget_opened(&target(root.join("link.pen")));
+        assert_eq!(session.opened_besides(&target(root.join("missing.pen"))), Vec::<PenTarget>::new());
     }
 
     #[cfg(not(windows))]

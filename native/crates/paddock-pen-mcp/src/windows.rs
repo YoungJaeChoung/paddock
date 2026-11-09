@@ -207,14 +207,20 @@ fn owner_of(window: Window) -> HWND {
     unsafe { GetWindow(window.handle(), GW_OWNER) }
 }
 
-/// 제목이 파일 이름과 같은(대소문자 무시) Pen 문서 창. 대화상자(`#32770`)는 제외한다.
-pub fn find_document(file_name: &str) -> Found<Window> {
-    let titled: Vec<(Window, String)> = pen_windows()
+/// Pen 문서 창 전부와 그 제목. 대화상자(`#32770`)와 다른 창이 소유한 창(메뉴 팝업)은 뺀다.
+///
+/// 막 열리는 문서 창은 제목이 파일 이름이 되기 전(`Pen` 등)에도 들어 있다.
+pub fn document_windows() -> Vec<(Window, String)> {
+    pen_windows()
         .into_iter()
-        .filter(|window| class_name(*window) != WindowClass::DIALOG)
+        .filter(|window| class_name(*window) != WindowClass::DIALOG && owner_of(*window).is_null())
         .map(|window| (window, title(window)))
-        .collect();
-    find_by_title(&titled, file_name)
+        .collect()
+}
+
+/// 제목이 파일 이름과 같은(대소문자 무시) Pen 문서 창.
+pub fn find_document(file_name: &str) -> Found<Window> {
+    find_by_title(&document_windows(), file_name)
 }
 
 /// 제목이 파일 이름과 같은(대소문자 무시) Pen 편집 창. 메뉴를 다룰 수 있는 Chromium 창(`Chrome_WidgetWin_1`)만 본다.

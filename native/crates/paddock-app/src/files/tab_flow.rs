@@ -86,7 +86,8 @@ impl WorkWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // `.pen`은 탭 종류가 아니다. 모든 입구가 이 함수를 지나므로 여기서 Pen 앱으로 보낸다.
+        // `.pen`은 탭 종류가 아니다. 변경 비교 탭(변경 목록의 Staged·Changes 행)을 뺀 모든 입구가 이 함수를 지나므로 여기서 Pen 앱으로 보낸다.
+        // 변경 비교 탭은 `open_file_as`로 바로 열려 `.pen`도 비교 탭으로 열린다.
         if is_pen_file(path) {
             self.open_pen(path, window, cx);
         } else {

@@ -350,7 +350,7 @@ mod tests {
         assert_eq!(folder_tip(wsl, None, false, &[]), "~/app");
         assert_eq!(folder_tip("/home/me/app", Some("/home/me"), false, &[quiet.clone(), None]), "~/app");
         assert_eq!(
-            folder_tip("/srv/data", Some("/home/me"), true, &[waiting.clone()]),
+            folder_tip("/srv/data", Some("/home/me"), true, std::slice::from_ref(&waiting)),
             "/srv/data \u{b7} Unseen activity \u{b7} 1 needs input"
         );
         assert_eq!(
@@ -363,7 +363,7 @@ mod tests {
     fn test_c_a2_the_group_tip_names_program_folder_unseen_and_waiting_agents() {
         let waiting = at("claude", "\\\\wsl.localhost\\Ubuntu\\home\\me\\app", Some(StatusState::Blocked));
         assert_eq!(
-            group_tip(waiting.as_ref(), None, false, &[waiting.clone()]),
+            group_tip(waiting.as_ref(), None, false, std::slice::from_ref(&waiting)),
             "claude \u{b7} ~/app \u{b7} 1 needs input \u{2014} double-click to rename"
         );
         assert_eq!(
