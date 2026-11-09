@@ -99,14 +99,24 @@ test('C-wrapper.5: 같은 내용이면 다시 쓰지 않고, 옛 내용이면 �
 });
 
 test('C-wrapper.6: cmd 래퍼는 자기 폴더를 PATH에서 빼고 플래그 파일이 있을 때만 --settings를 붙인다', () => {
-    const script = claudeWrapperScript({ kind: 'cmd', flagFile: 'C:\\Users\\me\\.paddock\\config\\claude\\flag-settings.json', ownDirectory: 'C:\\Users\\me\\.paddock\\config\\bin' });
-    assert.ok(script.includes('set "PATH=%PATH:C:\\Users\\me\\.paddock\\config\\bin;=%"'));
-    assert.ok(script.includes('set "PATH=%PATH:;C:\\Users\\me\\.paddock\\config\\bin=%"'));
-    assert.ok(script.includes('if not exist "C:\\Users\\me\\.paddock\\config\\claude\\flag-settings.json" goto plain'));
-    // claude remote-control is passed through without --settings, checked before the flag file.
-    assert.ok(script.includes('\r\nif /i "%~1"=="remote-control" goto plain\r\nif not exist '));
-    assert.ok(script.includes('"%real%" --settings "C:\\Users\\me\\.paddock\\config\\claude\\flag-settings.json" %*'));
+    const script = claudeWrapperScript({ kind: 'cmd', flagFile: 'C:\\Users\\me\\.paddock\\config\\claude\\flag-settings.json', mcpConfigFile: 'C:\\Users\\me\\.paddock\\config\\claude\\pen-mcp.json', ownDirectory: 'C:\\Users\\me\\.paddock\\config\\bin' });
+    // The own folder and the two files are expanded from the wrapper's location at run time, so no path is written as text.
+    assert.ok(script.includes('\r\nset "own=%~dp0"\r\nset "own=%own:~0,-1%"\r\n'));
+    assert.ok(script.includes('call set "PATH=%%PATH:%own%;=%%"'));
+    assert.ok(script.includes('call set "PATH=%%PATH:;%own%=%%"'));
+    assert.ok(!script.includes('C:\\Users\\me'));
+    const flag = '%~dp0..\\claude\\flag-settings.json';
+    const pen = '%~dp0..\\claude\\pen-mcp.json';
+    // claude remote-control is passed through first; then the four file combinations are separate lines (no path in a variable).
+    assert.ok(script.includes(`\r\nif /i "%~1"=="remote-control" goto plain\r\nif exist "${flag}" goto flag\r\nif exist "${pen}" goto mcp\r\ngoto plain\r\n:flag\r\n`));
+    assert.ok(script.includes(`"%real%" --settings "${flag}" %*\r\n`));
+    assert.ok(script.includes(`"%real%" --settings "${flag}" --mcp-config="${pen}" %*\r\n`));
+    assert.ok(script.includes(`"%real%" --mcp-config="${pen}" %*\r\n`));
+    assert.ok(!script.includes('set "extra'));
     assert.ok(script.includes('\r\n"%real%" %*\r\n'));
+    // A file outside the wrapper folder's parent keeps its path.
+    const outside = claudeWrapperScript({ kind: 'cmd', flagFile: 'C:\\a&b\\f.json', mcpConfigFile: 'C:\\a|c\\p<q>.json', ownDirectory: 'D:\\x\\bin' });
+    assert.ok(outside.includes('--settings "C:\\a&b\\f.json" --mcp-config="C:\\a|c\\p<q>.json" %*'));
     // A claude that turns out to be this file is skipped, and finding nothing else stops with a message instead of looping.
     assert.ok(script.includes('if /i not "%%~fi"=="%~f0"'));
     assert.ok(script.includes('exit /b 9009'));

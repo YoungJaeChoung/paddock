@@ -268,20 +268,28 @@ fn serialize_pane(pane: &FilePane) -> Value {
 
 /// 저장 값에서 파일 칸을 읽는다. 경로가 문자열이 아니거나 빈 탭은 그 탭만 버리고, 탭이 하나도 없으면 칸이 없다.
 /// 탭이 보여 주는 방식은 저장하지 않고 경로의 확장자로 다시 정한다.
+///
+/// `.pen` 탭은 되살리지 않는다. `.pen` 파일은 탭이 아니라 Pen 앱에서 열리므로, 예전 판이 남긴 탭이 있어도 탭으로 만들 수 없다.
+/// 걸러낸 탭이 선택된 탭이었으면 선택은 그 뒤에 남은 첫 탭으로 옮기고, 뒤에 없으면 마지막 탭이다.
 fn restore_pane(saved: Option<&Value>) -> Option<FilePane> {
     saved.and_then(|saved| {
-        let tabs: Vec<FileTab> = saved
+        let paths: Vec<&str> = saved
             .get("tabs")
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
             .filter_map(|tab| tab.get("path").and_then(Value::as_str))
             .filter(|path| !path.is_empty())
-            .map(|path| FileTab { path: path.to_string(), kind: kind_of(path) })
             .collect();
-        let selected = saved.get("selected").and_then(Value::as_u64).and_then(|index| usize::try_from(index).ok());
+        let wanted = saved.get("selected").and_then(Value::as_u64).and_then(|index| usize::try_from(index).ok());
+        let kept: Vec<(usize, &str)> = paths.iter().copied().enumerate().filter(|(_, path)| !is_pen_file(path)).collect();
+        let selected = wanted.map_or(0, |wanted| {
+            kept.iter().position(|(index, _)| *index >= wanted).unwrap_or(kept.len().saturating_sub(1))
+        });
+        let tabs: Vec<FileTab> =
+            kept.iter().map(|(_, path)| FileTab { path: path.to_string(), kind: kind_of(path) }).collect();
         let ratio = saved.get("ratio").and_then(Value::as_f64).map_or(DEFAULT_RATIO, |ratio| ratio as f32);
-        (!tabs.is_empty()).then_some(FilePane { tabs, selected: selected.unwrap_or(0), ratio })
+        (!tabs.is_empty()).then_some(FilePane { tabs, selected, ratio })
     })
 }
 
@@ -445,6 +453,29 @@ mod tests {
         );
         assert!(pane.tabs.iter().all(|tab| !matches!(tab.kind, FileKind::Diff { .. })));
         assert_eq!(pane.selected, 1, "the selected diff tab is replaced by the next kept tab");
+    }
+
+    #[test]
+    fn test_pen_restore_a_saved_pen_tab_is_not_brought_back_and_the_selection_stays_on_a_kept_tab() {
+        // 저장된 폴더 칸 하나를 되살려 (남은 탭 경로, 선택)을 돌려준다.
+        let pane_of = |tabs: &str, selected: u32| {
+            let text = format!(
+                "{{\"version\":3,\"daemon\":\"7@t0\",\"work\":{{\"folders\":[{{\"key\":\"/a\",\"expanded\":true,\"files\":{{\"tabs\":{tabs},\"selected\":{selected},\"ratio\":0.5}}}}],\"terminals\":[]}},\"groups\":[],\"layouts\":[]}}"
+            );
+            let restored = SessionState::restore(&text, &live(&[]), "7@t0");
+            restored.files.get(&GroupKey::Folder("/a".into())).map(|pane| {
+                (pane.tabs.iter().map(|tab| tab.path.clone()).collect::<Vec<_>>(), pane.selected)
+            })
+        };
+        let kept = |list: &[&str]| list.iter().map(ToString::to_string).collect::<Vec<_>>();
+        let middle = r#"[{"path":"/a/x.rs"},{"path":"/a/d.pen"},{"path":"/a/y.rs"}]"#;
+        // | 저장된 선택 | 되살린 선택 | 이유 |
+        assert_eq!(pane_of(middle, 0), Some((kept(&["/a/x.rs", "/a/y.rs"]), 0)));
+        assert_eq!(pane_of(middle, 1), Some((kept(&["/a/x.rs", "/a/y.rs"]), 1)), "the selected pen tab moves to the next kept tab");
+        assert_eq!(pane_of(middle, 2), Some((kept(&["/a/x.rs", "/a/y.rs"]), 1)), "indexes after a removed tab shift down");
+        let tail = r#"[{"path":"/a/x.rs"},{"path":"/a/D.PEN"}]"#;
+        assert_eq!(pane_of(tail, 1), Some((kept(&["/a/x.rs"]), 0)), "no tab after it: the last kept tab");
+        assert_eq!(pane_of(r#"[{"path":"/a/d.pen"}]"#, 0), None, "a pane of only pen tabs is gone");
     }
 
     #[test]

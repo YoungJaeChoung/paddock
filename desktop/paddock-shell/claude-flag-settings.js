@@ -16,6 +16,8 @@ class FlagSettings {
     // Paddock 설정 폴더(`THEIA_CONFIG_DIR`) 아래 위치. 사용자 홈의 dotfiles 저장소 밖이다.
     static DIRECTORY = 'claude';
     static FILE = 'flag-settings.json';
+    // Pen 연동 MCP 설정 파일. 네이티브 앱만 쓰지만, 래퍼 본문이 이 경로를 담으므로 두 앱이 같은 경로 규칙을 쓴다.
+    static PEN_MCP_FILE = 'pen-mcp.json';
 }
 
 /**
@@ -34,6 +36,14 @@ function flagSettingsPath(
     join = path.join,
 ) {
     return join(configDirectory, FlagSettings.DIRECTORY, FlagSettings.FILE);
+}
+
+/** Paddock 설정 폴더 기준 Pen 연동 MCP 설정 파일 경로(`flagSettingsPath`와 같은 규칙). */
+function penMcpConfigPath(
+    configDirectory,
+    join = path.join,
+) {
+    return join(configDirectory, FlagSettings.DIRECTORY, FlagSettings.PEN_MCP_FILE);
 }
 
 /**
@@ -90,4 +100,4 @@ function writeFlagSettings(
     return result;
 }
 
-module.exports = { FlagSettings, flagSettingsPath, buildFlagSettings, writeFlagSettings };
+module.exports = { FlagSettings, flagSettingsPath, penMcpConfigPath, buildFlagSettings, writeFlagSettings };

@@ -1495,6 +1495,7 @@ fn test_c_d39_launch_env_has_no_login_values() {
         is_windows: false,
         permissions: Permissions::Ask,
         flag_settings_file: None,
+        mcp_config_file: None,
         resume: None,
     })
     .expect("launch spec");

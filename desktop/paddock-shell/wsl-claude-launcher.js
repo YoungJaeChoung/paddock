@@ -113,12 +113,13 @@ function parseLauncherOutput(
     return { state: items[0] || 'unsupported', file: items[1] || '', isLinked: items[2] === 'yes' };
 }
 
-/** Puts the launcher file in `~/.paddock/config/bin` of the default WSL distribution. `flagFile` is the Paddock settings file path as WSL sees it. */
+/** Puts the launcher file in `~/.paddock/config/bin` of the default WSL distribution. `flagFile` is the Paddock settings file path as WSL sees it. `mcpConfigFile` is the Pen settings file path (written only by the native app) as WSL sees it. */
 async function installWslLauncher(
     flagFile,
+    mcpConfigFile,
     distribution = '',
 ) {
-    return parseLauncherOutput(await runWsl(WslClaudeLauncher.SCRIPT, ['install', claudeWrapperScript({ kind: 'sh', flagFile })], distribution));
+    return parseLauncherOutput(await runWsl(WslClaudeLauncher.SCRIPT, ['install', claudeWrapperScript({ kind: 'sh', flagFile, mcpConfigFile })], distribution));
 }
 
 /** Adds (`true`) or removes (`false`) the PATH line in the default WSL distribution's `~/.bashrc`. */

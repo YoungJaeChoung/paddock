@@ -1,5 +1,7 @@
 # 네이티브(GPUI) 앱의 Windows release 빌드를 windows-latest에서 만들어 exe를 올린다.
-# 설치 파일(NSIS)·서명·릴리스 올리기는 하지 않는다 — 앱·데몬 exe가 나오는지와 셰이더가 빌드 때 미리 컴파일되는지(fxc)만 확인한다.
+# build는 앱·데몬·pen-mcp exe가 나오는지와 셰이더가 빌드 때 미리 컴파일되는지(fxc)를 확인한다.
+# installer는 그 exe로 사용자별 설치 파일(NSIS)을 만들어 올리고, installer-verify는 새 Windows 실행기에서 실제로 설치·실행·제거해 본다.
+# 서명·태그·릴리스 올리기는 하지 않는다 — package.yml이 v* 태그로 Electron 릴리스를 만들므로, 붙일 때는 다른 태그를 써야 한다.
 # Actions 탭에서 직접 실행하거나, native/로 시작하는 브랜치를 올리면 실행된다.
 # package.yml의 package/** 브랜치와 겹치지 않도록 브랜치 이름을 따로 두었다(겹치면 설치 파일 빌드도 함께 돈다).
 name: Native Windows
@@ -42,7 +44,7 @@ jobs:
           Write-Output "fxc: $($fxc.FullName)"
 
       - name: Build release
-        run: cargo build --release -p paddock-app -p paddock-daemon
+        run: cargo build --release -p paddock-app -p paddock-daemon -p paddock-pen-mcp
 
       # 셰이더를 미리 컴파일했다면 exe에 실행 중 컴파일(D3DCompileFromFile) 호출이 들어 있지 않다.
       - name: No runtime shader compile in the exe
@@ -51,7 +53,7 @@ jobs:
           $exe = "target\release\paddock-app.exe"
           $text = [System.Text.Encoding]::Latin1.GetString([System.IO.File]::ReadAllBytes($exe))
           if ($text.Contains("D3DCompileFromFile")) { throw "paddock-app.exe still compiles shaders at run time" }
-          Get-ChildItem target\release\paddock-app.exe, target\release\paddock-daemon.exe | ForEach-Object { "{0} {1:N1} MB" -f $_.Name, ($_.Length / 1MB) }
+          Get-ChildItem target\release\paddock-app.exe, target\release\paddock-daemon.exe, target\release\paddock-pen-mcp.exe | ForEach-Object { "{0} {1:N1} MB" -f $_.Name, ($_.Length / 1MB) }
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -59,7 +61,59 @@ jobs:
           path: |
             native/target/release/paddock-app.exe
             native/target/release/paddock-daemon.exe
+            native/target/release/paddock-pen-mcp.exe
           if-no-files-found: error
+
+  # build의 exe로 설치 파일을 만든다. 로컬 WSL과 같은 Makefile 대상·같은 makensis 3.09(Ubuntu nsis 패키지를 사용자 공간에 풂)를 쓴다.
+  # Windows 실행기에는 NSIS가 없어 Ubuntu에서 만든다. 설치 파일 작업에는 Rust 도구 모음이 필요 없다.
+  installer:
+    needs: build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: paddock-native-win-x64
+          path: exes
+      # fetch-makensis.sh가 apt-get download로 nsis 패키지를 받을 패키지 목록과, check-payload.sh가 쓰는 llvm-readobj를 준비한다.
+      - name: Package lists and llvm-readobj
+        run: |
+          sudo apt-get update
+          if ! command -v llvm-readobj >/dev/null && [ ! -x /usr/lib/llvm-18/bin/llvm-readobj ]; then sudo apt-get install -y llvm-18; fi
+      - name: Build the installer
+        run: make native-installer NATIVE_EXE_DIR=exes
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: paddock-native-installer-win-x64
+          path: native/target/installer/PaddockNative-Setup-*-x64.exe
+          if-no-files-found: error
+
+  # 새 Windows 실행기에서 설치 파일을 무인으로 설치·제거하고, 앱을 임시 홈에서 띄워 데몬·pen-mcp 설정이 설치 폴더를 가리키는지,
+  # 실행 중 재설치·제거가 정해진 종료 코드로 끝나는지 본다(verify-install.ps1 -Smoke). 실행기는 매번 새로 만들어져 다른 데몬이 없다.
+  installer-verify:
+    needs: [build, installer]
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: paddock-native-win-x64
+          path: exes
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: paddock-native-installer-win-x64
+          path: installer
+      - name: Install, start, upgrade and uninstall
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem installer\PaddockNative-Setup-*-x64.exe | Select-Object -First 1
+          native\installer\verify-install.ps1 -Installer $installer.FullName -ExeDir exes -Smoke
 
   # 앱·데몬 시험(GUI 없이 도는 부분)을 Windows 실행기에서도 돌린다. 크로스 빌드한 시험 exe를 손으로 돌리던 것을 자동화한다.
   test:

@@ -1,0 +1,33 @@
+#pragma code_page(65001)
+// paddock-app.exe의 Windows 리소스: 앱 아이콘과 버전 정보.
+// 첫 줄은 이 파일을 UTF-8로 읽게 한다 — 없으면 Windows의 rc.exe가 시스템 코드 페이지로 읽는다.
+// PADDOCK_VERSION_NUMBERS(쉼표로 나눈 숫자 네 개)와 PADDOCK_VERSION_TEXT(따옴표 문자열)는 build.rs가 Cargo 버전에서 넘긴다.
+
+// 1번 아이콘: GPUI가 창·작업 표시줄 아이콘으로 읽고, 바로 가기와 제거 목록이 이 실행 파일의 첫 아이콘으로 쓴다.
+1 ICON "paddock-native.ico"
+
+1 VERSIONINFO
+FILEVERSION PADDOCK_VERSION_NUMBERS
+PRODUCTVERSION PADDOCK_VERSION_NUMBERS
+FILEOS 0x40004
+FILETYPE 0x1
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        // 0409: 영어(미국), 04b0: 유니코드
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName", "Paddock"
+            VALUE "FileDescription", "Paddock Native"
+            VALUE "FileVersion", PADDOCK_VERSION_TEXT
+            VALUE "InternalName", "paddock-app"
+            VALUE "OriginalFilename", "paddock-app.exe"
+            VALUE "ProductName", "Paddock Native"
+            VALUE "ProductVersion", PADDOCK_VERSION_TEXT
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

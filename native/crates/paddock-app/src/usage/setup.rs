@@ -16,9 +16,12 @@ use std::sync::{Arc, Mutex};
 use paddock_core::account_login::WslMapping;
 use paddock_core::claude_wrapper::{ClaudeWrapper, WrapperKind, claude_wrapper_script};
 use paddock_core::flag_settings::{
-    MemoryHook, UsageState, build_flag_settings, first_line_path, flag_settings_path, memory_hook_command,
-    merged_claude_state, merged_memory_state, normalize_minimum_mb, render_json, status_line_command,
+    MemoryHook, UsageState, build_flag_settings, build_pen_mcp_config, first_line_path, flag_settings_path,
+    memory_hook_command, merged_claude_state, merged_memory_state, normalize_minimum_mb, pen_mcp_config_path,
+    render_json, status_line_command,
 };
+use paddock_core::git_paths::to_linux_argument;
+use paddock_core::pen_paths::{pen_install_candidates, pencil_mcp_exe};
 use paddock_core::settings_text::WslClaudeLauncherSetting;
 use paddock_core::usage_model::ClaudeState;
 use paddock_core::wsl_claude_launcher::{LauncherOutput, SCRIPT as LAUNCHER_SCRIPT, parse_launcher_output};
@@ -88,6 +91,13 @@ pub struct Side {
     pub node: Option<String>,
     /// node가 없을 때 사용량 표시를 켜는 일을 오류로 알릴지. 이 컴퓨터는 알리고, WSL은 상태 줄만 뺀다(WSL 터미널의 Claude는 그대로 쓸 수 있다).
     pub node_required: bool,
+    // -- Pen 연동 --
+    /// 그 쪽의 Claude Code가 띄울 `paddock-pen-mcp` 경로. 이 컴퓨터는 이 앱 옆에 있을 때만, WSL은 그 파일의 `/mnt/…` 경로다. 없으면 None이다.
+    pub pen_mcp_exe: Option<String>,
+    /// 그 쪽이 띄울 Pen의 Pencil MCP 프로그램 경로(`pen_mcp_exe`와 같은 표기). Pen이 설치돼 있을 때만 있다.
+    pub pencil_exe: Option<String>,
+    /// WSL 쪽의 배포판 이름. `pen-open`이 `/home/…` 경로를 Windows 경로로 바꾸는 데 쓴다. 이 컴퓨터는 None이다.
+    pub wsl_distribution: Option<String>,
     reach: Reach,
 }
 
@@ -135,6 +145,32 @@ impl Side {
         let local = self.local(&tool);
         (tool, local)
     }
+
+    /// Pen 연동 MCP 설정 파일의 도구 경로와 이 앱 경로.
+    fn pen_mcp_file(&self) -> (String, Result<PathBuf, String>) {
+        let tool = pen_mcp_config_path(&self.config_dir, self.separator);
+        let local = self.local(&tool);
+        (tool, local)
+    }
+}
+
+/// 이 앱 옆의 `paddock-pen-mcp.exe`. Windows 앱만 동봉하므로 다른 운영체제와 옆에 없는 경우(개발 빌드 등)는 None이다.
+fn find_pen_mcp_exe() -> Option<String> {
+    let beside =
+        std::env::current_exe().ok().and_then(|exe| exe.parent().map(|folder| folder.join("paddock-pen-mcp.exe")));
+    beside.filter(|exe| cfg!(windows) && exe.is_file()).map(|exe| exe.to_string_lossy().into_owned())
+}
+
+/// 설치된 Pen의 Pencil MCP 프로그램(`Program Files`, 사용자 `Programs` 순). Pen이 없거나 그 프로그램이 없으면 None이다.
+fn find_pencil_exe() -> Option<String> {
+    let program_files = std::env::var("ProgramFiles").unwrap_or_default();
+    let local_app_data = std::env::var("LOCALAPPDATA").unwrap_or_default();
+    let pen = pen_install_candidates(&program_files, &local_app_data)
+        .into_iter()
+        .map(PathBuf::from)
+        .find(|exe| cfg!(windows) && exe.is_file());
+    pen.and_then(|exe| exe.parent().map(|folder| pencil_mcp_exe(&folder.to_string_lossy())))
+        .filter(|exe| Path::new(exe).is_file())
 }
 
 /// 설정 폴더 아래 사용량 폴더 이름.
@@ -161,6 +197,8 @@ impl Environment {
     /// 지금 이 컴퓨터와 WSL을 살펴 만든다(`where node`·`wsl.exe`를 부르므로 작업 스레드에서만 부른다).
     pub fn detect() -> Self {
         let config = paddock_protocol::shared_config::config_dir();
+        let pen_mcp_exe = find_pen_mcp_exe();
+        let pencil_exe = find_pencil_exe();
         let computer = Side {
             label: "computer",
             config_dir: config.to_string_lossy().into_owned(),
@@ -169,11 +207,16 @@ impl Environment {
             hook_supported: cfg!(target_os = "linux"),
             node: find_node(),
             node_required: true,
+            pen_mcp_exe: pen_mcp_exe.clone(),
+            pencil_exe: pencil_exe.clone(),
+            wsl_distribution: None,
             reach: Reach::Direct,
         };
         let remote = if cfg!(windows) && wsl::writes_allowed() {
             wsl::mapping_of(None).map(|(distribution, mapping)| {
                 let home = mapping.linux_home.clone();
+                // WSL 안의 Claude는 Windows 프로그램을 `/mnt/c/…` 경로로 띄운다(interop).
+                let from_wsl = |exe: &Option<String>| exe.as_deref().map(|exe| to_linux_argument(exe, &distribution));
                 Remote {
                     side: Side {
                         label: "WSL",
@@ -183,6 +226,9 @@ impl Environment {
                         hook_supported: true,
                         node: wsl::node_of(&distribution, &home),
                         node_required: false,
+                        pen_mcp_exe: from_wsl(&pen_mcp_exe),
+                        pencil_exe: from_wsl(&pencil_exe),
+                        wsl_distribution: Some(distribution.clone()),
                         reach: Reach::Mapped(mapping),
                     },
                     shell: Box::new(WslShell { distribution, home }),
@@ -347,12 +393,35 @@ fn write_flag_file(
     write_if_changed(&local?, render_json(&settings).as_bytes(), false).map(|_| ())
 }
 
+/// 한쪽의 Pen 연동 MCP 설정 파일을 쓴다. 이 쪽에서 `paddock-pen-mcp`를 찾지 못했으면 파일을 만들지 않고, 이전에 쓴 파일이 있으면 지운다
+/// (없어진 프로그램을 가리키는 설정이 Claude를 시작할 때마다 연결 실패를 만들지 않게 한다).
+fn write_pen_mcp_file(side: &Side) -> Result<(), String> {
+    let (_, local) = side.pen_mcp_file();
+    let file = local?;
+    match side.pen_mcp_exe.as_deref() {
+        Some(exe) => {
+            let config = build_pen_mcp_config(exe, side.wsl_distribution.as_deref(), side.pencil_exe.as_deref());
+            write_if_changed(&file, render_json(&config).as_bytes(), false).map(|_| ())
+        }
+        None => {
+            assert_plain_path(&file, false).map_err(|_| REDIRECTED.to_string())?;
+            match std::fs::remove_file(&file) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                    Err(format!("The Pen settings file could not be removed: {}", error.kind()))
+                }
+                _ => Ok(()),
+            }
+        }
+    }
+}
+
 /// 이 컴퓨터의 `claude` 실행 래퍼를 `bin` 폴더에 놓는다(내용이 같으면 쓰지 않는다).
 fn install_wrapper(computer: &Side) -> Result<(), String> {
     let kind = if computer.is_windows { WrapperKind::Cmd } else { WrapperKind::Sh };
     let directory = computer.tool_path(&[ClaudeWrapper::DIRECTORY]);
     let (flag_tool, _) = computer.flag_file();
-    let script = claude_wrapper_script(kind, &flag_tool, &directory);
+    let (pen_tool, _) = computer.pen_mcp_file();
+    let script = claude_wrapper_script(kind, &flag_tool, &pen_tool, &directory);
     let file = computer.local(&format!("{directory}{}{}", computer.separator, kind.file_name()))?;
     write_if_changed(&file, script.as_bytes(), true).map_err(|error| {
         if error == REDIRECTED {
@@ -367,11 +436,23 @@ fn install_wrapper(computer: &Side) -> Result<(), String> {
 /// WSL 안에 `claude` 실행 래퍼를 놓는다(9P 공유로는 실행 권한이 남지 않아 WSL 안의 고정 스크립트가 쓴다).
 fn install_wsl_wrapper(remote: &Remote) -> Result<(), String> {
     let (flag_tool, _) = remote.side.flag_file();
-    let script = claude_wrapper_script(WrapperKind::Sh, &flag_tool, "");
+    let (pen_tool, _) = remote.side.pen_mcp_file();
+    let script = claude_wrapper_script(WrapperKind::Sh, &flag_tool, &pen_tool, "");
     remote.shell.run(&["install", &script]).map(|_| ())
 }
 
 // -- 두 쪽에 하는 일 --
+
+/// 두 쪽의 Pen 연동 MCP 설정 파일을 쓴다. 쓰지 못한 쪽이 있어도 나머지는 쓰고, 첫 오류를 마지막에 돌려준다.
+fn write_pen_mcp_files(env: &Environment) -> Result<(), String> {
+    let mut first_error = None;
+    for side in env.sides() {
+        if let Err(error) = write_pen_mcp_file(side) {
+            first_error.get_or_insert(error);
+        }
+    }
+    first_error.map_or(Ok(()), Err)
+}
 
 /// 두 쪽의 플래그 설정 파일을 이 컴퓨터의 `state.json`대로 다시 쓴다. 쓰지 못한 쪽이 있어도 나머지는 쓰고, 첫 오류를 마지막에 돌려준다.
 fn write_flag_files(env: &Environment) -> Result<(), String> {
@@ -622,6 +703,8 @@ fn start(
         }
         usage_changed = true;
     }
+    // 래퍼는 Pen 설정 파일이 있을 때만 `--mcp-config`를 붙이므로, 래퍼를 놓기 전에 파일부터 맞춘다.
+    attempt(notices, "The Pen settings could not be written", &|| write_pen_mcp_files(env));
     attempt(notices, "The claude launcher could not be installed", &|| install_wrapper(&env.computer));
     if let Some(remote) = &env.wsl {
         attempt(notices, "The claude launcher could not be installed in WSL", &|| install_wsl_wrapper(remote));
@@ -846,6 +929,9 @@ pub fn summary_lines(launcher: Option<&str>) -> Vec<String> {
         hook_supported: cfg!(target_os = "linux"),
         node: None,
         node_required: true,
+        pen_mcp_exe: None,
+        pencil_exe: None,
+        wsl_distribution: None,
         reach: Reach::Direct,
     };
     let mut lines =
@@ -862,6 +948,9 @@ pub fn summary_lines(launcher: Option<&str>) -> Vec<String> {
             hook_supported: true,
             node: None,
             node_required: false,
+            pen_mcp_exe: None,
+            pencil_exe: None,
+            wsl_distribution: None,
             reach: Reach::Mapped(mapping.clone()),
         };
         let rc = mapping
@@ -969,6 +1058,9 @@ mod tests {
             hook_supported: true,
             node: node_computer,
             node_required: true,
+            pen_mcp_exe: None,
+            pencil_exe: None,
+            wsl_distribution: None,
             reach: Reach::Direct,
         };
         let n_runs = Arc::new(AtomicU64::new(0));
@@ -981,6 +1073,9 @@ mod tests {
                 hook_supported: true,
                 node: node_wsl,
                 node_required: false,
+                pen_mcp_exe: None,
+                pencil_exe: None,
+                wsl_distribution: None,
                 reach: Reach::Under(root.join("wsl")),
             },
             shell: Box::new(TestShell { home: root.join("wsl/home/u"), n_runs: n_runs.clone() }),
@@ -1117,7 +1212,8 @@ mod tests {
         install_wrapper(&env.computer).unwrap();
         let file = fixture.computer_file("bin/claude");
         let flag = flag_settings_path(&env.computer.config_dir, '/');
-        assert_eq!(text(&file), claude_wrapper_script(WrapperKind::Sh, &flag, ""));
+        let pen = pen_mcp_config_path(&env.computer.config_dir, '/');
+        assert_eq!(text(&file), claude_wrapper_script(WrapperKind::Sh, &flag, &pen, ""));
         let written = modified(&file);
         std::thread::sleep(std::time::Duration::from_millis(30));
         install_wrapper(&env.computer).unwrap();
@@ -1136,6 +1232,57 @@ mod tests {
         let names: Vec<_> =
             std::fs::read_dir(fixture.computer_file("bin")).unwrap().map(|entry| entry.unwrap().file_name()).collect();
         assert_eq!(names.len(), 1, "no temporary file is left: {names:?}");
+    }
+
+    #[test]
+    fn test_pen_setup_1_the_pen_settings_are_written_per_side_kept_when_unchanged_and_removed_without_the_program() {
+        let fixture = Fixture::new("pen");
+        let (mut env, _) = fixture.environment();
+        env.computer.pen_mcp_exe = Some("C:\\Paddock\\paddock-pen-mcp.exe".to_string());
+        env.computer.pencil_exe = Some("C:\\Program Files\\Pen\\mcp.exe".to_string());
+        if let Some(remote) = env.wsl.as_mut() {
+            remote.side.pen_mcp_exe = Some("/mnt/c/Paddock/paddock-pen-mcp.exe".to_string());
+            remote.side.wsl_distribution = Some("Ubuntu".to_string());
+        }
+        write_pen_mcp_files(&env).unwrap();
+        let expected = render_json(&build_pen_mcp_config(
+            "C:\\Paddock\\paddock-pen-mcp.exe",
+            None,
+            Some("C:\\Program Files\\Pen\\mcp.exe"),
+        ));
+        let computer_file = fixture.computer_file("claude/pen-mcp.json");
+        assert_eq!(text(&computer_file), expected);
+        // WSL 쪽은 /mnt/c 경로와 배포판 인자를 받고, Pen이 없어 pencil 항목이 없다.
+        let wsl = text(&fixture.wsl_file("claude/pen-mcp.json"));
+        assert!(wsl.contains("\"command\": \"/mnt/c/Paddock/paddock-pen-mcp.exe\""), "{wsl}");
+        assert!(wsl.contains("\"--wsl-distribution\"") && wsl.contains("\"Ubuntu\""), "{wsl}");
+        assert!(!wsl.contains("pencil"), "{wsl}");
+        // 같은 내용이면 다시 쓰지 않는다.
+        let written = modified(&computer_file);
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        write_pen_mcp_files(&env).unwrap();
+        assert_eq!(modified(&computer_file), written);
+        // 프로그램을 찾지 못하면 이전에 쓴 파일을 지우고, 없는 파일은 그대로 둔다.
+        env.computer.pen_mcp_exe = None;
+        write_pen_mcp_files(&env).unwrap();
+        assert!(!computer_file.exists());
+        assert!(fixture.wsl_file("claude/pen-mcp.json").exists());
+        write_pen_mcp_files(&env).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_pen_setup_2_the_start_job_writes_the_pen_settings_before_the_wrapper_that_points_at_them() {
+        let fixture = Fixture::new("pen-start");
+        let (mut env, _) = fixture.environment();
+        env.computer.pen_mcp_exe = Some("/p/paddock-pen-mcp.exe".to_string());
+        let mut done = Done::default();
+        start(&env, false, (false, 4096), WslClaudeLauncherSetting::Off, &mut done);
+        assert!(done.notices.is_empty(), "{:?}", done.notices);
+        assert!(text(&fixture.computer_file("claude/pen-mcp.json")).contains("/p/paddock-pen-mcp.exe"));
+        let wrapper = text(&fixture.computer_file("bin/claude"));
+        assert!(wrapper.contains("claude/pen-mcp.json"), "{wrapper}");
+        assert!(wrapper.contains("--mcp-config="), "{wrapper}");
     }
 
     #[cfg(unix)]

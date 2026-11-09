@@ -1,0 +1,8 @@
+# Windows 실행 파일은 C 런타임(MSVC CRT)을 실행 파일 안에 넣어 만든다.
+# 넣지 않으면 세 실행 파일이 VCRUNTIME140.dll을 불러오고, VC++ 재배포 패키지가 없는 PC에서는 시작하지 못한다.
+# 개발 빌드(dev-win)·CI 시험·배포 빌드가 모두 같은 설정을 쓴다 — 설치 파일 검사(check-payload.sh)가 이 DLL이 없는지 본다.
+#
+# /ignore:4099는 정적 C 런타임 라이브러리가 가리키는 디버깅 정보 파일(.pdb)을 찾지 못했다는 링커 경고를 끈다.
+# 그 파일은 Microsoft 빌드 머신의 경로라 어디에도 없고, 없어도 실행 파일은 같다 — 끄지 않으면 링크마다 경고가 수십 줄 나온다.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=/ignore:4099"]

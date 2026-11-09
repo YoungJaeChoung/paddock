@@ -36,6 +36,7 @@ pub mod pane_columns;
 pub mod paste_paths;
 pub mod paths;
 pub mod pdf_view;
+pub mod pen_paths;
 pub mod process_argv;
 pub mod quick_open;
 pub mod replay_ring;

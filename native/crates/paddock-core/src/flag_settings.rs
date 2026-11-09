@@ -192,6 +192,38 @@ pub fn render_json(value: &Value) -> String {
     text
 }
 
+/// Pen 연동 MCP 서버 등록. Claude의 `--mcp-config` 파일 내용이다. 키 순서는 `pen-open`, `pencil`이다.
+///
+/// `pen-open`은 이 앱이 동봉한 `paddock-pen-mcp`(열기·저장·닫기)이고, WSL 안의 Claude가 쓰는 설정이면 `--wsl-distribution <배포판>`을 인자로 준다
+/// (WSL interop은 환경 변수를 넘기지 않는다). `pencil`은 Pen이 설치돼 있을 때만 넣는다(`--app desktop`: Pen 앱의 문서를 읽고 쓰는 도구).
+///
+/// Examples
+/// --------
+/// | wsl_distribution | pencil_exe | 결과의 `mcpServers`                                  |
+/// |------------------|------------|------------------------------------------------------|
+/// | (없음)           | (없음)     | `pen-open`(인자 없음)                                |
+/// | (없음)           | 있음       | `pen-open`, `pencil`(`--app desktop --agent claudeCodeCLI`) |
+/// | `Ubuntu`         | 있음       | `pen-open`(`--wsl-distribution Ubuntu`), `pencil`    |
+pub fn build_pen_mcp_config(
+    mcp_exe: &str,
+    wsl_distribution: Option<&str>,
+    pencil_exe: Option<&str>,
+) -> Value {
+    let arguments: Vec<&str> = match wsl_distribution.filter(|name| !name.is_empty()) {
+        Some(distribution) => vec!["--wsl-distribution", distribution],
+        None => Vec::new(),
+    };
+    let mut servers = Map::new();
+    servers.insert("pen-open".to_string(), json!({ "command": mcp_exe, "args": arguments }));
+    if let Some(exe) = pencil_exe.filter(|exe| !exe.is_empty()) {
+        servers.insert(
+            "pencil".to_string(),
+            json!({ "command": exe, "args": ["--app", "desktop", "--agent", "claudeCodeCLI"] }),
+        );
+    }
+    json!({ "mcpServers": servers })
+}
+
 /// 상태 줄 명령 문자열: `node 스크립트 기본사용량파일`. node 실행 파일을 모르면 None이다.
 /// 어느 계정의 사용량인지는 스크립트가 실행 환경의 `CLAUDE_CONFIG_DIR`로 정하므로 계정별 경로를 받지 않는다.
 ///
@@ -431,6 +463,50 @@ mod tests {
         let off = merged_claude_state(Some(&next), ClaudeState::Off);
         assert_eq!(off["claude"], "off");
         assert_eq!(off["memory"]["minimumMb"], 4608);
+    }
+
+    #[test]
+    fn test_pen_mcp_1_the_config_bytes_without_pen_with_pen_and_for_wsl() {
+        // Pen이 없으면 pencil 항목이 빠지고, 배포판 인자가 없으면 args는 빈 목록이다.
+        assert_eq!(
+            render_json(&build_pen_mcp_config("C:\\Paddock\\paddock-pen-mcp.exe", None, None)),
+            concat!(
+                "{\n  \"mcpServers\": {\n    \"pen-open\": {\n",
+                "      \"command\": \"C:\\\\Paddock\\\\paddock-pen-mcp.exe\",\n      \"args\": []\n    }\n  }\n}\n"
+            )
+        );
+        // Pen이 있으면 pen-open 다음에 pencil이 온다.
+        let with_pen = render_json(&build_pen_mcp_config(
+            "C:\\Paddock\\paddock-pen-mcp.exe",
+            None,
+            Some("C:\\Program Files\\Pen\\resources\\app.asar.unpacked\\out\\mcp-server-windows-x64.exe"),
+        ));
+        assert_eq!(
+            with_pen,
+            concat!(
+                "{\n  \"mcpServers\": {\n    \"pen-open\": {\n",
+                "      \"command\": \"C:\\\\Paddock\\\\paddock-pen-mcp.exe\",\n      \"args\": []\n    },\n",
+                "    \"pencil\": {\n      \"command\": \"C:\\\\Program Files\\\\Pen\\\\resources\\\\app.asar.unpacked\\\\out\\\\mcp-server-windows-x64.exe\",\n",
+                "      \"args\": [\n        \"--app\",\n        \"desktop\",\n        \"--agent\",\n        \"claudeCodeCLI\"\n      ]\n    }\n  }\n}\n"
+            )
+        );
+        // WSL 안의 Claude는 Windows 실행 파일을 /mnt/c 경로로 부르고 배포판 이름을 인자로 받는다.
+        let wsl = build_pen_mcp_config("/mnt/c/P/paddock-pen-mcp.exe", Some("Ubuntu"), None);
+        assert_eq!(wsl["mcpServers"]["pen-open"]["args"], json!(["--wsl-distribution", "Ubuntu"]));
+        assert_eq!(wsl["mcpServers"]["pencil"], Value::Null);
+        assert_eq!(build_pen_mcp_config("x", Some(""), Some("")), build_pen_mcp_config("x", None, None));
+    }
+
+    #[test]
+    fn test_pen_mcp_2_the_config_path_joins_with_the_readers_separator() {
+        assert_eq!(
+            pen_mcp_config_path("/home/me/.paddock/config", '/'),
+            "/home/me/.paddock/config/claude/pen-mcp.json"
+        );
+        assert_eq!(
+            pen_mcp_config_path("C:\\Users\\me\\.paddock\\config\\", '\\'),
+            "C:\\Users\\me\\.paddock\\config\\claude\\pen-mcp.json"
+        );
     }
 
     #[test]

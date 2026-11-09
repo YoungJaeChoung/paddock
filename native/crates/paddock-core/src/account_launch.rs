@@ -709,6 +709,29 @@ mod tests {
                     .as_str()
             )
         );
+        // Pen 연동 설정 파일은 같은 규칙이다: 파일이 있을 때만 `--mcp-config=<파일>` 한 단어로, --settings 다음에 붙는다.
+        let pen_file = directory.join("pen mcp's.json");
+        request.mcp_config_file = Some(Location::Absolute(pen_file.to_string_lossy().into_owned()));
+        let with_pen = account_terminal_spec(&request).unwrap();
+        assert_eq!(
+            run(&with_pen).as_deref(),
+            Some(
+                format!("ARGS|--settings {} --resume 00000000-0000-4000-8000-000000000014", flag_file.display())
+                    .as_str()
+            )
+        );
+        std::fs::write(&pen_file, "{}").unwrap();
+        assert_eq!(
+            run(&with_pen).as_deref(),
+            Some(
+                format!(
+                    "ARGS|--settings {} --mcp-config={} --resume 00000000-0000-4000-8000-000000000014",
+                    flag_file.display(),
+                    pen_file.display()
+                )
+                .as_str()
+            )
+        );
         std::fs::remove_dir_all(&directory).unwrap();
 
         // WSL은 같은 Bash 시작 파일을 홈 기준 경로로 쓰고, PowerShell은 경로를 확인한 뒤에만 플래그를 더한다.
@@ -729,9 +752,24 @@ mod tests {
                 .contains("Test-Path -LiteralPath 'C:\\Users\\O''Brien\\.paddock\\config\\claude\\flag-settings.json'")
         );
         assert!(script.contains("& $paddockCli.Source @paddockFlag"));
-        // 설정 파일이 없으면 --settings는 어디에도 없고, Codex는 설정 파일을 받지 않는다.
+        assert!(!script.contains("paddockPen"));
+        wsl.mcp_config_file = Some(Location::UnderHome(".paddock/config/claude/pen-mcp.json".into()));
+        let script = rcfile_script(&account_terminal_spec(&wsl).unwrap());
+        assert!(script.contains("--mcp-config=\"$HOME\"'/.paddock/config/claude/pen-mcp.json'"), "{script}");
+        windows.mcp_config_file =
+            Some(Location::Absolute("C:\\Users\\O'Brien\\.paddock\\config\\claude\\pen-mcp.json".into()));
+        let script = decoded(&account_terminal_spec(&windows).unwrap());
+        assert!(
+            script.contains("Test-Path -LiteralPath 'C:\\Users\\O''Brien\\.paddock\\config\\claude\\pen-mcp.json'")
+        );
+        assert!(script.contains("& $paddockCli.Source @paddockFlag @paddockPen"));
+        // 설정 파일이 없으면 --settings·--mcp-config는 어디에도 없고, Codex는 설정 파일을 받지 않는다.
         let plain = account_terminal_spec(&input(&claude, "/tmp/x", "/tmp", false)).unwrap();
         assert!(!plain.args.last().unwrap().contains("--settings"));
+        assert!(!plain.args.last().unwrap().contains("--mcp-config"));
+        let mut codex_with_pen = input(&profile("codex", Runtime::Native), "/tmp/x", "/tmp", false);
+        codex_with_pen.mcp_config_file = Some(Location::Absolute("/tmp/p.json".into()));
+        assert_eq!(account_terminal_spec(&codex_with_pen).unwrap_err(), LaunchError::InvalidSettingsPath);
         let codex = profile("codex", Runtime::Native);
         let mut with_flag = input(&codex, "/tmp/x", "/tmp", false);
         with_flag.flag_settings_file = Some(Location::Absolute("/tmp/f.json".into()));

@@ -10,6 +10,7 @@ use paddock_core::file_kind::{FileKind, kind_of};
 use paddock_core::file_pane::{file_key, tab_key};
 use paddock_core::markdown_view::{View, image_root_for};
 use paddock_core::paths::is_inside;
+use paddock_core::pen_paths::is_pen_file;
 use paddock_core::text_file::Encoded;
 use paddock_core::unsaved::{DiskChange, disk_change_effect};
 use paddock_core::work_model::GroupKey;
@@ -77,13 +78,20 @@ impl WorkWindow {
     ///
     /// 탭은 바로 만들고 내용은 작업 스레드가 읽는 대로 채운다(읽는 동안 창이 멈추지 않는다). 이미 열려 있는 파일이면 그 탭을
     /// 고르고 디스크의 지금 내용으로 다시 읽는다.
+    ///
+    /// `.pen` 파일은 탭을 만들지 않고 Pen 앱에 넘긴다(`open_pen`).
     pub(crate) fn open_file(
         &mut self,
         path: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_file_as(path, kind_of(path), window, cx);
+        // `.pen`은 탭 종류가 아니다. 모든 입구가 이 함수를 지나므로 여기서 Pen 앱으로 보낸다.
+        if is_pen_file(path) {
+            self.open_pen(path, window, cx);
+        } else {
+            self.open_file_as(path, kind_of(path), window, cx);
+        }
     }
 
     /// `open_file`처럼 파일을 열고, 텍스트 보기가 그려지면 `line`번째(1부터) 줄로 간다. 텍스트가 아닌 파일(이미지·PDF 등)은 줄 번호를 버린다.

@@ -331,6 +331,10 @@ pub fn shell_open(path: &str) -> Result<(), String> {
     shell_open_target(&path.replace('/', "\\"))
 }
 
+/// 셸이 파일 형식에 연결된 앱이 없다고 답할 때 `shell_open`이 돌려주는 이유 문장. `.pen` 열기는 이 이유일 때만 설치 위치의 앱을 직접 띄운다.
+#[cfg(windows)]
+pub const NO_APP_REASON: &str = "no app is set up to open this kind of file.";
+
 /// `shell_open`의 본체: 이미 Windows 꼴로 맞춘 경로나 주소를 그대로 셸에 넘긴다.
 #[cfg(windows)]
 fn shell_open_target(target: &str) -> Result<(), String> {
@@ -363,7 +367,7 @@ fn shell_open_target(target: &str) -> Result<(), String> {
         0..=32 => Err(match code {
             2 | 3 => "the file was not found.".to_string(),
             5 => "access was denied.".to_string(),
-            31 => "no app is set up to open this kind of file.".to_string(),
+            31 => NO_APP_REASON.to_string(),
             other => format!("the shell returned code {other}."),
         }),
         _ => Ok(()),

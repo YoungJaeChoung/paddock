@@ -19,7 +19,7 @@ const { AccountSessions } = require('./account-session');
 const { readJson, writeJson, usageError } = require('./usage-files');
 const { MemoryHook, memoryHookCommand, setMemoryNotice } = require('./memory-hook-settings');
 const { AgentStatusHook, agentStatusHookCommand, setAgentStatusHook } = require('./agent-status-hook-settings');
-const { flagSettingsPath, buildFlagSettings, writeFlagSettings } = require('./claude-flag-settings');
+const { flagSettingsPath, penMcpConfigPath, buildFlagSettings, writeFlagSettings } = require('./claude-flag-settings');
 const { ClaudeWrapper, installClaudeWrapper } = require('./claude-wrapper');
 const { LegacyCleanup, cleanSettingsFiles, describeCleanup } = require('./legacy-settings-cleanup');
 const { installWslLauncher, setWslLauncherPath } = require('./wsl-claude-launcher');
@@ -809,13 +809,17 @@ class PaddockStatusRoutes {
                 directory: path.join(configDirectory, ClaudeWrapper.DIRECTORY),
                 kind: process.platform === 'win32' ? 'cmd' : 'sh',
                 flagFile: flagSettingsPath(configDirectory),
+                mcpConfigFile: penMcpConfigPath(configDirectory),
                 ownDirectory: path.join(configDirectory, ClaudeWrapper.DIRECTORY),
             });
         });
         // Windows 앱이면 WSL 안에도 같은 실행 래퍼를 놓는다(WSL 일반 터미널의 PATH에 앞세우는 일은 사용자가 허락했을 때만 한다).
         await attempt('The claude launcher could not be installed in WSL', async () => {
             const wslInfo = await readWslInfo();
-            if (wslInfo.home && wslInfo.linuxHome) await installWslLauncher(flagSettingsPath(wslPaths(wslInfo).configDirectory, path.posix.join));
+            if (wslInfo.home && wslInfo.linuxHome) {
+                const wslConfigDirectory = wslPaths(wslInfo).configDirectory;
+                await installWslLauncher(flagSettingsPath(wslConfigDirectory, path.posix.join), penMcpConfigPath(wslConfigDirectory, path.posix.join));
+            }
         });
         await attempt('Old Paddock entries could not be removed from the Claude settings', () => this.runLegacyCleanup());
     }

@@ -44,6 +44,9 @@ pub mod pane;
 pub mod pdf_render;
 #[cfg(feature = "gui")]
 pub mod pdf_view;
+/// `.pen` 파일을 탭 대신 Pen 앱에 넘기는 흐름.
+#[cfg(feature = "gui")]
+pub mod pen;
 pub mod reader;
 /// 검토 메모(고른 줄에 메모를 남겨 에이전트에게 한 번에 보낸다).
 #[cfg(feature = "gui")]

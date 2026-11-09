@@ -1,4 +1,4 @@
-.PHONY: package-mac package-win release native-dev native-win native-lint
+.PHONY: package-mac package-win release native-dev native-win native-lint native-release-win native-installer
 
 # 설치 파일은 desktop/dist/에 생긴다. 각 운영체제에서 실행한다(맥 → .dmg, Windows → .exe).
 # setup은 의존성 설치와 네이티브 모듈의 Electron용 컴파일을 맡는다. 이미 끝났으면 빠르게 지나간다.
@@ -51,6 +51,32 @@ native-win:
 		cargo xwin build --profile dev-win --target x86_64-pc-windows-msvc --workspace \
 		--features paddock-app/automation,paddock-daemon/test-hooks
 	native/scripts/copy-hlsl.sh
+
+# 배포용 Windows 실행 파일 세 개(앱·데몬·pen-mcp)를 WSL에서 release로 크로스 빌드한다. native-win과 달리 셰이더를 실행 중에
+# 컴파일하지 않는다 — Windows SDK의 fxc.exe(WSL에서 실행)로 미리 컴파일해 넣어, Windows CI의 release 빌드와 같은 꼴이 된다
+# (native/scripts/build-release-win.sh). 자동 점검·시험 훅 기능은 켜지 않는다. 결과는 native/target/x86_64-pc-windows-msvc/release/.
+native-release-win:
+	native/scripts/trim-target.sh
+	PATH="$(NATIVE_PATH)" native/scripts/build-release-win.sh
+
+# 네이티브 앱 설치 파일(NSIS). 결과는 native/target/installer/PaddockNative-Setup-<버전>-x64.exe에 생긴다.
+# NATIVE_EXE_DIR을 주지 않으면 native-release-win으로 release 실행 파일을 먼저 만든다(WSL).
+# 이미 만든 실행 파일이 있으면 그 폴더를 준다(CI: make native-installer NATIVE_EXE_DIR=exes) — 그때는 Rust 도구 모음이 필요 없다.
+# makensis 3.09는 native/target/tools/nsis/에 사용자 공간으로 받는다(fetch-makensis.sh). 담기 전에 실행 파일을 검사한다
+# (check-payload.sh) — 셰이더를 실행 중에 컴파일하는 dev-win 실행 파일은 여기서 떨어진다.
+# 버전은 native/Cargo.toml의 [workspace.package] version 하나에서 읽는다(CI도 같은 awk 한 줄을 쓴다).
+NATIVE_RELEASE_DIR := native/target/x86_64-pc-windows-msvc/release
+NATIVE_EXE_DIR ?= $(NATIVE_RELEASE_DIR)
+NSIS_ROOT := $(CURDIR)/native/target/tools/nsis/root
+native-installer: $(if $(filter $(NATIVE_RELEASE_DIR),$(NATIVE_EXE_DIR)),native-release-win)
+	native/installer/fetch-makensis.sh
+	PATH="$(NATIVE_PATH)" native/installer/check-payload.sh "$(NATIVE_EXE_DIR)"
+	version=$$(awk '/^\[workspace.package\]/{f=1;next} /^\[/{f=0} f&&/^version/{gsub(/"/,"",$$3);print $$3;exit}' native/Cargo.toml) && \
+	mkdir -p native/target/installer && \
+	NSISDIR="$(NSIS_ROOT)/usr/share/nsis" "$(NSIS_ROOT)/usr/bin/makensis" -V2 -WX -DVERSION=$$version \
+		-DSOURCE_DIR="$(abspath $(NATIVE_EXE_DIR))" -DICON="$(CURDIR)/native/crates/paddock-app/resources/paddock-native.ico" \
+		-DOUT_FILE="$(CURDIR)/native/target/installer/PaddockNative-Setup-$$version-x64.exe" native/installer/paddock-native.nsi && \
+	ls -l "native/target/installer/PaddockNative-Setup-$$version-x64.exe"
 
 # 검토자가 한 줄로 도는 정적 점검: 서식 + Linux clippy(창 부분 제외) + Windows 대상 clippy(창 부분·자동 점검 기능 포함, 전 작업 공간)
 # + 자동 점검을 끈 배포 꼴 clippy(자동 점검 전용 코드가 제품 코드를 조용히 지우는 `cfg` 실수를 경고로 잡는다).

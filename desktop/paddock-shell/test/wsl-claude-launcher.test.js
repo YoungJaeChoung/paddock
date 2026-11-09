@@ -108,7 +108,7 @@ test('WL03 a linked .bashrc is edited at its real location, the link stays, and 
 
 test('WL04 installing puts an executable launcher file in place, replaces an old one, and refuses a link', { skip: process.platform === 'win32' }, context => {
     const directory = home(context);
-    const script = claudeWrapperScript({ kind: 'sh', flagFile: `${directory}/.paddock/config/claude/flag-settings.json` });
+    const script = claudeWrapperScript({ kind: 'sh', flagFile: `${directory}/.paddock/config/claude/flag-settings.json`, mcpConfigFile: `${directory}/.paddock/config/claude/pen-mcp.json` });
     assert.deepEqual(run(directory, 'install', script).items, ['installed']);
     const file = path.join(directory, '.paddock', 'config', 'bin', 'claude');
     assert.equal(fs.readFileSync(file, 'utf8'), script);
@@ -128,7 +128,7 @@ test('WL05 the added function line puts the launcher first in a real interactive
     const real = path.join(directory, 'real');
     fs.mkdirSync(real);
     fs.writeFileSync(path.join(real, 'claude'), '#!/bin/sh\nprintf "REAL|%s\\n" "$*"\n', { mode: 0o755 });
-    run(directory, 'install', claudeWrapperScript({ kind: 'sh', flagFile: path.join(directory, 'missing.json') }));
+    run(directory, 'install', claudeWrapperScript({ kind: 'sh', flagFile: path.join(directory, 'missing.json'), mcpConfigFile: path.join(directory, 'pen-mcp.json') }));
     fs.writeFileSync(path.join(directory, '.bashrc'), `export PATH="${real}:$PATH"\n`);
     run(directory, 'add');
     const result = spawnSync('bash', ['-i', '-c', 'command -v claude; claude --version'], { encoding: 'utf8', env: { PATH: '/usr/bin:/bin', HOME: directory }, timeout: 10000 });
