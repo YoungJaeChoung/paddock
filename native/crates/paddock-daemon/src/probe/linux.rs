@@ -50,6 +50,7 @@ fn read_one(shell_pid: u32) -> Option<Reading> {
     let cwd = std::fs::read_link(format!("/proc/{shell_pid}/cwd"))
         .ok()
         .map(|path: PathBuf| path.to_string_lossy().into_owned());
+    let started_at = started_at_of(foreground);
     (!argv.is_empty()).then_some(Reading {
         cwd,
         argv,
@@ -57,7 +58,8 @@ fn read_one(shell_pid: u32) -> Option<Reading> {
         runtime: Runtime::Native,
         distribution: String::new(),
         pid: Some(foreground),
-        started_at: started_at_of(foreground),
+        started_at,
+        start_mark: started_at,
         session_record: None,
     })
 }

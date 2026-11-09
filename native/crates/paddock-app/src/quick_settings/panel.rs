@@ -9,7 +9,7 @@ use paddock_core::theme::{quick_settings as size, zoom_factor};
 
 use super::model::{
     Choice, Field, INTERFACE_FONT_CANDIDATES, Row, TERMINAL_FONT_CANDIDATES, choices, current_value, font_options,
-    panel_rect,
+    outdated_daemon_hint, panel_rect,
 };
 use crate::chrome::{checkbox, zpx};
 use crate::look::colors;
@@ -60,7 +60,9 @@ fn field_choices(
                 label: environment.label,
             })
             .collect(),
-        Field::Theme | Field::OnQuit | Field::RestoreOnRestart | Field::AgentPermissions => choices(field),
+        Field::Theme | Field::OnQuit | Field::RestoreOnRestart | Field::AgentPermissions | Field::WslClaudeLauncher => {
+            choices(field)
+        }
     }
 }
 
@@ -154,6 +156,8 @@ fn stepper_row(
     let palette = colors();
     let (less_id, more_id) = match row {
         Row::Zoom => ("quick-zoom-less", "quick-zoom-more"),
+        Row::SidebarIndent => ("quick-indent-less", "quick-indent-more"),
+        Row::MemoryNoticeMinimumMb => ("quick-memory-limit-less", "quick-memory-limit-more"),
         _ => ("quick-size-less", "quick-size-more"),
     };
     row_box()
@@ -261,25 +265,33 @@ fn options_list(
     list
 }
 
-/// 소리 켬/끔 줄.
-fn sound_row(
+/// 켬/끔 줄(에이전트 완료 소리, 터미널 선택 자동 복사, 상태 줄 항목 셋).
+fn toggle_row(
+    row: Row,
     on: bool,
     cx: &mut Context<WorkWindow>,
 ) -> Div {
-    row_box().child(label_cell(Row::DoneSound)).child(
-        div()
-            .id("quick-sound")
-            .flex_none()
-            .p(zpx(size::SOUND_HIT_PADDING))
-            .cursor_pointer()
-            .child(checkbox(on))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _event: &MouseDownEvent, window, cx| {
-                    cx.stop_propagation();
-                    this.quick_toggle_sound(window, cx);
-                }),
-            ),
+    let id = match row {
+        Row::CopyOnSelection => "quick-copy-on-selection",
+        Row::ClaudeUsage => "quick-status-claude",
+        Row::CodexUsage => "quick-status-codex",
+        Row::Memory => "quick-status-memory",
+        Row::MemoryNotice => "quick-memory-notice",
+        _ => "quick-sound",
+    };
+    row_box().child(label_cell(row)).child(
+        div().id(id).flex_none().p(zpx(size::SOUND_HIT_PADDING)).cursor_pointer().child(checkbox(on)).on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _event: &MouseDownEvent, window, cx| {
+                cx.stop_propagation();
+                match row {
+                    Row::CopyOnSelection => this.quick_toggle_copy_on_selection(window, cx),
+                    Row::ClaudeUsage | Row::CodexUsage | Row::Memory => this.quick_toggle_status_item(row, window, cx),
+                    Row::MemoryNotice => this.quick_toggle_memory_notice(window, cx),
+                    _ => this.quick_toggle_sound(window, cx),
+                }
+            }),
+        ),
     )
 }
 
@@ -380,7 +392,18 @@ pub fn quick_panel(
             Row::OnQuit => Some(Field::OnQuit),
             Row::RestoreOnRestart => Some(Field::RestoreOnRestart),
             Row::AgentPermissions => Some(Field::AgentPermissions),
-            Row::Zoom | Row::FontSize | Row::DoneSound | Row::QuitAndStopAll => None,
+            Row::WslClaudeLauncher => Some(Field::WslClaudeLauncher),
+            Row::Zoom
+            | Row::FontSize
+            | Row::SidebarIndent
+            | Row::CopyOnSelection
+            | Row::DoneSound
+            | Row::ClaudeUsage
+            | Row::CodexUsage
+            | Row::Memory
+            | Row::MemoryNotice
+            | Row::MemoryNoticeMinimumMb
+            | Row::QuitAndStopAll => None,
         };
         if let Some(field) = select_field {
             let options = field_choices(field, settings, installed);
@@ -410,10 +433,43 @@ pub fn quick_panel(
                     appearance.terminal_font_size < paddock_core::settings_text::limit::FONT_SIZE_MAX,
                     cx,
                 )),
-                Row::DoneSound => panel.child(sound_row(values.agent_done_sound(), cx)),
+                Row::SidebarIndent => panel.child(stepper_row(
+                    row,
+                    format!("{}px", appearance.sidebar_indent),
+                    appearance.sidebar_indent > paddock_core::settings_text::limit::SIDEBAR_INDENT_MIN,
+                    appearance.sidebar_indent < paddock_core::settings_text::limit::SIDEBAR_INDENT_MAX,
+                    cx,
+                )),
+                Row::MemoryNotice => panel.child(toggle_row(row, values.memory_notice(), cx)),
+                Row::MemoryNoticeMinimumMb => {
+                    let minimum = values.memory_notice_minimum_mb();
+                    panel.child(stepper_row(
+                        row,
+                        format!("{minimum} MB"),
+                        minimum > 0,
+                        minimum < paddock_core::settings_text::limit::MEMORY_NOTICE_MB_MAX,
+                        cx,
+                    ))
+                }
+                Row::CopyOnSelection => panel.child(toggle_row(row, appearance.copy_on_selection, cx)),
+                Row::DoneSound => panel.child(toggle_row(row, values.agent_done_sound(), cx)),
+                Row::ClaudeUsage | Row::CodexUsage | Row::Memory => {
+                    let item_key = row.status_item_key().unwrap_or_default();
+                    panel.child(toggle_row(row, values.status_item(item_key), cx))
+                }
                 _ => panel.child(quit_row(cx)),
             };
         }
+    }
+    if let Some(hint) = outdated_daemon_hint(window_view.daemon_outdated) {
+        panel = panel.child(
+            div()
+                .id("quick-outdated-daemon")
+                .px(zpx(size::LAST_ROW_PADDING_X))
+                .text_size(zpx(size::HINT_SIZE))
+                .text_color(hsla(palette.fg_muted))
+                .child(hint),
+        );
     }
     div()
         .id("quick-settings-scrim")

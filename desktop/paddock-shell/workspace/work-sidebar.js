@@ -180,12 +180,15 @@ class WorkSidebar {
             current?.getResourceUri?.()?.toString(), this.workspace.quickSettings.sidebarIndent(),
             [...this.workspace.doneIds], selectedRoot, [...new Set(this.workspace.terminals.all.map(terminal => this.workspace.terminalEnvironment(terminal)))], filesFolder && this.workspace.filesExpanded ? this.workspace.fileTree.gitChanges() : [], unassigned.map(terminal => [terminal.id, this.workspace.unassignedName(terminal), this.workspace.programOf(terminal), this.workspace.agentActivity.runningAccountLabel(terminal), this.workspace.terminalEnvironment(terminal),
                 this.workspace.cwdCache.get(terminal.id), this.workspace.doneIds.has(terminal.id), this.workspace.innerTabIds(terminal.id).length,
-                agent.activityState(this.workspace.activity.get(terminal.id) ?? agent.idle(), Date.now(), this.workspace.programs.has(terminal.id) ? agent.isAgent(this.workspace.programs.get(terminal.id)) : null)]),
+                this.workspace.agentActivity.stateOf(terminal.id)]),
             backgroundUnassigned.map(([id, remote]) => [id, remote.name, remote.program, remote.terminalId, remote.retired]),
+            // 접힌 폴더·묶음의 도움말(N need input)은 보이지 않는 터미널의 상태에서 나온다. Unassigned 묶음의 안쪽 탭은
+            // 작업 상태(state.terminals)에 없으므로 상태 기록이 있는 터미널 전부에서 거른다.
+            [...this.workspace.activity.keys()].filter(id => this.workspace.agentActivity.stateOf(id).state === 'blocked'),
             rows.map(row => {
                 const terminal = this.workspace.shell.getWidgetById(row.id);
                 return [this.remoteWorkRows.get(row.id), terminal ? this.workspace.programOf(terminal) : '', terminal ? this.workspace.agentActivity.runningAccountLabel(terminal) : '', terminal ? this.workspace.terminalEnvironment(terminal) : '', this.workspace.doneIds.has(row.id),
-                    agent.activityState(this.workspace.activity.get(row.id) ?? agent.idle(), Date.now(), this.workspace.programs.has(row.id) ? agent.isAgent(this.workspace.programs.get(row.id)) : null)];
+                    this.workspace.agentActivity.stateOf(row.id)];
             }),
         ]);
         if (n_revision === this.n_sidebarRevision && this.workspace.view === 'work' && key !== this.workRenderKey) {
@@ -220,8 +223,13 @@ class WorkSidebar {
                 // 실행 환경 줄(예: bash · Linux, WSL · Ubuntu)은 환경이 둘 이상 섞일 때만 터미널을 가르는 정보가 된다.
                 // 모두 같으면 행마다 같은 글자가 반복될 뿐이라 숨기고, 행의 도움말에만 남긴다.
                 this.showEnvironments = new Set(this.workspace.terminals.all.map(terminal => this.workspace.terminalEnvironment(terminal))).size > 1;
+                // 묶음 구성원 폴더와 그 아래 터미널·"Show N more" 줄은 묶음 줄보다 들여 쓴다.
+                let isInRepo = false;
                 for (const row of rows) {
-                    list.append(this.renderRow(row, currentId));
+                    isInRepo = row.kind === 'repo' ? false : row.kind === 'folder' ? Boolean(row.repo) : isInRepo;
+                    const node = this.renderRow(row, currentId);
+                    node.classList.toggle('in-repo', isInRepo);
+                    list.append(node);
                 }
                 if (unassigned.length || backgroundUnassigned.length) {
                     list.append(element('div', 'unassigned-heading', 'Unassigned'));
@@ -233,7 +241,8 @@ class WorkSidebar {
                         row.classList.toggle('is-current', terminal.id === selectedRoot);
                         if (terminal.id === selectedRoot) row.setAttribute('aria-current', 'true');
                         const cwd = this.workspace.cwdCache.get(terminal.id);
-                        row.querySelector('.row-main').title = [this.workspace.programOf(terminal), this.workspace.terminalEnvironment(terminal), cwd && this.workspace.displayPath(cwd), unseen && 'Unseen activity in this group'].filter(Boolean).join(' · ') + ' — double-click to rename';
+                        const n_needInput = this.workspace.innerTabIds(terminal.id).filter(id => this.workspace.agentActivity.stateOf(id).state === 'blocked').length;
+                        row.querySelector('.row-main').title = [this.workspace.programOf(terminal), this.workspace.terminalEnvironment(terminal), cwd && this.workspace.displayPath(cwd), unseen && 'Unseen activity in this group', n_needInput > 0 && `${n_needInput} ${n_needInput === 1 ? 'needs' : 'need'} input`].filter(Boolean).join(' · ') + ' — double-click to rename';
                         // 묶음 안 터미널 수. 작업 폴더 행처럼 보이되, 터미널이 하나뿐이면 행 자체가 그 터미널이라 생략한다.
                         // 좁은 사이드바의 두 줄 배치(프로그램·상태 칸)를 흔들지 않게 이름 옆에 둔다.
                         const n_terminals = this.workspace.innerTabIds(terminal.id).length;
@@ -334,16 +343,35 @@ class WorkSidebar {
         currentId,
     ) {
         let node;
-        if (row.kind === 'folder') {
+        if (row.kind === 'repo') {
+            // 같은 저장소의 워크트리 폴더 묶음 줄. 접기·펴기만 하며 묶음 안 폴더가 각자 메뉴·터미널을 가진다.
+            const memberKeys = this.workspace.displayWorkState.folders.filter(item => item.repo === row.key).map(item => item.key);
+            const ids = Object.entries(this.workspace.state.terminals).filter(([, terminal]) => memberKeys.includes(terminal.folder)).map(([id]) => id);
+            const unseen = ids.some(id => this.workspace.doneIds.has(id));
+            const n_needInput = ids.filter(id => this.workspace.agentActivity.stateOf(id).state === 'blocked').length;
+            node = element('div', `work-row repo-row${row.current ? ' is-current' : ''}${unseen ? ' is-done' : ''}`);
+            const toggle = button([codicon(row.expanded ? 'chevron-down' : 'chevron-right'), codicon('repo'), element('span', 'row-name', row.name)], 'row-main', () => {
+                // 표시값(row.expanded)은 현재 터미널 때문에 자동으로 펼쳐진 상태를 포함하므로 폴더 행처럼 저장값을 뒤집는다.
+                this.workspace.state = model.setRepoExpanded(this.workspace.state, row.key, this.workspace.state.repos?.[row.key]?.expanded === false);
+                this.workspace.save();
+                this.workspace.refreshSoon();
+            });
+            toggle.title = `${row.name} · ${row.n_folders} folders${unseen ? ' · Unseen activity' : ''}${n_needInput ? ` · ${n_needInput} ${n_needInput === 1 ? 'needs' : 'need'} input` : ''}`;
+            if (unseen) toggle.append(element('span', 'unseen-dot'));
+            toggle.setAttribute('aria-expanded', String(row.expanded));
+            node.append(toggle, element('span', 'row-meta', `${row.n_folders} folders`));
+            node.dataset.repo = row.key;
+        } else if (row.kind === 'folder') {
             const folder = this.workspace.displayWorkState.folders.find(item => item.key === row.key);
             const unseen = Object.entries(this.workspace.state.terminals).some(([id, terminal]) => terminal.folder === row.key && this.workspace.doneIds.has(id));
-            node = element('div', `work-row folder-row${row.current ? ' is-current' : ''}${unseen ? ' is-done' : ''}`);
+            node = element('div', `work-row folder-row${row.current ? ' is-current' : ''}${unseen ? ' is-done' : ''}${row.repo ? ' is-repo-member' : ''}`);
             const toggle = button([codicon(row.expanded ? 'chevron-down' : 'chevron-right'), codicon(row.expanded ? 'folder-opened' : 'folder'), element('span', 'row-name', this.workspace.folderName(row.key))], 'row-main', () => {
                 this.workspace.state = model.setExpanded(model.ensureFolder(this.workspace.state, row.key), row.key, !folder.expanded);
                 this.workspace.save();
                 this.workspace.refreshSoon();
             });
-            toggle.title = `${this.workspace.displayPath(row.key)}${unseen ? ' · Unseen activity' : ''}`;
+            const n_needInput = Object.entries(this.workspace.state.terminals).filter(([id, terminal]) => terminal.folder === row.key && this.workspace.agentActivity.stateOf(id).state === 'blocked').length;
+            toggle.title = `${this.workspace.displayPath(row.key)}${unseen ? ' · Unseen activity' : ''}${n_needInput ? ` · ${n_needInput} ${n_needInput === 1 ? 'needs' : 'need'} input` : ''}`;
             if (unseen) toggle.append(element('span', 'unseen-dot'));
             toggle.setAttribute('aria-expanded', String(row.expanded));
             const count = element('span', 'row-meta', `›_ ${row.n_terminals}`);
@@ -405,7 +433,7 @@ class WorkSidebar {
             select.addEventListener('dblclick', () => this.workspace.run(() => this.workspace.renameTerminal(row.id)));
             select.title = `${row.name}${terminal ? ` · ${this.workspace.terminalEnvironment(terminal)}` : ''}${this.workspace.doneIds.has(row.id) ? ' · Unseen activity' : ''} — double-click to rename`;
             const programName = terminal ? this.workspace.programOf(terminal) : '';
-            const state = agent.activityState(this.workspace.activity.get(row.id) ?? agent.idle(), Date.now(), this.workspace.programs.has(row.id) ? agent.isAgent(this.workspace.programs.get(row.id)) : null);
+            const { state, reported } = this.workspace.agentActivity.stateOf(row.id);
             // 기본 이름이 프로그램명과 같으면 한 번만 적는다. 사용자가 바꾼 이름 옆에는 실행 프로그램을 유지한다.
             // 실행 중인 도구의 계정이 행 이름(계정 터미널의 이름)과 다르면 프로그램 옆에 그 계정을 붙인다.
             const accountName = terminal ? this.workspace.rowAccountName(terminal, row.name) : '';
@@ -417,14 +445,9 @@ class WorkSidebar {
             // 앞쪽 프로그램을 아직 모르는 순간(막 연 터미널 등)은 상태를 그리지 않는다. 대부분 곧 셸로 밝혀져
             // 상태 칸이 사라지므로, 잠깐 'Unknown'을 보이면 뜻 없는 글자가 깜빡일 뿐이다.
             if (terminal && state && state !== 'unknown') {
-                const labels = {
-                    working: ['Output', 'Terminal output was detected in the last 3 seconds; this can include prompt redraws. This does not confirm the agent is working.'],
-                    waiting: ['Sent', 'Enter was sent less than 3 seconds ago; no subsequent terminal output has been detected. This does not confirm the agent received a request.'],
-                    quiet: ['Quiet', 'No terminal output in the last 3 seconds. The agent may be waiting for input or still thinking.'],
-                };
-                const [label, detail] = labels[state];
+                const [label, detail] = agent.stateText(state, reported);
                 const status = element('span', `agent-status is-${state}`, label);
-                status.title = `${programName} — ${detail} Estimated from terminal input and output.`;
+                status.title = `${programName} — ${detail} ${reported ? `Reported by ${programName} (program status).` : 'Estimated from terminal input and output.'}`;
                 status.setAttribute('aria-label', `${programName}: ${label}`);
                 node.append(status);
                 node.dataset.agentState = state;

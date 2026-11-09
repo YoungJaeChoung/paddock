@@ -163,7 +163,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_c_review_12_the_window_coming_back_only_opens_the_gate_of_a_wsl_folder() {
+    fn test_the_window_coming_back_only_opens_the_gate_of_a_wsl_folder() {
         let mut native = Gate::new(false);
         native.request(Trigger::Entered, at(0));
         assert!(!native.is_pending(), "the watcher already sees changes of a native folder");
@@ -173,7 +173,7 @@ mod tests {
     }
 
     #[test]
-    fn test_c_review_6_output_memory_drops_closed_tabs_and_treats_a_reused_number_of_a_new_daemon_as_new() {
+    fn test_output_memory_drops_closed_tabs_and_treats_a_reused_number_of_a_new_daemon_as_new() {
         let mut watch = OutputWatch::default();
         let (t0, t1) = (at(0), at(100));
         assert!(watch.observe([("d1", 1, Some(t0)), ("d1", 2, None)]).is_empty(), "first sight is only a baseline");

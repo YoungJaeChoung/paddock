@@ -1,0 +1,55 @@
+# 파일 탭 분리 — PDF·이미지(덩어리 38): 읽기 전용 내용도 분리 창에서 그려지고(쪽·타일 그림), 되돌린 뒤 메모리가 열기 전 수준으로 돌아온다.
+# 실행기가 임시 홈에 prep-fd.sh로 proj-fdp 폴더(sample-3p.pdf, a.png)를 채우고 기본 셸을 PowerShell로 두며 실행 이름은 file-detach-pdf다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send cd "$env:USERPROFILE\proj-fdp"\r
+send echo READY-FDP\r
+waitline READY-FDP @20000
+wait 3000
+mem baseline
+act openpath C:/Temp/pdk-run/home-file-detach-pdf/proj-fdp/sample-3p.pdf
+waitstate kind=pdf state=pdf pages=3 @15000
+act openpath C:/Temp/pdk-run/home-file-detach-pdf/proj-fdp/a.png
+waitstate kind=image state=image size=320x200 @10000
+wait 1500
+mem opened-in-main
+state opened
+# --- 두 탭 모두 분리한다.
+act movetowindow file C:/Temp/pdk-run/home-file-detach-pdf/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+act movetowindow file C:/Temp/pdk-run/home-file-detach-pdf/proj-fdp/a.png
+waitstate a.png place=detached @10000
+waitstate dfile-view file_sample_3p.pdf kind=pdf state=pdf pages=3 @10000
+waitstate dfile-view file_a.png kind=image state=image size=320x200 @10000
+wait 2500
+state detached-both
+shotwin file_sample_3p.pdf detached-pdf
+shotwin file_a.png detached-image
+shot main-detached
+mem detached-open
+# --- 읽기 전용 파일에서 저장 키는 가져가지 않고 아무 일도 없다.
+keywin file_a.png ctrl-s
+wait 500
+waitstate unsaved-files=0 @3000
+# --- 되돌리기: 두 탭이 그 묶음 파일 칸 끝으로 돌아온다(PDF, 이미지 순서).
+act windowclose file C:/Temp/pdk-run/home-file-detach-pdf/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf selected shown place=main @10000
+act windowclose file C:/Temp/pdk-run/home-file-detach-pdf/proj-fdp/a.png
+waitstate a.png selected shown place=main @10000
+waitnostate place=detached @3000
+wait 2000
+state returned
+shot main-returned
+mem returned
+# --- 분리 창에서 × : 저장할 것이 없으니 묻지 않고 닫는다. 칸에서도 사라진다.
+act movetowindow file C:/Temp/pdk-run/home-file-detach-pdf/proj-fdp/a.png
+waitstate a.png place=detached @10000
+act detachedclose file C:/Temp/pdk-run/home-file-detach-pdf/proj-fdp/a.png
+waitnostate image C:/Temp/pdk-run/home-file-detach-pdf/proj-fdp/a.png @5000
+state closed-from-detached
+act closefile
+act closefile
+wait 3000
+mem closed-all
+act quick quitstop
+wait 3000

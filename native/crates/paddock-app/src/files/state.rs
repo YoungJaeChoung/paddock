@@ -1,9 +1,13 @@
 //! 파일 목록의 창 쪽 상태: 지금 보여 주는 폴더, 펼친 폴더, 마지막 읽기 결과(행). 읽기는 `FileService`가 맡는다.
 use std::collections::HashSet;
+use std::sync::mpsc::TryRecvError;
 
-use paddock_core::file_tree::{FileRow, creation_folder, hidden_names, rows};
+use paddock_core::file_tree::{
+    FileRow, ListFocusEvent, creation_folder, hidden_names, list_focus_after, move_expanded, rows,
+};
+use paddock_core::paths::rebased;
 
-use super::{FileService, Request};
+use super::{FileService, Request, STOPPED_NOTICE};
 use crate::settings::Settings;
 
 /// 창이 쥔 파일 목록 상태.
@@ -36,6 +40,12 @@ pub struct FilesState {
     last_read_ms: u128,
     /// 주기 비교(WSL 공유)가 이미 읽어 둔 폴더에서 이름 목록이 달라진 것을 봤다. 폴더 안 변경이 있었다는 신호로 `take_change_seen`이 꺼내 간다.
     change_seen: bool,
+    /// 선택한 행의 경로(행을 누르면 그 행). F2 이름 바꾸기와 Ctrl+V 붙여넣기가 가리키는 행이다.
+    selected_row: Option<String>,
+    /// 목록이 키를 받는 구역이다(행을 누른 뒤 다른 구역을 누르거나 터미널·편집기로 키가 가기 전까지). 키를 받는 쪽(`focus_selected`)을 되돌리는 곳이 거짓으로 만든다.
+    list_focused: bool,
+    /// 읽기 작업 스레드가 오류로 사라졌을 때 목록 자리에 보일 안내. 다음 요청(새로 고침·폴더 바꾸기)이 새 스레드를 시작하며 지운다.
+    failure: Option<String>,
 }
 
 impl Default for FilesState {
@@ -56,6 +66,9 @@ impl Default for FilesState {
             read_off_window: false,
             last_read_ms: 0,
             change_seen: false,
+            selected_row: None,
+            list_focused: false,
+            failure: None,
         }
     }
 }
@@ -94,6 +107,21 @@ impl FilesState {
     /// 주기 비교가 폴더 안 변경을 본 적이 있는지를 꺼내며 지운다. 처음 읽은 결과와 다른 폴더로 옮긴 직후의 결과는 변경이 아니다.
     pub fn take_change_seen(&mut self) -> bool {
         std::mem::take(&mut self.change_seen)
+    }
+
+    /// 읽기 작업 스레드가 멈춰 목록을 읽지 못할 때의 안내.
+    pub fn failure(&self) -> Option<&str> {
+        self.failure.as_deref()
+    }
+
+    /// 감시가 폴더 안 변경을 알린 횟수(서비스가 없으면 0). 열린 파일의 변경 확인이 이 값이 달라졌을 때 바로 돈다.
+    pub fn n_events(&self) -> usize {
+        self.service.as_ref().map_or(0, FileService::n_events)
+    }
+
+    /// 파일 사건으로 지켜보고 있는 폴더(읽기 결과가 왔고 주기 비교로 내려가지 않은 것). 이 폴더 아래 파일의 변경은 사건으로 알 수 있다.
+    pub fn events_folder(&self) -> Option<&str> {
+        self.watched.as_deref().filter(|_| self.is_loaded() && !self.polled)
     }
 
     /// 폴더를 파일 사건 대신 주기 비교로 지켜보는 중인지(마지막 읽기 기준).
@@ -138,6 +166,56 @@ impl FilesState {
                 service.set_paused(self.paused);
             }
         }
+    }
+
+    /// 행을 눌렀다: 그 행을 선택하고 목록이 키를 받는다.
+    pub fn select_row(
+        &mut self,
+        path: &str,
+    ) {
+        self.selected_row = Some(path.to_string());
+        self.focus_event(ListFocusEvent::RowPressed);
+    }
+
+    /// 목록이 키를 받는지를 바꾸는 사건을 알린다. 규칙은 `list_focus_after` 하나다.
+    pub fn focus_event(
+        &mut self,
+        event: ListFocusEvent,
+    ) {
+        self.list_focused = list_focus_after(event);
+    }
+
+    /// 목록이 키를 받고 있는지.
+    pub fn list_focused(&self) -> bool {
+        self.list_focused
+    }
+
+    /// 지금 보이는 선택한 행의 경로. 선택한 행이 없거나 목록에서 사라졌으면 None이다.
+    pub fn selected_row(&self) -> Option<&str> {
+        self.selected_row
+            .as_deref()
+            .filter(|path| self.rows.iter().any(|row| row.path == *path && row.notice.is_none()))
+    }
+
+    /// 키를 받고 있는 선택 행(경로, 폴더인지). F2·Ctrl+V가 가리키는 대상이다.
+    pub fn focused_entry(&self) -> Option<(String, bool)> {
+        self.selected_row()
+            .filter(|_| self.list_focused())
+            .and_then(|path| self.rows.iter().find(|row| row.path == path).map(|row| (row.path.clone(), row.is_dir)))
+    }
+
+    /// 이름이 `from`에서 `to`로 바뀐 뒤: 선택 행과 펼친 폴더 기억을 새 경로로 옮기고 읽은 목록을 버려 다시 읽는다.
+    pub fn renamed(
+        &mut self,
+        from: &str,
+        to: &str,
+    ) {
+        let (expanded, last) = move_expanded(&self.expanded_dirs, self.last_expanded.as_deref(), from, to);
+        self.expanded_dirs = expanded;
+        self.last_expanded = last;
+        self.selected_row =
+            self.selected_row.as_deref().map(|path| rebased(from, to, path).unwrap_or_else(|| path.to_string()));
+        self.send(true);
     }
 
     /// 폴더 행을 접거나 펼친다. 펼치면 그 폴더가 새 파일·새 폴더의 기본 자리가 된다.
@@ -185,18 +263,33 @@ impl FilesState {
     /// 도착한 읽기 결과를 반영한다. 행이 바뀌었으면 true다.
     pub fn poll(&mut self) -> bool {
         let mut changed = false;
-        while let Some(snapshot) = self.service.as_ref().and_then(FileService::try_recv) {
-            if self.watched.as_deref() == Some(snapshot.folder.as_str()) {
-                let next = rows(&snapshot.directory);
-                let was_loaded = self.loaded_folder.as_deref() == Some(snapshot.folder.as_str());
-                self.change_seen |= snapshot.polled && was_loaded && next != self.rows;
-                self.rows = next;
-                self.loaded_folder = Some(snapshot.folder);
-                self.polled = snapshot.polled;
-                self.last_read_ms = snapshot.elapsed.as_millis();
-                self.n_listings = snapshot.n_listings;
-                self.read_off_window = snapshot.read_thread != std::thread::current().id();
-                changed = true;
+        let mut drained = false;
+        while !drained && let Some(service) = self.service.as_ref() {
+            match service.try_recv() {
+                Ok(snapshot) => {
+                    if self.watched.as_deref() == Some(snapshot.folder.as_str()) {
+                        let next = rows(&snapshot.directory);
+                        let was_loaded = self.loaded_folder.as_deref() == Some(snapshot.folder.as_str());
+                        self.change_seen |= snapshot.polled && was_loaded && next != self.rows;
+                        self.rows = next;
+                        self.loaded_folder = Some(snapshot.folder);
+                        self.polled = snapshot.polled;
+                        self.last_read_ms = snapshot.elapsed.as_millis();
+                        self.n_listings = snapshot.n_listings;
+                        self.read_off_window = snapshot.read_thread != std::thread::current().id();
+                        changed = true;
+                    }
+                }
+                Err(TryRecvError::Empty) => drained = true,
+                // 작업 스레드가 사라졌다(오류로 멈췄거나 만들지 못함): 읽는 중으로 두지 않고 안내를 보인다.
+                Err(TryRecvError::Disconnected) => {
+                    self.service = None;
+                    self.rows.clear();
+                    self.loaded_folder = None;
+                    self.failure = Some(STOPPED_NOTICE.to_string());
+                    changed = true;
+                    drained = true;
+                }
             }
         }
         changed
@@ -206,6 +299,7 @@ impl FilesState {
         &mut self,
         force: bool,
     ) {
+        self.failure = None;
         let request = Request {
             folder: self.watched.clone(),
             expanded: self.expanded_dirs.clone(),
@@ -302,5 +396,65 @@ mod tests {
         files.toggle_dir("/p/lib");
         assert_eq!(files.last_expanded, None);
         assert!(files.expanded_dirs.is_empty());
+    }
+
+    #[test]
+    fn test_a_files_thread_that_died_shows_a_notice_and_the_next_request_starts_a_new_one() {
+        let _home = crate::test_support::TempHome::new();
+        let dir = tempfile::tempdir().unwrap();
+        let mut files = FilesState::default();
+        files.show(Some(dir.path().to_string_lossy().to_string()), true);
+        files.service = Some(FileService::stopped());
+        assert!(files.poll(), "the loss is a visible change");
+        assert_eq!(files.failure(), Some(STOPPED_NOTICE));
+        assert!(!files.is_loaded() && files.rows().is_empty());
+        assert!(!files.poll(), "the loss is reported once");
+        files.refresh();
+        assert_eq!(files.failure(), None, "a new request clears the notice");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !files.is_loaded() && std::time::Instant::now() < deadline {
+            files.poll();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(files.is_loaded(), "the new thread reads the folder");
+    }
+
+    #[test]
+    fn test_c_d70_f2_goes_to_the_pty_when_the_list_has_no_focus() {
+        // 행을 누르면 목록이 키를 받고, 키를 돌려주면(`blur_list`) 선택은 남되 받지 않는다.
+        let _home = crate::test_support::TempHome::new();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "a").unwrap();
+        let folder = dir.path().to_string_lossy().to_string();
+        let mut files = FilesState::default();
+        files.show(Some(folder.clone()), true);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !files.is_loaded() && std::time::Instant::now() < deadline {
+            files.poll();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let row = files.rows().first().map(|row| row.path.clone()).expect("a row");
+        assert_eq!(files.focused_entry(), None, "no row is selected yet, so F2 and Ctrl+V go to the terminal");
+        files.select_row(&row);
+        assert_eq!(files.focused_entry(), Some((row.clone(), false)));
+        files.focus_event(ListFocusEvent::KeysReturned);
+        assert_eq!(files.focused_entry(), None, "the keys went back to the terminal");
+        assert_eq!(files.selected_row(), Some(row.as_str()), "the selection is remembered");
+        files.select_row("/not/a/row");
+        assert_eq!(files.focused_entry(), None, "a row that is not in the list is not a target");
+    }
+
+    #[test]
+    fn test_c_d70_renaming_a_folder_moves_the_selection_and_the_open_folders() {
+        let _home = crate::test_support::TempHome::new();
+        let mut files = FilesState::default();
+        files.show(Some("/p".to_string()), true);
+        files.toggle_dir("/p/src");
+        files.toggle_dir("/p/src/deep");
+        files.select_row("/p/src/deep");
+        files.renamed("/p/src", "/p/lib");
+        assert!(files.expanded_dirs.contains("/p/lib") && files.expanded_dirs.contains("/p/lib/deep"));
+        assert_eq!(files.last_expanded.as_deref(), Some("/p/lib/deep"));
+        assert_eq!(files.selected_row, Some("/p/lib/deep".to_string()));
     }
 }

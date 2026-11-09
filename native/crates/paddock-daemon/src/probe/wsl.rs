@@ -10,7 +10,7 @@ use std::sync::mpsc::channel;
 use std::time::Duration;
 
 use paddock_core::agent_account::Runtime;
-use paddock_core::wsl_probe::{WslTerminal, parse, script};
+use paddock_core::wsl_probe::{STOP_SCRIPT, WslTerminal, memory_script, parse, parse_memory, script};
 
 use super::{ProbeTarget, Reading};
 use crate::log;
@@ -56,19 +56,36 @@ fn reading_of(terminal: &WslTerminal) -> Reading {
         distribution: terminal.distribution.clone(),
         pid: terminal.pid.trim().parse().ok(),
         started_at: None,
+        start_mark: terminal.start_ticks.trim().parse().ok(),
         session_record: Some(terminal.session_record.clone()).filter(|record| !record.is_empty()),
     }
 }
 
-/// 배포판 안에서 스크립트를 실행해 표준 출력을 돌려준다. 실행하지 못하거나 시간이 지나면 None이다.
+/// 메모리 요청이 `wsl.exe`가 끝나기를 기다리는 최대 시간.
+const MEMORY_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// 배포판 안에서 메모리 스크립트를 실행해 읽은 WSL 메모리. 읽지 못하면 None이다.
+pub(crate) fn read_memory(distribution: Option<&str>) -> Option<paddock_core::wsl_probe::ParsedMemory> {
+    run_script(distribution, &memory_script(), MEMORY_TIMEOUT).and_then(|output| parse_memory(&output))
+}
+
+/// 배포판 안에서 터미널 조사 스크립트를 실행해 표준 출력을 돌려준다. 실행하지 못하거나 시간이 지나면 None이다.
 fn run(distribution: Option<&str>) -> Option<String> {
     log::event(&format!("probe: wsl.exe read (distribution {})", distribution.unwrap_or("default")));
+    run_script(distribution, &script(), WSL_TIMEOUT)
+}
+
+fn run_script(
+    distribution: Option<&str>,
+    body: &str,
+    timeout: Duration,
+) -> Option<String> {
     let mut command = Command::new("wsl.exe");
     if let Some(distribution) = distribution {
         command.args(["-d", distribution]);
     }
     command
-        .args(["-e", "sh", "-c", &script()])
+        .args(["-e", "sh", "-c", body])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -81,7 +98,7 @@ fn run(distribution: Option<&str>) -> Option<String> {
         let _ = stdout.read_to_end(&mut bytes);
         let _ = sender.send(bytes);
     });
-    match receiver.recv_timeout(WSL_TIMEOUT) {
+    match receiver.recv_timeout(timeout) {
         Ok(bytes) => {
             let _ = child.wait();
             Some(String::from_utf8_lossy(&bytes).into_owned())
@@ -92,5 +109,31 @@ fn run(distribution: Option<&str>) -> Option<String> {
             let _ = child.wait();
             None
         }
+    }
+}
+
+/// 배포판 안의 에이전트 프로세스에 SIGTERM을 보낸다. 표지가 다르거나 신호를 보내지 못하면 이유 문장이다.
+pub(crate) fn stop_process(
+    distribution: Option<&str>,
+    pid: u32,
+    marker: &str,
+    start_mark: Option<u64>,
+) -> Result<(), String> {
+    let mut command = Command::new("wsl.exe");
+    if let Some(distribution) = distribution {
+        command.args(["-d", distribution]);
+    }
+    let status = command
+        .args(["-e", "sh", "-c", STOP_SCRIPT, "paddock-stop", &pid.to_string(), marker])
+        .arg(start_mark.map(|mark| mark.to_string()).unwrap_or_default())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    match status {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) if status.code() == Some(3) => Err(crate::stop::CHANGED.to_string()),
+        _ => Err(crate::stop::NOT_STOPPED.to_string()),
     }
 }

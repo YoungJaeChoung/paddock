@@ -34,5 +34,10 @@ pub fn build_diff(
 
 /// 비교 보기 그리기. 읽기 전용이다.
 pub fn diff_view(body: &DiffBody) -> impl IntoElement {
-    div().size_full().child(Diff::new(&body.state).h(relative(1.0)))
+    diff_view_of(&body.state)
+}
+
+/// 비교 보기 상태 `state`를 그린다(파일 분리 창은 `DiffBody` 없이 상태 핸들만 쥔다).
+pub fn diff_view_of(state: &Entity<DiffState>) -> impl IntoElement {
+    div().size_full().child(Diff::new(state).h(relative(1.0)))
 }

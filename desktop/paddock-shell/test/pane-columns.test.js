@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { paneColumns, groupTabsByColumn, columnSpans, orderTabsByPane } = require('../pane-columns');
+const { paneColumns, groupTabsByColumn, columnSpans, orderTabsByPane, attachedTabIds } = require('../pane-columns');
 
 test('PC01: side-by-side panes form separate columns ordered from the left', () => {
     const columns = paneColumns([{ key: 'b', left: 500, top: 0 }, { key: 'a', left: 0, top: 0 }]);
@@ -43,4 +43,12 @@ test('tabs follow the order they sit in their panes, with paneless tabs last', (
     assert.deepEqual(orderTabsByPane(['a', 'b', 'c'], id => places[id]), ['b', 'a', 'c']);
     assert.deepEqual(orderTabsByPane(['d', 'a', 'b'], id => places[id]), ['b', 'a', 'd']);
     assert.deepEqual(orderTabsByPane(['w', 'a', 'b'], id => places[id]), ['b', 'a', 'w']);
+});
+
+test('PC07: while split, tabs moved to another window leave the strip; without a split they stay as the way back', () => {
+    const detached = id => id === 'w';
+    assert.deepEqual(attachedTabIds(['t1', 'w', 't2'], true, detached), ['t1', 't2']);
+    assert.deepEqual(attachedTabIds(['t1', 'w', 't2'], false, detached), ['t1', 'w', 't2']);
+    assert.deepEqual(attachedTabIds(['w'], true, detached), []);
+    assert.deepEqual(attachedTabIds([], true, detached), []);
 });

@@ -7,6 +7,8 @@ use std::collections::HashSet;
 
 use serde_json::{Value, json};
 
+use crate::tab_drop::{DropMode, is_same_place, move_index};
+
 /// 칸이 나뉜 방향.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Orientation {
@@ -30,6 +32,30 @@ impl Orientation {
             Some("vertical") => Some(Self::Vertical),
             _ => None,
         }
+    }
+}
+
+/// 칸 가장자리 넷. 탭을 가장자리에 놓아 칸을 나눌 때 새 칸이 놓일 쪽이다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Side {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+impl Side {
+    /// 이쪽에 새 칸을 두면 칸들이 늘어서는 방향. 왼쪽·오른쪽은 옆으로, 위·아래는 위아래로 나뉜다.
+    pub fn orientation(self) -> Orientation {
+        match self {
+            Self::Left | Self::Right => Orientation::Horizontal,
+            Self::Top | Self::Bottom => Orientation::Vertical,
+        }
+    }
+
+    /// 새 칸이 기준 칸보다 앞(왼쪽·위)에 놓이는지.
+    pub fn is_before(self) -> bool {
+        matches!(self, Self::Left | Self::Top)
     }
 }
 
@@ -216,6 +242,46 @@ impl Layout {
         if self.includes(anchor) { self.added_in_pane_of(anchor, id) } else { Self::with_terminal(Some(self), id) }
     }
 
+    /// 두 터미널이 같은 칸에 들어 있는지.
+    fn holds_together(
+        &self,
+        first: u32,
+        second: u32,
+    ) -> bool {
+        match self {
+            Self::Pane { tabs, .. } => tabs.contains(&first) && tabs.contains(&second),
+            Self::Split { children, .. } => children.iter().any(|child| child.holds_together(first, second)),
+        }
+    }
+
+    /// `holds_together`인 칸에서 `id`를 `reference` 앞·뒤로 옮기고 선택한다. 이미 그 자리면 그대로다.
+    fn reordered(
+        &self,
+        id: u32,
+        reference: u32,
+        before: bool,
+    ) -> Layout {
+        match self {
+            Self::Pane { tabs, selected } if tabs.contains(&id) && tabs.contains(&reference) => {
+                let mode = if before { DropMode::TabBefore } else { DropMode::TabAfter };
+                if is_same_place(tabs, id, mode, reference) {
+                    Self::Pane { tabs: tabs.clone(), selected: *selected }
+                } else {
+                    let mut order: Vec<u32> = tabs.iter().copied().filter(|other| *other != id).collect();
+                    let at = move_index(tabs, id, mode, reference).unwrap_or(order.len());
+                    order.insert(at, id);
+                    Self::Pane { tabs: order, selected: at }
+                }
+            }
+            Self::Pane { .. } => self.clone(),
+            Self::Split { orientation, children, sizes } => Self::Split {
+                orientation: *orientation,
+                children: children.iter().map(|child| child.reordered(id, reference, before)).collect(),
+                sizes: sizes.clone(),
+            },
+        }
+    }
+
     fn added_in_pane_of(
         &self,
         anchor: u32,
@@ -323,21 +389,24 @@ impl Layout {
             self.clone()
         } else {
             let without = self.prune(|other| other != id).unwrap_or_else(|| self.clone());
-            let inserted = without.inserted_pane(anchor, id, orientation);
+            let inserted = without.inserted_pane(anchor, id, orientation, false);
             inserted.balance_new_split(id, orientation)
         }
     }
 
+    /// `anchor`가 든 칸 옆에 `id`만 든 새 칸을 끼운다. `before`면 앵커 칸의 앞(왼쪽·위), 아니면 뒤(오른쪽·아래)다.
     fn inserted_pane(
         &self,
         anchor: u32,
         id: u32,
         orientation: Orientation,
+        before: bool,
     ) -> Layout {
         let new_pane = Self::Pane { tabs: vec![id], selected: 0 };
         match self {
             Self::Pane { tabs, .. } if tabs.contains(&anchor) => {
-                Self::Split { orientation, children: vec![self.clone(), new_pane], sizes: vec![0.5, 0.5] }
+                let children = if before { vec![new_pane, self.clone()] } else { vec![self.clone(), new_pane] };
+                Self::Split { orientation, children, sizes: vec![0.5, 0.5] }
             }
             Self::Pane { .. } => self.clone(),
             Self::Split { orientation: own, children, sizes } => {
@@ -348,17 +417,154 @@ impl Layout {
                     Some(index) if *own == orientation => {
                         let mut children = children.clone();
                         let mut sizes = sizes.clone();
-                        children.insert(index + 1, new_pane);
-                        sizes.insert(index + 1, 1.0);
+                        let at = if before { index } else { index + 1 };
+                        children.insert(at, new_pane);
+                        sizes.insert(at, 1.0);
                         Self::Split { orientation: *own, children, sizes }
                     }
                     _ => Self::Split {
                         orientation: *own,
-                        children: children.iter().map(|child| child.inserted_pane(anchor, id, orientation)).collect(),
+                        children: children
+                            .iter()
+                            .map(|child| child.inserted_pane(anchor, id, orientation, before))
+                            .collect(),
                         sizes: sizes.clone(),
                     },
                 }
             }
+        }
+    }
+
+    /// `Show to the Side`: `id`를 제 칸에서 빼고 `reference`가 든 칸 오른쪽에 `id`만 든 새 칸으로 옮긴 배치.
+    ///
+    /// 터미널은 새로 만들지 않고 칸만 옮기므로 실행 중인 프로그램과 출력이 그대로다. `id`와 `reference`가 같거나 둘 중 하나가 배치에 없으면 None이다.
+    /// 칸 비율은 `split`처럼 새 칸이 든 분할의 칸들이 같아진다.
+    ///
+    /// Examples
+    /// --------
+    /// | 배치                      | 호출                  | 결과                          |
+    /// |---------------------------|-----------------------|-------------------------------|
+    /// | 칸 [1, 2]                 | moved_beside(2, 1)    | 가로 [칸 [1], 칸 [2]]         |
+    /// | 가로 [칸 [1], 칸 [2, 3]]  | moved_beside(3, 1)    | 가로 [칸 [1], 칸 [3], 칸 [2]] |
+    /// | 칸 [1, 2]                 | moved_beside(1, 1)    | None                          |
+    /// | 칸 [1, 2]                 | moved_beside(2, 9)    | None                          |
+    pub fn moved_beside(
+        &self,
+        id: u32,
+        reference: u32,
+    ) -> Option<Layout> {
+        if id != reference && self.includes(id) && self.includes(reference) {
+            Some(self.split(reference, id, Orientation::Horizontal))
+        } else {
+            None
+        }
+    }
+
+    /// `ids`에 든 터미널을 뺀 배치. 분리 창으로 간 터미널처럼 배치에서만 빠지는 터미널을 걸러 낼 때 쓴다.
+    /// 칸·분할이 비면 `prune`처럼 사라지고, 남은 터미널이 없으면 None이다.
+    pub fn without(
+        &self,
+        ids: &[u32],
+    ) -> Option<Layout> {
+        self.prune(|id| !ids.contains(&id))
+    }
+
+    /// `id`를 제 칸에서 빼 `reference`가 든 칸의 끝에 탭으로 붙이고 선택한 배치. `id`가 배치에 없어도 된다(분리 창에서 돌아오는 탭).
+    ///
+    /// `reference`가 배치에 없거나 `id`와 같거나, `id`가 이미 `reference`와 같은 칸에 있으면 None이다(바뀌는 것이 없다).
+    ///
+    /// Examples
+    /// --------
+    /// | 배치                      | 호출            | 결과                          |
+    /// |---------------------------|-----------------|-------------------------------|
+    /// | 가로 [칸 [1, 2], 칸 [3]]  | moved_into(2, 3)| 가로 [칸 [1], 칸 [3, 2] 선택 2] |
+    /// | 가로 [칸 [1], 칸 [3]]     | moved_into(1, 3)| 칸 [3, 1]                     |
+    /// | 칸 [1, 2]                 | moved_into(1, 2)| None (같은 칸)                |
+    pub fn moved_into(
+        &self,
+        id: u32,
+        reference: u32,
+    ) -> Option<Layout> {
+        if id == reference || !self.includes(reference) || self.holds_together(id, reference) {
+            None
+        } else {
+            self.without(&[id]).map(|rest| rest.added_in_pane_of(reference, id))
+        }
+    }
+
+    /// `id`를 제 칸에서 빼 `reference`가 든 칸의 `side`쪽에 `id`만 든 새 칸으로 둔 배치. `id`가 배치에 없어도 된다.
+    ///
+    /// 새 칸이 든 분할의 칸들은 같은 크기가 되고(`split`과 같다), 그 밖의 분할 비율과 선택 탭은 그대로다.
+    /// `reference`가 배치에 없거나 `id`와 같으면 None이다.
+    ///
+    /// Examples
+    /// --------
+    /// | 배치      | 호출                       | 결과                        |
+    /// |-----------|----------------------------|-----------------------------|
+    /// | 칸 [1, 2] | moved_split(2, 1, Right)   | 가로 [칸 [1], 칸 [2]]       |
+    /// | 칸 [1, 2] | moved_split(2, 1, Left)    | 가로 [칸 [2], 칸 [1]]       |
+    /// | 칸 [1, 2] | moved_split(2, 1, Bottom)  | 세로 [칸 [1], 칸 [2]]       |
+    pub fn moved_split(
+        &self,
+        id: u32,
+        reference: u32,
+        side: Side,
+    ) -> Option<Layout> {
+        if id == reference || !self.includes(reference) {
+            None
+        } else {
+            let orientation = side.orientation();
+            let without = self.without(&[id]).unwrap_or_else(|| self.clone());
+            Some(without.inserted_pane(reference, id, orientation, side.is_before()).balance_new_split(id, orientation))
+        }
+    }
+
+    /// 같은 칸 안에서 `id`를 `reference`의 앞(`before`)이나 뒤로 옮기고 선택한 배치. 둘이 같은 칸에 있지 않으면 None이다.
+    /// 이미 그 자리면 배치를 그대로 돌려준다(선택도 건드리지 않는다).
+    ///
+    /// Examples
+    /// --------
+    /// | 칸        | 호출                        | 결과       |
+    /// |-----------|-----------------------------|------------|
+    /// | 칸 [1,2,3]| moved_within(1, 3, true)    | 칸 [2,1,3] |
+    /// | 칸 [1,2,3]| moved_within(3, 1, true)    | 칸 [3,1,2] |
+    /// | 칸 [1,2,3]| moved_within(1, 2, true)    | 그대로     |
+    pub fn moved_within(
+        &self,
+        id: u32,
+        reference: u32,
+        before: bool,
+    ) -> Option<Layout> {
+        if self.holds_together(id, reference) { Some(self.reordered(id, reference, before)) } else { None }
+    }
+
+    /// `Show to the Side`가 기준으로 삼을 터미널: `preferred`(지금 선택한 터미널)가 `id`가 아니고 배치에 있으면 그것이고,
+    /// 아니면 `id`가 아닌 터미널을 고른 첫 칸(왼쪽·위부터)의 선택된 탭이다. 그런 칸이 없으면 None이다.
+    ///
+    /// Examples
+    /// --------
+    /// | 배치                      | id | preferred | 결과 |
+    /// |---------------------------|----|-----------|------|
+    /// | 가로 [칸 [1], 칸 [2]]     | 2  | 1         | 1    |
+    /// | 가로 [칸 [1], 칸 [2]]     | 2  | 2         | 1    |
+    /// | 칸 [1]                    | 1  | 1         | None |
+    pub fn beside_reference(
+        &self,
+        id: u32,
+        preferred: Option<u32>,
+    ) -> Option<u32> {
+        preferred
+            .filter(|chosen| *chosen != id && self.includes(*chosen))
+            .or_else(|| self.pane_selections().into_iter().find(|chosen| *chosen != id))
+    }
+
+    /// 칸마다 선택된 탭의 터미널(왼쪽·위부터).
+    fn pane_selections(&self) -> Vec<u32> {
+        match self {
+            Self::Pane { tabs, selected } => {
+                tabs.get((*selected).min(tabs.len().saturating_sub(1))).copied().into_iter().collect()
+            }
+            Self::Split { children, .. } => children.iter().flat_map(Self::pane_selections).collect(),
         }
     }
 
@@ -1014,5 +1220,131 @@ mod tests {
         assert_eq!(area.sizes_at(&[1]), Some(vec![1.0, 3.0]));
         assert_eq!(area.sizes_at(&[0]), None);
         assert_eq!(area.sizes_at(&[4]), None);
+    }
+
+    #[test]
+    fn test_c_sync_1_moved_beside_takes_the_terminal_out_of_its_pane_into_a_new_pane_right_of_the_reference() {
+        let layout = pane(&[1, 2], 0);
+        assert_eq!(
+            layout.moved_beside(2, 1),
+            Some(split_sized(vec![pane(&[1], 0), pane(&[2], 0)], &[0.5, 0.5], Orientation::Horizontal))
+        );
+        // 다른 칸의 탭이어도 제 칸에서 빠지고, 같은 방향 분할이면 형제 칸으로 끼어 모든 칸이 같아진다.
+        let two = row(vec![pane(&[1], 0), pane(&[2, 3], 1)]);
+        let moved = two.moved_beside(3, 1).unwrap();
+        assert_eq!(moved.terminal_ids(), vec![1, 3, 2]);
+        assert_eq!(
+            moved,
+            split_sized(vec![pane(&[1], 0), pane(&[3], 0), pane(&[2], 0)], &[1.0 / 3.0; 3], Orientation::Horizontal)
+        );
+    }
+
+    #[test]
+    fn test_c_sync_2_moved_beside_keeps_every_terminal_and_is_none_for_the_same_or_missing_terminals() {
+        let layout = column(vec![pane(&[1, 2], 1), pane(&[3], 0)]);
+        for (id, reference) in [(1, 1), (9, 1), (1, 9)] {
+            assert_eq!(layout.moved_beside(id, reference), None, "{id} beside {reference}");
+        }
+        let moved = layout.moved_beside(3, 1).unwrap();
+        let mut ids = moved.terminal_ids();
+        ids.sort_unstable();
+        assert_eq!(ids, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_c_sync_3_the_reference_is_the_selected_terminal_or_else_the_first_other_panes_selected_tab() {
+        let layout = row(vec![pane(&[1, 2], 1), pane(&[3], 0)]);
+        assert_eq!(layout.beside_reference(3, Some(1)), Some(1));
+        assert_eq!(layout.beside_reference(3, Some(3)), Some(2), "the selected terminal is the one being moved");
+        assert_eq!(layout.beside_reference(3, None), Some(2));
+        assert_eq!(layout.beside_reference(3, Some(9)), Some(2), "a terminal outside the layout is not a reference");
+        assert_eq!(pane(&[1], 0).beside_reference(1, Some(1)), None);
+    }
+
+    #[test]
+    fn test_moved_split_puts_the_terminal_in_a_new_pane_on_the_chosen_side_in_both_orientations() {
+        let one_pane = pane(&[1, 2, 3], 0);
+        let right = one_pane.moved_split(2, 1, Side::Right).unwrap();
+        assert_eq!(right, split_sized(vec![pane(&[1, 3], 0), pane(&[2], 0)], &[0.5, 0.5], Orientation::Horizontal));
+        let left = one_pane.moved_split(2, 1, Side::Left).unwrap();
+        assert_eq!(left, split_sized(vec![pane(&[2], 0), pane(&[1, 3], 0)], &[0.5, 0.5], Orientation::Horizontal));
+        let bottom = one_pane.moved_split(2, 1, Side::Bottom).unwrap();
+        assert_eq!(bottom, split_sized(vec![pane(&[1, 3], 0), pane(&[2], 0)], &[0.5, 0.5], Orientation::Vertical));
+        let top = one_pane.moved_split(2, 1, Side::Top).unwrap();
+        assert_eq!(top, split_sized(vec![pane(&[2], 0), pane(&[1, 3], 0)], &[0.5, 0.5], Orientation::Vertical));
+        // 기준 칸의 부모가 같은 방향 분할이면 형제 칸으로 끼워 모든 칸이 같은 폭을 갖는다.
+        let beside = row(vec![pane(&[1], 0), pane(&[2, 3], 0)]).moved_split(3, 2, Side::Left).unwrap();
+        assert_eq!(beside, row(vec![pane(&[1], 0), pane(&[3], 0), pane(&[2], 0)]).with_sizes(&[], vec![1.0 / 3.0; 3]));
+    }
+
+    #[test]
+    fn test_moved_split_accepts_a_terminal_that_is_not_in_the_layout_and_refuses_the_same_or_a_missing_reference() {
+        // 분리 창에서 돌아오는 터미널은 배치에 없다.
+        let back = pane(&[1, 2], 0).moved_split(9, 2, Side::Right).unwrap();
+        assert_eq!(back.terminal_ids(), [1, 2, 9]);
+        assert_eq!(back, split_sized(vec![pane(&[1, 2], 0), pane(&[9], 0)], &[0.5, 0.5], Orientation::Horizontal));
+        assert_eq!(pane(&[1, 2], 0).moved_split(2, 2, Side::Right), None);
+        assert_eq!(pane(&[1, 2], 0).moved_split(2, 7, Side::Right), None);
+    }
+
+    #[test]
+    fn test_moved_into_appends_to_the_reference_pane_selects_it_and_drops_the_emptied_pane() {
+        let layout = row(vec![pane(&[1, 2], 0), pane(&[3], 0)]);
+        assert_eq!(layout.moved_into(2, 3).unwrap(), row(vec![pane(&[1], 0), pane(&[3, 2], 1)]));
+        // 혼자 있던 칸은 비어 사라지고 분할은 남은 칸 하나가 된다.
+        let alone = row(vec![pane(&[1], 0), pane(&[3], 0)]);
+        assert_eq!(alone.moved_into(1, 3).unwrap(), pane(&[3, 1], 1));
+        // 배치에 없는 터미널도 기준 칸 끝에 붙는다.
+        assert_eq!(pane(&[1, 2], 0).moved_into(9, 1).unwrap(), pane(&[1, 2, 9], 2));
+    }
+
+    #[test]
+    fn test_moved_into_the_own_pane_or_a_missing_reference_changes_nothing() {
+        let layout = row(vec![pane(&[1, 2], 0), pane(&[3], 0)]);
+        assert_eq!(layout.moved_into(1, 2), None);
+        assert_eq!(layout.moved_into(2, 2), None);
+        assert_eq!(layout.moved_into(2, 9), None);
+        assert_eq!(layout.moved_within(1, 3, true), None);
+    }
+
+    #[test]
+    fn test_moved_within_inserts_before_or_after_the_reference_in_both_directions_and_selects_the_moved_tab() {
+        let layout = pane(&[1, 2, 3], 0);
+        assert_eq!(layout.moved_within(1, 3, true).unwrap(), pane(&[2, 1, 3], 1));
+        assert_eq!(layout.moved_within(1, 2, false).unwrap(), pane(&[2, 1, 3], 1));
+        assert_eq!(layout.moved_within(1, 3, false).unwrap(), pane(&[2, 3, 1], 2));
+        assert_eq!(layout.moved_within(3, 1, true).unwrap(), pane(&[3, 1, 2], 0));
+        assert_eq!(pane(&[1, 2, 3, 4], 0).moved_within(4, 1, false).unwrap(), pane(&[1, 4, 2, 3], 1));
+    }
+
+    #[test]
+    fn test_moved_within_the_place_the_tab_already_holds_returns_the_layout_unchanged() {
+        let layout = pane(&[1, 2, 3], 2);
+        assert_eq!(layout.moved_within(1, 2, true), Some(layout.clone()));
+        assert_eq!(layout.moved_within(3, 2, false), Some(layout.clone()));
+        assert_eq!(layout.moved_within(2, 2, true), Some(layout.clone()));
+    }
+
+    #[test]
+    fn test_the_new_moves_keep_the_ratios_of_the_other_splits() {
+        let inner = split_sized(vec![pane(&[1, 2], 0), pane(&[4], 0)], &[0.25, 0.75], Orientation::Vertical);
+        let layout = split_sized(vec![inner, pane(&[3], 0)], &[0.3, 0.7], Orientation::Horizontal);
+        let split_out = layout.moved_split(2, 1, Side::Right).unwrap();
+        assert_eq!(sizes_of(&split_out), [0.3, 0.7]);
+        assert_eq!(sizes_of(&children_of(&split_out)[0]), [0.25, 0.75]);
+        let into = layout.moved_into(1, 3).unwrap();
+        assert_eq!(sizes_of(&into), [0.3, 0.7]);
+        let within = layout.moved_within(1, 2, false).unwrap();
+        assert_eq!(sizes_of(&within), [0.3, 0.7]);
+        assert_eq!(sizes_of(&children_of(&within)[0]), [0.25, 0.75]);
+    }
+
+    #[test]
+    fn test_without_drops_the_listed_terminals_like_a_prune_and_is_none_when_nothing_is_left() {
+        let layout = row(vec![pane(&[1, 2], 1), pane(&[3], 0)]);
+        assert_eq!(layout.without(&[3]).unwrap(), pane(&[1, 2], 1));
+        assert_eq!(layout.without(&[2]).unwrap(), row(vec![pane(&[1], 0), pane(&[3], 0)]));
+        assert_eq!(layout.without(&[1, 2, 3]), None);
+        assert_eq!(layout.without(&[]).unwrap(), layout);
     }
 }

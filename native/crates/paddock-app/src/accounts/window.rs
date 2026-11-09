@@ -58,20 +58,29 @@ impl WorkWindow {
     }
 
     /// 계정 `id`의 터미널을 `place`의 폴더에서 열기 위한 요청. 폴더는 작업 폴더이거나, 아니면 선택한 터미널의 현재 폴더이거나 홈이다.
-    fn account_terminal_request(
+    pub(crate) fn account_terminal_request(
         &self,
         id: &str,
         place: &NewPlace,
+    ) -> Result<crate::terminal::session::Want, String> {
+        let folder = match place {
+            NewPlace::Folder(key) => Some(key.clone()),
+            NewPlace::Group(_) | NewPlace::NewGroup => self.selected_terminal_cwd(),
+        };
+        self.account_terminal_request_at(id, folder)
+    }
+
+    /// 계정 `id`의 터미널을 `folder`(없으면 홈)에서 열기 위한 요청.
+    pub(crate) fn account_terminal_request_at(
+        &self,
+        id: &str,
+        folder: Option<String>,
     ) -> Result<crate::terminal::session::Want, String> {
         let profile = self
             .registered_accounts()
             .into_iter()
             .find(|profile| profile.id == id)
             .ok_or_else(|| "This account is no longer available. Refresh the account list.".to_string())?;
-        let folder = match place {
-            NewPlace::Folder(key) => Some(key.clone()),
-            NewPlace::Group(_) | NewPlace::NewGroup => self.selected_terminal_cwd(),
-        };
         account_want(
             &profile,
             folder.as_deref(),

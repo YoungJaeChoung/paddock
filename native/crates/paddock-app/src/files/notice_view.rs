@@ -1,6 +1,9 @@
 //! 안내 탭: 볼 수 없는 파일의 이름·크기·문구와 동작 단추. 가운데에 세로로 놓인다.
+use std::rc::Rc;
+
 use gpui_kit::{
-    Context, FontWeight, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement, Styled, div,
+    Context, FontWeight, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement, Styled, Window,
+    div,
 };
 use paddock_core::theme::notice_tab as size;
 
@@ -8,7 +11,6 @@ use super::open::NoticeAction;
 use crate::chrome::zpx;
 use crate::look::colors;
 use crate::terminal::paint::hsla;
-use crate::window_view::WorkWindow;
 
 /// 안내 탭 하나의 내용.
 pub struct NoticeView<'a> {
@@ -19,11 +21,15 @@ pub struct NoticeView<'a> {
     pub actions: &'a [NoticeAction],
 }
 
-/// 안내 탭을 그린다. 단추를 누르면 `path`의 파일에 대해 그 동작을 실행한다.
-pub fn notice_view(
+/// 안내 탭 단추를 눌렀을 때 부를 동작: (그리는 보기, 동작, 파일 경로, 창, 컨텍스트).
+pub type NoticeHandler<T> = Rc<dyn Fn(&mut T, NoticeAction, &str, &mut Window, &mut Context<T>)>;
+
+/// 안내 탭을 그린다. 단추를 누르면 `path`의 파일에 대해 `on_action`을 부른다.
+pub fn notice_view<T: 'static>(
     view: &NoticeView<'_>,
     path: &str,
-    cx: &mut Context<WorkWindow>,
+    cx: &mut Context<T>,
+    on_action: &NoticeHandler<T>,
 ) -> impl IntoElement {
     let palette = colors();
     let mut actions = div()
@@ -35,6 +41,7 @@ pub fn notice_view(
         .gap(zpx(size::ACTIONS_GAP));
     for (index, action) in view.actions.iter().copied().enumerate() {
         let path = path.to_string();
+        let on_action = on_action.clone();
         actions = actions.child(
             div()
                 .id(("notice-action", index))
@@ -51,8 +58,8 @@ pub fn notice_view(
                 .child(action.label())
                 .on_mouse_down(
                     MouseButton::Left,
-                    cx.listener(move |this, _event: &MouseDownEvent, window, cx| {
-                        this.run_notice_action(action, &path, window, cx)
+                    cx.listener(move |this: &mut T, _event: &MouseDownEvent, window, cx| {
+                        on_action(this, action, &path, window, cx)
                     }),
                 ),
         );

@@ -5,23 +5,29 @@
 //! 넘치면 묶음이 가로로 스크롤되고, 가장자리 흐림·넘김 단추·가려진 쪽에 읽지 않은 완료가 있을 때의 점이 붙는다.
 //! 묶음에 열린 파일이 있으면 파일 칸이 터미널 열들 오른쪽의 마지막 열이 되어 그 열에 파일 탭이 놓인다.
 use gpui_kit::{
-    Context, Div, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement, ScrollHandle,
-    ScrollWheelEvent, StatefulInteractiveElement, Styled, div, linear_color_stop, linear_gradient, point, px,
+    AppContext, Context, Div, DragMoveEvent, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
+    ParentElement, ScrollHandle, ScrollWheelEvent, StatefulInteractiveElement, Styled, div, linear_color_stop,
+    linear_gradient, point, px,
 };
-use paddock_core::file_kind::{FileKind, file_name_of};
+use paddock_core::file_kind::FileKind;
+use paddock_core::file_pane::tab_labels;
 use paddock_core::layout_model::{Layout, Orientation};
 use paddock_core::markdown_view::View;
 use paddock_core::pane_columns::{Column, column_spans, columns_with_file, scroll_step_offset, tab_columns};
 use paddock_core::theme::{
-    account_picker, branch_button, external_editor_button, file_tab, markdown_view_actions, pdf_view, sidebar_toggle,
-    split_buttons, tab, tab_overflow, text,
+    account_picker, branch_button, editor, external_editor_button, file_tab, markdown_view_actions, pdf_view,
+    sidebar_toggle, split_buttons, tab, tab_detached, tab_overflow, text,
 };
 
+use crate::agent_view::status_of;
 use crate::chrome::{unseen_dot, zpx};
 use crate::look::{colors, scaled};
+use crate::tab_drag::{DragFileTab, DragTab};
 use crate::terminal::paint::hsla;
 use crate::window_view::WorkWindow;
+use crate::work::list_view::terminal_state;
 use crate::work::menu_model::{MenuKind, row_label};
+use crate::work::terminal_row::RowTarget;
 use crate::workspace::TabRef;
 
 /// 파일 칸의 탭 묶음이 쓰는 스크롤 상태 번호. 터미널 열의 번호(0부터)와 칸 위 탭 줄 번호(1000부터)와 겹치지 않는다.
@@ -46,6 +52,8 @@ enum TabLook {
     /// 포커스가 없는 칸의 선택 탭.
     Current,
     Inactive,
+    /// 터미널이 다른 창에 있다. 비활성 탭 바탕에 흐린 글자로, 누르면 그 창이 앞으로 온다.
+    Detached,
 }
 
 /// 탭에 보이는 이름. 작업 폴더 안에서는 사이드바 행과 같이 같은 이름에 `·2`가 붙는다.
@@ -63,6 +71,37 @@ fn tab_label(
     row_label(name, &suffix)
 }
 
+/// 터미널 탭의 도움말: `이름 · 프로그램 · 에이전트가 알린 상태`. 추정(Sent·Output·Quiet)은 목록 행에서만 보이고 탭에는 알린 상태만 나온다.
+fn tab_tip(
+    window_view: &WorkWindow,
+    id: u32,
+    label: &str,
+) -> String {
+    let state = terminal_state(window_view, id);
+    let reported = state.as_ref().filter(|state| state.signal.is_some()).and_then(|state| status_of(Some(state)));
+    [
+        Some(label.to_string()),
+        state.as_ref().and_then(|state| state.program.clone()),
+        reported.map(|status| status.label.to_string()),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" \u{b7} ")
+}
+
+/// 탭 줄에 초점이 있을 때 고른 탭에 둘리는 초점 테두리. 탭 위에 겹쳐 그려 탭 크기를 바꾸지 않고 누름도 막지 않는다.
+fn focus_outline() -> Div {
+    div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .rounded_t(zpx(tab::RADIUS_TOP))
+        .border_1()
+        .border_color(hsla(colors().accent))
+}
+
 /// 탭 하나. 이름과 ×가 있고, 누르면 선택하거나(이름) 닫기 확인을 연다(×). `shrinks`면 줄 폭이 모자랄 때 최소 폭까지 줄어든다.
 fn tab_item(
     window_view: &WorkWindow,
@@ -73,11 +112,16 @@ fn tab_item(
 ) -> gpui_kit::Stateful<Div> {
     let palette = colors();
     let label = tab_label(window_view, id);
+    let drag_label = label.clone();
+    let tip = tab_tip(window_view, id, &label);
+    let outlined = window_view.tab_bar_focused && look == TabLook::Focused;
     let (background, foreground) = match look {
         TabLook::Focused => (palette.tab_active_bg, palette.tab_active_fg),
         TabLook::Current => (palette.tab_active_bg, palette.fg),
-        TabLook::Inactive => (palette.tab_inactive_bg, palette.tab_inactive_fg),
+        TabLook::Inactive | TabLook::Detached => (palette.tab_inactive_bg, palette.tab_inactive_fg),
     };
+    let foreground =
+        if look == TabLook::Detached { hsla(foreground).opacity(tab_detached::FG_ALPHA) } else { hsla(foreground) };
     let close = div()
         .flex_none()
         .w(zpx(tab::CLOSE_SIZE))
@@ -99,8 +143,9 @@ fn tab_item(
                 this.request_close(id, window, cx);
             }),
         );
-    div()
+    let item = div()
         .id(("tab", id))
+        .relative()
         .flex()
         .flex_row()
         .items_center()
@@ -113,8 +158,9 @@ fn tab_item(
         .pr(zpx(tab::PADDING_RIGHT))
         .rounded_t(zpx(tab::RADIUS_TOP))
         .bg(hsla(background))
-        .text_color(hsla(foreground))
+        .text_color(foreground)
         .cursor_pointer()
+        .tooltip(crate::usage::bar::tooltip(tip))
         .child(
             div()
                 .min_w_0()
@@ -125,23 +171,41 @@ fn tab_item(
                 .children(window_view.done.is_unseen(id).then(unseen_dot)),
         )
         .child(close)
+        .children(outlined.then(focus_outline))
         .on_mouse_down(
             MouseButton::Left,
-            cx.listener(move |this, _event: &MouseDownEvent, window, cx| this.select_tab(id, window, cx)),
+            cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                // 탭 줄 빈 자리가 아니므로 탭 줄 초점은 만들지 않는다. 더블클릭이면 이름 바꾸기 창이 열린다.
+                cx.stop_propagation();
+                this.click_row(RowTarget::Terminal(id), event.click_count, window, cx)
+            }),
         )
         .on_mouse_down(
             MouseButton::Right,
             cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                cx.stop_propagation();
                 this.open_menu(MenuKind::Terminal(id), event.position, window, cx)
             }),
-        )
+        );
+    // 이 창의 탭은 끌 수 있다(칸 가장자리·탭 줄·창 밖에 놓기). 다른 창에 있는 흐린 탭은 끌지 않는다 — 누르면 그 창이 앞으로 온다.
+    if look == TabLook::Detached {
+        item
+    } else {
+        item.on_drag(DragTab::terminal(id, drag_label), |dragged, _offset, _window, cx| cx.new(|_| dragged.clone()))
+            .on_drag_move(cx.listener(move |this, event: &DragMoveEvent<DragTab>, _window, cx| {
+                this.tab_drag_over_tab(id, event, cx)
+            }))
+    }
 }
 
-/// 파일 탭 하나. 파일 그림과 이름이 있고, 누르면 선택하고 ×는 닫는다(확인 없이). 터미널 탭과 같은 폭·강조를 쓴다.
+/// 파일 탭 하나. 파일 그림과 이름이 있고, 누르면 선택하고 ×는 닫는다(저장하지 않은 변경이 있으면 묻고 닫는다). 터미널 탭과 같은 폭·강조를 쓴다.
+/// 저장하지 않은 파일은 × 자리에 점(`●`)을 보이고, 마우스를 올리면 ×가 된다.
 fn file_tab_item(
     index: usize,
-    path: &str,
+    label: String,
     look: TabLook,
+    outlined: bool,
+    unsaved: bool,
     shrinks: bool,
     cx: &mut Context<WorkWindow>,
 ) -> gpui_kit::Stateful<Div> {
@@ -149,9 +213,23 @@ fn file_tab_item(
     let (background, foreground) = match look {
         TabLook::Focused => (palette.tab_active_bg, palette.tab_active_fg),
         TabLook::Current => (palette.tab_active_bg, palette.fg),
-        TabLook::Inactive => (palette.tab_inactive_bg, palette.tab_inactive_fg),
+        TabLook::Inactive | TabLook::Detached => (palette.tab_inactive_bg, palette.tab_inactive_fg),
+    };
+    let group = format!("file-tab-close-{index}");
+    let cross = div().child("\u{2715}");
+    let glyph = if unsaved {
+        // 점이 보이고 ×는 숨어 있다가, 마우스를 올리면 서로 바뀐다.
+        div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(div().group_hover(group.clone(), |style| style.hidden()).child(editor::UNSAVED_DOT))
+            .child(cross.hidden().group_hover(group.clone(), |style| style.block()))
+    } else {
+        div().child(cross)
     };
     let close = div()
+        .group(group)
         .flex_none()
         .w(zpx(tab::CLOSE_SIZE))
         .h(zpx(tab::CLOSE_SIZE))
@@ -160,10 +238,10 @@ fn file_tab_item(
         .justify_center()
         .rounded(zpx(tab::CLOSE_RADIUS))
         .text_size(zpx(tab::CLOSE_GLYPH))
-        .text_color(hsla(palette.fg_muted))
+        .text_color(hsla(if unsaved { palette.fg_strong } else { palette.fg_muted }))
         .cursor_pointer()
         .hover(|style| style.bg(hsla(colors().hover_bg)).text_color(hsla(colors().fg_strong)))
-        .child("\u{2715}")
+        .child(glyph)
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, _event: &MouseDownEvent, window, cx| {
@@ -172,6 +250,7 @@ fn file_tab_item(
                 this.close_file_tab(index, window, cx);
             }),
         );
+    let drag_label = label.clone();
     let icon = div()
         .flex_none()
         .w(zpx(file_tab::ICON_WIDTH))
@@ -181,6 +260,7 @@ fn file_tab_item(
         .rounded(zpx(file_tab::ICON_RADIUS));
     div()
         .id(("file-tab", index))
+        .relative()
         .flex()
         .flex_row()
         .items_center()
@@ -203,13 +283,26 @@ fn file_tab_item(
                 .items_center()
                 .gap(zpx(file_tab::ICON_GAP))
                 .child(icon)
-                .child(div().min_w_0().truncate().child(file_name_of(path))),
+                .child(div().min_w_0().truncate().child(label)),
         )
         .child(close)
+        .children(outlined.then(focus_outline))
         .on_mouse_down(
             MouseButton::Left,
-            cx.listener(move |this, _event: &MouseDownEvent, window, cx| this.select_file_tab(index, window, cx)),
+            cx.listener(move |this, _event: &MouseDownEvent, window, cx| {
+                cx.stop_propagation();
+                this.select_file_tab(index, window, cx)
+            }),
         )
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                cx.stop_propagation();
+                this.open_menu(MenuKind::FileTab(index), event.position, window, cx)
+            }),
+        )
+        // 파일 탭은 창 밖에 놓을 때만 새 창으로 뗀다(칸 가장자리·탭 줄에는 놓을 자리가 없다). 메뉴 `Move to New Window`도 같은 일을 한다.
+        .on_drag(DragFileTab { index, label: drag_label }, |dragged, _offset, _window, cx| cx.new(|_| dragged.clone()))
 }
 
 /// 24×22 글자 단추(＋·‹·›). 누름 처리는 호출자가 붙인다.
@@ -247,6 +340,7 @@ fn add_button(
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                cx.stop_propagation();
                 if let Some(id) = pane_current {
                     this.select_tab(id, window, cx);
                 }
@@ -349,8 +443,7 @@ fn account_picker_button(
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                let place = this.workspace.new_place();
-                this.open_new_terminal_menu(place, event.position, true, window, cx)
+                this.open_account_picker(event.position, window, cx)
             }),
         )
 }
@@ -566,7 +659,6 @@ fn scrolling_tabs(
     shrinks: bool,
     cx: &mut Context<WorkWindow>,
 ) -> Div {
-    let palette = colors();
     let look = overflow_look(handle);
     let ids: Vec<TabRef> = tabs.iter().map(|(tab, _)| *tab).collect();
     // 키보드로 탭을 옮긴 직후에는 활성 탭이 가려져 있어도 보이는 곳으로 스크롤한다. 그 밖의 다시 그리기는 스크롤을 건드리지 않는다.
@@ -589,16 +681,22 @@ fn scrolling_tabs(
         list = match tab {
             TabRef::Terminal(id) => list.child(tab_item(window_view, *id, *tab_look, shrinks, cx)),
             TabRef::File(index) => {
-                let path = window_view
+                let label = window_view
+                    .workspace
+                    .file_pane()
+                    .and_then(|pane| tab_labels(pane).into_iter().nth(*index))
+                    .unwrap_or_default();
+                let outlined = window_view.tab_bar_focused && *tab_look == TabLook::Focused;
+                let unsaved = window_view
                     .workspace
                     .file_pane()
                     .and_then(|pane| pane.tabs.get(*index))
-                    .map(|tab| tab.path.as_str());
-                list.child(file_tab_item(*index, path.unwrap_or(""), *tab_look, shrinks, cx))
+                    .is_some_and(|tab| window_view.unsaved.contains(&tab.key()));
+                list.child(file_tab_item(*index, label, *tab_look, outlined, unsaved, shrinks, cx))
             }
         };
     }
-    let solid = hsla(palette.tab_bar_bg);
+    let solid = hsla(window_view.tab_bar_background());
     let clear = solid.opacity(0.0);
     let fade = |at_right: bool| {
         let (from, to) = if at_right { (clear, solid) } else { (solid, clear) };
@@ -624,6 +722,7 @@ fn scrolling_tabs(
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, _event: &MouseDownEvent, _window, cx| {
+                cx.stop_propagation();
                 this.scroll_tabs(&handle, at_right);
                 cx.notify();
             }),
@@ -746,8 +845,10 @@ pub fn tab_bar(
     let file_active = window_view.file_active();
     let strip_left = scaled(tab::BAR_PADDING_LEFT + sidebar_toggle::WIDTH + 2.0 * sidebar_toggle::MARGIN_X);
     // 계정 고르기는 이름 길이에 따라 폭이 달라 최대 폭만큼 비워 두고, 그 안에서 줄어든다.
-    let editor_button_width = if file_active { external_editor_button::WIDTH + split_buttons::GAP } else { 0.0 };
     let selected_kind = if file_active { window_view.selected_file_kind() } else { None };
+    // 바깥 텍스트 편집기 단추는 글자로 읽는 종류(텍스트·Markdown·변경 비교)에서만 보인다.
+    let editor_active = selected_kind.is_some_and(FileKind::opens_in_text_editor);
+    let editor_button_width = if editor_active { external_editor_button::WIDTH + split_buttons::GAP } else { 0.0 };
     let view_actions_width = match selected_kind {
         Some(FileKind::Markdown) => markdown_view_actions::RESERVED_WIDTH + split_buttons::GAP,
         Some(FileKind::Pdf) => pdf_view::ACTIONS_RESERVED_WIDTH + split_buttons::GAP,
@@ -766,7 +867,32 @@ pub fn tab_bar(
             + branch_width,
     );
     let strip_width = (geometry.width + geometry.file_width - strip_left - right_width).max(0.0);
-    let mut strip = div().relative().flex_1().h_full().min_w_0().overflow_hidden();
+    // 다른 창에 있는 탭: 칸이 하나뿐인 줄의 끝에 흐린 탭으로 남는다(칸을 나눈 줄에서는 빠진다).
+    let faded: Vec<(TabRef, TabLook)> = window_view
+        .workspace
+        .strip_columns(geometry.width, geometry.height)
+        .last()
+        .map(|column| {
+            column
+                .iter()
+                .filter(|(_, detached)| *detached)
+                .map(|(id, _)| (TabRef::Terminal(*id), TabLook::Detached))
+                .collect()
+        })
+        .unwrap_or_default();
+    // 탭 줄 빈 자리를 누르면 초점이 생겨 ←·→·Home·End로 탭을 고른다. 탭·단추는 누름을 막아 초점을 만들지 않고, 줄 밖을 누르면 초점이 풀린다.
+    let mut strip = div()
+        .id("tab-strip")
+        .relative()
+        .flex_1()
+        .h_full()
+        .min_w_0()
+        .overflow_hidden()
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, _event: &MouseDownEvent, _window, cx| this.focus_tab_bar(cx)),
+        )
+        .on_mouse_down_out(cx.listener(|this, _event: &MouseDownEvent, _window, cx| this.leave_tab_bar(cx)));
     if let Some(layout) = layout {
         let boxes = layout.pane_boxes(geometry.width, geometry.height);
         let columns = tab_columns(layout, geometry.width, geometry.height);
@@ -799,7 +925,10 @@ pub fn tab_bar(
         for (index, (column, span)) in columns.iter().zip(spans).enumerate() {
             let Some(top) = column.panes.first().and_then(|pane| boxes.get(*pane)) else { continue };
             let current = current_of(&top.tabs, top.selected);
-            let looks = pane_tab_looks(&top.tabs, current.unwrap_or(0), focused);
+            let mut looks = pane_tab_looks(&top.tabs, current.unwrap_or(0), focused);
+            if index + 1 == columns.len() {
+                looks.extend(faded.iter().copied());
+            }
             let handle = window_view.tab_scroll(index);
             strip = strip.child(
                 div()
@@ -817,8 +946,22 @@ pub fn tab_bar(
             );
         }
     } else {
-        strip =
-            strip.child(div().absolute().top_0().bottom_0().left_0().child(add_button(("tab-add", 0_usize), None, cx)));
+        // 보일 칸이 없다: 묶음의 탭이 모두 다른 창에 있거나 탭이 하나도 없다.
+        let handle = window_view.tab_scroll(0);
+        strip = strip.child(
+            div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .left_0()
+                .w(px(strip_width))
+                .flex()
+                .flex_row()
+                .items_end()
+                .gap(zpx(tab::GAP))
+                .child(scrolling_tabs(window_view, 0, &handle, &faded, false, cx))
+                .child(add_button(("tab-add", 0_usize), None, cx)),
+        );
     }
     div()
         .flex()
@@ -830,7 +973,7 @@ pub fn tab_bar(
         .pl(zpx(tab::BAR_PADDING_LEFT))
         .border_b_1()
         .border_color(hsla(palette.border))
-        .bg(hsla(palette.tab_bar_bg))
+        .bg(hsla(window_view.tab_bar_background()))
         .text_size(zpx(text::SMALL))
         .child(sidebar_toggle_button(cx))
         .child(strip)
@@ -849,7 +992,7 @@ pub fn tab_bar(
                         .map(|view| markdown_view_actions_row(view, cx)),
                 )
                 .children((selected_kind == Some(FileKind::Pdf)).then(|| pdf_actions_row(cx)))
-                .children(file_active.then(|| external_editor_action(cx)))
+                .children(editor_active.then(|| external_editor_action(cx)))
                 .children(branch.map(branch_label_button))
                 .child(account_picker_button(window_view, cx))
                 .child(split_button("split-right", Orientation::Horizontal, cx))

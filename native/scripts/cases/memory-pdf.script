@@ -3,30 +3,36 @@
 waittabs 1 @30000
 waitstate cwd=C: @30000
 mem start-1-terminal
+gpumem start-1-terminal
 send $p = "$env:USERPROFILE\\proj-big"; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
 send echo READY-BIG\r
 waitline READY-BIG @60000
-send claude -n 60 127.0.0.1\r
+send claude.exe -n 60 127.0.0.1\r
 waitstate program=claude @20000
 waitstate row folder @20000
 key ctrl-shift-c
 waittabs 2 @20000
 wait 5000
 mem before-open
+gpumem before-open
 act openpath C:/Temp/pdk-run/home-memory-pdf/proj-big/many-300p.pdf
 wait 20000
 state pdf-open
 mem pdf-open-20s
+gpumem pdf-open-20s
 shot memory-pdf
 act pdfscroll 100
 wait 4000
 mem pdf-scrolled
+gpumem pdf-scrolled
 wait 5000
 mem pdf-open-30s
+gpumem pdf-open-30s
 act closefile
 wait 500
 wait 600
 wait 600
 wait 8000
 mem after-close
+gpumem after-close
 quit

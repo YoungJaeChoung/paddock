@@ -3,7 +3,10 @@
 //! 터미널 배치(`layout_model`)는 터미널 번호만 쥐므로 파일 탭은 그 배치를 건드리지 않고 이 모델이 따로 쥔다.
 //! 파일 칸은 묶음이 이름표(`GroupKey`)로 가리키고, 묶음이 폴더로 올라가거나 Unassigned 묶음의 시작 터미널이 닫혀
 //! 이름표가 바뀌면 `follow_groups`가 칸을 새 이름표로 옮긴다.
-use crate::file_kind::FileKind;
+use crate::file_kind::{FileKind, file_name_of};
+use crate::paths::{parent_of, rebased};
+// 경로 판정은 `paths`에 있다. 호출처가 `file_pane::file_key`로 쓰던 이름을 그대로 받도록 다시 내보낸다.
+pub use crate::paths::file_key;
 use crate::work_model::{GroupKey, WorkState};
 
 /// 파일 칸이 처음 차지하는 본문 폭 비율.
@@ -24,6 +27,30 @@ impl FileTab {
     pub fn key(&self) -> String {
         tab_key(&self.path, self.kind)
     }
+}
+
+/// 한 칸의 파일 탭에 보일 이름. 파일 이름이 다른 탭과 겹치면 `이름 · 상위 폴더 이름`으로 구분하고, 겹치지 않으면 파일 이름만이다.
+///
+/// 같은 파일의 본문 탭과 변경 비교 탭은 같은 파일이므로 서로 겹치는 것으로 세지 않는다. 상위 폴더가 없는 경로(`/a.js`)는 이름만 쓴다.
+///
+/// Examples
+/// --------
+/// | 탭 경로                              | 결과                           |
+/// |--------------------------------------|--------------------------------|
+/// | `/p/src/a.js`, `/p/lib/a.js`, `/p/b.js` | `a.js · src`, `a.js · lib`, `b.js` |
+/// | `/p/src/a.js`(본문), `/p/src/a.js`(비교) | `a.js`, `a.js`            |
+/// | `/p/src/a.js` 하나                   | `a.js`                         |
+pub fn tab_labels(pane: &FilePane) -> Vec<String> {
+    let paths: Vec<&str> = pane.tabs.iter().map(|tab| tab.path.as_str()).collect();
+    pane.tabs
+        .iter()
+        .map(|tab| {
+            let name = file_name_of(&tab.path);
+            let shares_name = paths.iter().any(|other| *other != tab.path && file_name_of(other) == name);
+            let parent = file_name_of(&parent_of(&tab.path));
+            if shares_name && !parent.is_empty() { format!("{name} \u{b7} {parent}") } else { name }
+        })
+        .collect()
 }
 
 /// `path`를 `kind`로 보여 주는 탭의 열쇠.
@@ -174,6 +201,19 @@ impl FilePanes {
         closed
     }
 
+    /// 탭을 칸에서 뽑아 돌려준다(다른 창으로 옮길 때). 선택·칸 비우기는 `close`와 같다. 뽑을 탭이 없으면 None이다.
+    pub fn take(
+        &mut self,
+        key: &GroupKey,
+        index: usize,
+    ) -> Option<FileTab> {
+        let tab = self.get(key).and_then(|pane| pane.tabs.get(index)).cloned();
+        if tab.is_some() {
+            self.close(key, index);
+        }
+        tab
+    }
+
     /// 한 탭을 보여 주는 방식을 바꾼다(이진 안내 탭 → 텍스트).
     pub fn set_kind(
         &mut self,
@@ -210,8 +250,9 @@ impl FilePanes {
             let (_, moving) = self.panes.remove(at);
             match self.get_mut(to) {
                 Some(existing) => {
+                    // 같은 파일의 본문 탭과 비교 탭은 다른 탭이므로 경로가 아니라 탭 열쇠로 겹침을 가른다.
                     for tab in moving.tabs {
-                        if !existing.tabs.iter().any(|other| other.path == tab.path) {
+                        if !existing.tabs.iter().any(|other| other.key() == tab.key()) {
                             existing.tabs.push(tab);
                         }
                     }
@@ -219,6 +260,35 @@ impl FilePanes {
                 None => self.panes.push((to.clone(), moving)),
             }
         }
+    }
+
+    /// 파일이나 폴더의 이름이 `from`에서 `to`로 바뀐 뒤 모든 묶음의 탭 경로를 따라 옮긴다. 폴더면 그 아래 파일의 탭(본문·비교 탭)도 새 경로가 된다.
+    /// 옮긴 결과가 같은 칸의 다른 탭과 겹치면 하나로 합치고, 선택한 탭은 같은 탭을 계속 가리킨다. 옮겨진 탭이 있으면 true다.
+    pub fn rename_path(
+        &mut self,
+        from: &str,
+        to: &str,
+    ) -> bool {
+        let mut moved = false;
+        let follow = |tab: &FileTab| match rebased(from, to, &tab.path) {
+            Some(path) => (FileTab { path: file_key(&path), kind: tab.kind }, true),
+            None => (tab.clone(), false),
+        };
+        for (_, pane) in &mut self.panes {
+            let selected = pane.tabs.get(pane.selected).map(|tab| follow(tab).0.key());
+            let mut tabs: Vec<FileTab> = Vec::new();
+            for tab in &pane.tabs {
+                let (next, was_moved) = follow(tab);
+                moved |= was_moved;
+                if !tabs.iter().any(|other| other.key() == next.key()) {
+                    tabs.push(next);
+                }
+            }
+            let at = selected.and_then(|key| tabs.iter().position(|tab| tab.key() == key));
+            pane.selected = at.unwrap_or(0).min(tabs.len().saturating_sub(1));
+            pane.tabs = tabs;
+        }
+        moved
     }
 
     /// 묶음의 칸을 없애고 닫힌 탭 수를 돌려준다.
@@ -240,21 +310,8 @@ impl FilePanes {
         before: &WorkState,
         after: &WorkState,
     ) {
-        let moves: Vec<(GroupKey, Option<GroupKey>)> = self
-            .panes
-            .iter()
-            .map(|(key, _)| {
-                let next = match key {
-                    GroupKey::Folder(folder) => {
-                        after.folders.iter().any(|candidate| candidate.key == *folder).then(|| key.clone())
-                    }
-                    GroupKey::Group(root) => {
-                        before.group_members(*root).into_iter().find_map(|member| after.group_key_of(member))
-                    }
-                };
-                (key.clone(), next)
-            })
-            .collect();
+        let moves: Vec<(GroupKey, Option<GroupKey>)> =
+            self.panes.iter().map(|(key, _)| (key.clone(), followed_key(before, after, key))).collect();
         for (key, next) in moves {
             match next {
                 Some(next) => self.rekey(&key, &next),
@@ -263,6 +320,20 @@ impl FilePanes {
                 }
             }
         }
+    }
+}
+
+/// 작업 목록이 `before`에서 `after`로 바뀐 뒤 묶음 이름표 `key`가 가리키는 묶음의 새 이름표. 묶음이 사라졌으면 None이다.
+///
+/// 폴더는 목록에 남아 있는 동안 그대로이고, Unassigned 묶음은 이전 묶음의 터미널이 지금 속한 묶음으로 따라간다.
+pub fn followed_key(
+    before: &WorkState,
+    after: &WorkState,
+    key: &GroupKey,
+) -> Option<GroupKey> {
+    match key {
+        GroupKey::Folder(folder) => after.folders.iter().any(|candidate| candidate.key == *folder).then(|| key.clone()),
+        GroupKey::Group(root) => before.group_members(*root).into_iter().find_map(|member| after.group_key_of(member)),
     }
 }
 
@@ -410,6 +481,36 @@ mod tests {
     }
 
     #[test]
+    fn test_c_pane_rekey_keeps_the_body_tab_and_the_diff_tab_of_the_same_file() {
+        let mut panes = FilePanes::default();
+        let (group, target) = (GroupKey::Group(3), folder("/a"));
+        panes.open(&group, "/a/x.rs", FileKind::Text);
+        panes.open(&group, "/a/x.rs", FileKind::Diff { staged: false });
+        panes.open(&target, "/a/x.rs", FileKind::Text);
+        panes.rekey(&group, &target);
+        let merged = panes.get(&target).unwrap();
+        let kinds: Vec<FileKind> = merged.tabs.iter().map(|tab| tab.kind).collect();
+        assert_eq!(kinds, vec![FileKind::Text, FileKind::Diff { staged: false }]);
+    }
+
+    #[test]
+    fn test_c_pane_follow_groups_promotion_keeps_the_diff_tab_beside_the_body_tab() {
+        let mut before = WorkState::default();
+        before.add_group(2, "terminal 1");
+        before.join_group(2, 5, "terminal 2");
+        let mut after = before.clone();
+        after.assign_terminal(2, "/home/me/app", "claude");
+        after.assign_terminal(5, "/home/me/app", "terminal 2");
+        let mut panes = FilePanes::default();
+        panes.open(&GroupKey::Group(2), "/home/me/app/x.rs", FileKind::Diff { staged: false });
+        panes.open(&folder("/home/me/app"), "/home/me/app/x.rs", FileKind::Text);
+        panes.follow_groups(&before, &after);
+        let merged = panes.get(&folder("/home/me/app")).unwrap();
+        let kinds: Vec<FileKind> = merged.tabs.iter().map(|tab| tab.kind).collect();
+        assert_eq!(kinds, vec![FileKind::Text, FileKind::Diff { staged: false }]);
+    }
+
+    #[test]
     fn test_c_pane_6_ratio_stays_between_a_tenth_and_nine_tenths() {
         let mut panes = FilePanes::default();
         let key = folder("/a");
@@ -504,5 +605,98 @@ mod tests {
         let mut open: Vec<String> = panes.open_keys().collect();
         open.sort_unstable();
         assert_eq!(open, vec!["/a/x", "/a/x", "/b/y"]);
+    }
+
+    #[test]
+    fn test_c_sync_16_tabs_with_the_same_file_name_get_their_parent_folder_and_others_keep_the_plain_name() {
+        let mut panes = FilePanes::default();
+        let group = folder("/p");
+        for path in ["/p/src/a.js", "/p/lib/a.js", "/p/b.js"] {
+            panes.open(&group, path, FileKind::Text);
+        }
+        assert_eq!(tab_labels(panes.get(&group).unwrap()), ["a.js \u{b7} src", "a.js \u{b7} lib", "b.js"]);
+        // 같은 이름의 탭 하나를 닫으면 남은 탭은 이름만 보인다.
+        let pane = panes.get(&group).unwrap().clone();
+        let one_left = FilePane { tabs: pane.tabs[..1].to_vec(), ..pane };
+        assert_eq!(tab_labels(&one_left), ["a.js"]);
+    }
+
+    #[test]
+    fn test_c_sync_17_a_body_tab_and_a_diff_tab_of_one_file_are_not_told_apart_by_folder() {
+        let mut panes = FilePanes::default();
+        let group = folder("/p");
+        panes.open(&group, "/p/src/a.js", FileKind::Text);
+        panes.open(&group, "/p/src/a.js", FileKind::Diff { staged: false });
+        panes.open(&group, "/a.js", FileKind::Text);
+        panes.open(&group, "/q/a.js", FileKind::Text);
+        assert_eq!(
+            tab_labels(panes.get(&group).unwrap()),
+            ["a.js \u{b7} src", "a.js \u{b7} src", "a.js", "a.js \u{b7} q"]
+        );
+    }
+
+    #[test]
+    fn test_c_d70_renaming_a_folder_moves_open_tabs_expanded_dirs() {
+        let mut panes = FilePanes::default();
+        let group = folder("/p");
+        for path in ["/p/src/a.rs", "/p/src/deep/b.rs", "/p/other.rs"] {
+            panes.open(&group, path, FileKind::Text);
+        }
+        panes.open(&group, "/p/src/a.rs", FileKind::Diff { staged: false });
+        panes.select(&group, 3);
+        assert!(panes.rename_path("/p/src", "/p/lib"));
+        let pane = panes.get(&group).unwrap();
+        let shown: Vec<(&str, FileKind)> = pane.tabs.iter().map(|tab| (tab.path.as_str(), tab.kind)).collect();
+        assert_eq!(
+            shown,
+            vec![
+                ("/p/lib/a.rs", FileKind::Text),
+                ("/p/lib/deep/b.rs", FileKind::Text),
+                ("/p/other.rs", FileKind::Text),
+                ("/p/lib/a.rs", FileKind::Diff { staged: false }),
+            ]
+        );
+        assert_eq!(pane.selected, 3, "the selected tab is still the diff tab of the moved file");
+        assert!(!panes.rename_path("/p/zzz", "/p/y"), "nothing under the old path moves nothing");
+    }
+
+    #[test]
+    fn test_c_rename_4_a_renamed_file_merges_into_a_tab_already_open_at_the_new_path() {
+        let mut panes = FilePanes::default();
+        let group = folder("/p");
+        panes.open(&group, "/p/a.txt", FileKind::Text);
+        panes.open(&group, "/p/b.txt", FileKind::Text);
+        panes.select(&group, 0);
+        assert!(panes.rename_path("/p/a.txt", "/p/b.txt"));
+        let pane = panes.get(&group).unwrap();
+        assert_eq!(pane.tabs.len(), 1);
+        assert_eq!((pane.tabs[0].path.as_str(), pane.selected), ("/p/b.txt", 0));
+    }
+
+    #[test]
+    fn test_c_rename_5_a_case_only_rename_changes_the_spelling_of_the_tab() {
+        let mut panes = FilePanes::default();
+        let group = folder("C:/p");
+        panes.open(&group, "C:/p/readme.md", FileKind::Markdown);
+        assert!(panes.rename_path("C:/p/readme.md", "C:/p/README.md"));
+        assert_eq!(panes.get(&group).unwrap().tabs[0].path, "C:/p/README.md");
+    }
+
+    #[test]
+    fn test_c_d86_taking_a_tab_out_keeps_the_selection_rule_of_closing_and_drops_an_empty_pane() {
+        let mut panes = FilePanes::default();
+        let group = folder("/p");
+        panes.open(&group, "/p/a.txt", FileKind::Text);
+        panes.open(&group, "/p/b.txt", FileKind::Markdown);
+        panes.open(&group, "/p/c.txt", FileKind::Text);
+        panes.select(&group, 1);
+        let taken = panes.take(&group, 1).unwrap();
+        assert_eq!((taken.path.as_str(), taken.kind), ("/p/b.txt", FileKind::Markdown));
+        assert_eq!(paths(panes.get(&group).unwrap()), ["/p/a.txt", "/p/c.txt"]);
+        assert_eq!(panes.get(&group).unwrap().selected, 1, "the tab that took its place is selected");
+        assert!(panes.take(&group, 5).is_none(), "nothing is taken from a missing index");
+        panes.take(&group, 0);
+        panes.take(&group, 0);
+        assert!(panes.get(&group).is_none(), "taking the last tab removes the pane");
     }
 }

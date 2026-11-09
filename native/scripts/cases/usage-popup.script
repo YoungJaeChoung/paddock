@@ -1,0 +1,66 @@
+# 사용량 목록(덩어리 30): 계정 7개라 검색칸이 보이고, 검색·`Open in new terminal`·기본 CLI 로그인 연결(`Default` 배지)·같은 로그인 둘이면 연결 해제·읽기 실패와 Retry·Esc 닫기.
+# 임시 홈 자료는 scripts/assets/usage-popup-fixture.sh가 만든다. 기본 Claude의 로그인(login-1)은 첫 계정 Alpha One과 같다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send claude.exe -n 600 127.0.0.1\r
+waitstate program=claude @20000
+# 기본 CLI의 로그인이 등록 계정 하나(Alpha One)와 같아 상태 줄이 그 계정 이름으로 보인다.
+waitstate claude=Alpha One:5h=11,week=31 @30000
+waitstate usage-tip claude 5h: Claude · Alpha One @5000
+state linked
+act usageopen claude
+waitstate usage-popup open=yes search=- search-shown=yes @10000
+waitstate usage-row 1 claude name=Alpha_One in-bar=yes default=yes @15000
+waitstate usage-row 7 claude name=Golf_Seven @5000
+waitnostate name=Default @1000
+state popup-open
+shot 01-popup
+# 검색: `wo`는 Beta Two·Wolf Three·Work Four 셋만 남긴다.
+act usagesearch wo
+waitstate search=wo @5000
+waitstate usage-row 3 claude name=Work_Four @5000
+waitnostate usage-row 4 @1000
+state popup-search
+shot 02-popup-search
+# 셋째 행(Work Four)을 새 터미널로 연다: 탭이 늘고, 목록이 닫히고, 상태 줄은 그 계정이다.
+act usagerow 3 open
+waittabs 2 @30000
+waitstate usage-popup open=no @5000
+waitstate claude=Work Four:5h=14,week=34 @15000
+state opened
+shot 03-opened
+# 같은 로그인(login-1)의 계정을 하나 더 등록하면 기본 CLI를 어느 쪽에도 연결하지 않아 Default 행이 따로 보이고 배지는 사라진다.
+sendto 2 Copy-Item "$env:USERPROFILE\\stage\\profiles-8.json" "$env:USERPROFILE\\.paddock\\config\\account-profiles.json" -Force\r
+wait 1500
+act selecttab 1
+waitstate claude=Default: @10000
+act usageopen claude
+waitstate usage-popup open=yes @10000
+waitstate usage-row 1 claude name=Default in-bar=yes default=no env=Not_linked_to_a_saved_account @30000
+state popup-unlinked
+shot 04-unlinked
+# 계정 Beta Two의 기록이 깨지면 그 행은 Unavailable이고 Retry가 보인다. 고친 뒤 Retry로 다시 읽는다.
+act usageclose
+sendto 2 Copy-Item "$env:USERPROFILE\\stage\\broken.json" "$env:USERPROFILE\\.paddock\\config\\agent-profiles\\aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2\\claude\\paddock-usage\\claude.json" -Force\r
+wait 1500
+act usageopen claude
+waitstate claude:Beta_Two:unavailable @30000
+waitstate retry=yes @5000
+state popup-failed
+shot 05-failed
+sendto 2 Copy-Item "$env:USERPROFILE\\stage\\good.json" "$env:USERPROFILE\\.paddock\\config\\agent-profiles\\aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2\\claude\\paddock-usage\\claude.json" -Force\r
+wait 1500
+act usageretry
+waitstate claude:Beta_Two:ready @30000
+waitstate retry=no @5000
+state popup-retried
+# Esc로 닫는다. 목록이 닫힌 뒤 Manage accounts…는 Accounts 창을 연다.
+key escape
+waitstate usage-popup open=no @5000
+act usageopen claude
+waitstate usage-popup open=yes @10000
+act usagemanage
+waitoverlay accounts @5000
+waitstate usage-popup open=no @3000
+act acct close
+quit

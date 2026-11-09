@@ -8,15 +8,16 @@ use gpui_kit::{
     Context, FontWeight, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement,
     StatefulInteractiveElement, Styled, div,
 };
-use paddock_core::theme::{more_row as more_size, sidebar, text};
+use paddock_core::theme::{more_row as more_size, row_remote_meta, sidebar, text};
 
-use paddock_core::work_model::{Row, folder_name};
+use paddock_core::work_model::{Group, Row, folder_name};
+use paddock_protocol::message::TerminalState;
 
 use super::empty_state::empty_state;
 use super::folder_row::{FolderRowSpec, folder_row};
 use super::menu_model::{MenuKind, more_label, row_label};
 use super::terminal_row::{RowTarget, TerminalRowSpec, terminal_row};
-use crate::agent_view::{meta_text, status_of};
+use crate::agent_view::{meta_text, need_input_text, needs_input, status_of};
 use crate::chrome::zpx;
 use crate::look::colors;
 use crate::scm::SidebarView;
@@ -48,29 +49,78 @@ fn header_button(
         .child(glyph)
 }
 
+/// 터미널 번호의 지금 상태(데몬이 알린 값). 이 창에 그 터미널의 탭이 없으면 None이다.
+pub(crate) fn terminal_state(
+    window_view: &WorkWindow,
+    id: u32,
+) -> Option<TerminalState> {
+    window_view.workspace.tab(id).and_then(|tab| tab.content.session.grid.shared.state.lock().unwrap().clone())
+}
+
+/// 작업 폴더 행의 도움말: 폴더 경로, 읽지 않은 완료 알림, 입력을 기다리는 에이전트 수(`N need input`)를 ` · `로 잇는다.
+/// 접힌 폴더 안의 터미널 상태도 이 도움말이 알린다.
+pub(crate) fn folder_tip(
+    window_view: &WorkWindow,
+    key: &str,
+) -> String {
+    let ids = window_view.workspace.work().terminals_of(key);
+    let n_waiting = ids.iter().filter(|id| needs_input(terminal_state(window_view, **id).as_ref())).count();
+    let unseen = ids.iter().any(|id| window_view.done.is_unseen(*id));
+    [Some(key.to_string()), unseen.then(|| "Unseen activity".to_string()), need_input_text(n_waiting)]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" \u{b7} ")
+}
+
+/// Unassigned 묶음 행의 도움말: 앞쪽 프로그램·폴더, 읽지 않은 완료 알림, 입력을 기다리는 에이전트 수를 ` · `로 잇고 이름 바꾸기 방법을 붙인다.
+pub(crate) fn group_tip(
+    window_view: &WorkWindow,
+    group: &Group,
+) -> String {
+    let state = terminal_state(window_view, group.root);
+    let n_waiting =
+        group.members.iter().filter(|member| needs_input(terminal_state(window_view, member.id).as_ref())).count();
+    let unseen = group.members.iter().any(|member| window_view.done.is_unseen(member.id));
+    let parts = [
+        state.as_ref().and_then(|state| state.program.clone()),
+        state.as_ref().and_then(|state| state.cwd.clone()),
+        unseen.then(|| "Unseen activity in this group".to_string()),
+        need_input_text(n_waiting),
+    ];
+    format!("{} \u{2014} double-click to rename", parts.into_iter().flatten().collect::<Vec<_>>().join(" \u{b7} "))
+}
+
 /// 터미널 하나의 행 모양(요약·상태·미확인)을 정하는 값.
 struct RowLook {
     exited: bool,
     meta: String,
+    /// 터미널이 다른 창에 있어 `meta`가 `other window` 표지다.
+    remote: bool,
     status: Option<crate::agent_view::Status>,
 }
 
+/// `id`는 요약·상태를 읽을 터미널이고, `shown_by`는 행을 누르면 열리는 터미널이다(터미널 행은 둘이 같고 묶음 행은 마지막으로 쓴 터미널).
+/// `shown_by`가 다른 창에 있으면 행은 `other window` 표지를 보인다.
 fn row_look(
     window_view: &WorkWindow,
     id: u32,
+    shown_by: u32,
     name: &str,
 ) -> RowLook {
     match window_view.workspace.tab(id) {
         Some(tab) => {
             let shared = &tab.content.session.grid.shared;
-            let state = shared.state.lock().unwrap().clone();
+            let state = terminal_state(window_view, id);
+            let remote = window_view.workspace.is_detached(shown_by);
             RowLook {
                 exited: shared.exited.load(Ordering::Relaxed),
-                meta: meta_text(name, state.as_ref()),
+                meta: if remote { row_remote_meta::TEXT.to_string() } else { meta_text(name, state.as_ref()) },
+                remote,
                 status: status_of(state.as_ref()),
             }
         }
-        None => RowLook { exited: false, meta: String::new(), status: None },
+        None => RowLook { exited: false, meta: String::new(), remote: false, status: None },
     }
 }
 
@@ -160,14 +210,15 @@ fn work_sidebar(
             Row::Folder { key, expanded, n_terminals, current } => {
                 let name = folder_name(&key, work.folder_label(&key), home.as_deref());
                 let unseen = work.terminals_of(&key).into_iter().any(|id| window_view.done.is_unseen(id));
+                let tip = folder_tip(window_view, &key);
                 list = list.child(folder_row(
-                    FolderRowSpec { index: folder_index, key, name, expanded, n_terminals, current, unseen },
+                    FolderRowSpec { index: folder_index, key, name, expanded, n_terminals, current, unseen, tip },
                     cx,
                 ));
                 folder_index += 1;
             }
             Row::Terminal(terminal) => {
-                let look = row_look(window_view, terminal.id, &terminal.name);
+                let look = row_look(window_view, terminal.id, terminal.id, &terminal.name);
                 list = list.child(terminal_row(
                     TerminalRowSpec {
                         target: RowTarget::Terminal(terminal.id),
@@ -177,7 +228,10 @@ fn work_sidebar(
                         exited: look.exited,
                         unseen: window_view.done.is_unseen(terminal.id),
                         meta: look.meta,
+                        remote: look.remote,
                         status: look.status,
+                        tip: None,
+                        drop: window_view.row_drop_marker(terminal.id, cx),
                     },
                     cx,
                 ));
@@ -187,7 +241,7 @@ fn work_sidebar(
                     div()
                         .id(("work-more", folder_index))
                         .h(zpx(sidebar::ROW_HEIGHT))
-                        .pl(zpx(sidebar::TERMINAL_ROW_PADDING_LEFT))
+                        .pl(zpx(sidebar::TERMINAL_ROW_PADDING_BASE + crate::look::sidebar_indent()))
                         .flex()
                         .flex_row()
                         .items_center()
@@ -221,7 +275,7 @@ fn work_sidebar(
         let selected_group = selected.and_then(|id| work.group_of(id));
         for group in &work.groups {
             let name = work.name_of(group.root).unwrap_or("terminal");
-            let look = row_look(window_view, group.root, name);
+            let look = row_look(window_view, group.root, group.last_used, name);
             list = list.child(terminal_row(
                 TerminalRowSpec {
                     target: RowTarget::Group(group.root),
@@ -231,13 +285,18 @@ fn work_sidebar(
                     exited: look.exited,
                     unseen: group.members.iter().any(|member| window_view.done.is_unseen(member.id)),
                     meta: look.meta,
+                    remote: look.remote,
                     status: look.status,
+                    tip: Some(group_tip(window_view, group)),
+                    drop: None,
                 },
                 cx,
             ));
         }
     }
     let files_folder = window_view.files.folder();
+    // 파일 구획이 없는 폴더(홈 폴더의 터미널 등)에서도 검색이 열려 있으면 검색만 보이는 구획이 파일 구획 자리를 쓴다.
+    let search_only = window_view.search.open && files_folder.is_none();
     sidebar_frame()
         .child(crate::view_bar::view_bar(window_view, cx))
         .child(header)
@@ -246,8 +305,10 @@ fn work_sidebar(
             Some(_) if window_view.files.files_expanded => {
                 list.flex_none().max_h(gpui_kit::relative(sidebar::WORK_MAX_HEIGHT_WITH_FILES))
             }
+            None if search_only => list.flex_none().max_h(gpui_kit::relative(sidebar::WORK_MAX_HEIGHT_WITH_FILES)),
             // 파일 구획이 없거나 접혀 있으면 Work 목록이 남는 높이를 모두 쓴다.
             _ => list.flex_1().min_h_0(),
         })
         .children(files_folder.map(|folder| crate::files::list_view::files_section(window_view, folder, cx)))
+        .children(search_only.then(|| crate::search::view::search_section(window_view, cx)))
 }

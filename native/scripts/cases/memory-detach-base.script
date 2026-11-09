@@ -1,0 +1,20 @@
+# 분리 창 메모리의 비교 기준: 같은 두 터미널을 연 뒤 같은 시간을 쉬고 재는 대본(분리 창 명령이 없는 앱에서도 돈다).
+waittabs 1 @30000
+send echo MEM-A\r
+waitline MEM-A @20000
+key ctrl-shift-t
+waittabs 2 @20000
+send echo MEM-B\r
+wait 20000
+mem before-detach
+gpumem before-detach
+wait 20000
+mem detached-open
+gpumem detached-open
+wait 20000
+mem after-close
+gpumem after-close
+wait 20000
+mem after-10
+gpumem after-10
+quit

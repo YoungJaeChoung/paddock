@@ -5,6 +5,9 @@
 //! 폴더로 이동한 뒤 에이전트를 실행하면 그 폴더가 목록에 생긴다(`WorkState::promote_agent_terminals`).
 use std::collections::HashSet;
 
+// 경로 판정은 `paths`에 있다. 호출처가 `work_model::…`으로 쓰던 이름을 그대로 받도록 다시 내보낸다.
+pub use crate::paths::{folder_identity, folder_key, is_inside, same_folder};
+
 /// 같은 탭 줄에서 옮겨 갈 위치.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TabTarget {
@@ -136,105 +139,28 @@ pub fn default_terminal_name<S: AsRef<str>>(
 /// 한 폴더를 펼쳤을 때 한 번에 보이는 터미널 줄 수. 넘으면 "Show N more" 줄로 묶는다.
 pub const N_VISIBLE_TERMINALS: usize = 8;
 
-/// 경로가 Windows 모양(드라이브 글자 또는 `\\서버\공유`)인지.
-fn is_windows_style(path: &str) -> bool {
-    let bytes = path.as_bytes();
-    path.starts_with("\\\\") || (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':')
+/// 끌어 온 행을 놓는 자리: 대상 행의 앞(위)인지 뒤(아래)인지.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DropPosition {
+    Before,
+    After,
 }
 
-/// 작업 폴더의 key. 폴더를 가리키는 경로를 끝 구분자만 다른 같은 폴더가 한 줄이 되도록 맞춘 글자다.
-///
-/// 드라이브 경로는 구분자를 `/`로, 드라이브 글자를 대문자로 맞춘다(OSC 7과 탐색기 경로가 섞여 와도 같은 폴더가 되게).
-/// `\\wsl.localhost\…` 같은 공유 경로는 역슬래시를 그대로 둔다 — `wsl.exe`가 이 모양으로 받는다.
-/// 루트(`/`·`C:/`)의 구분자는 남긴다.
+/// 대상 행 위에서 놓는 세로 위치 `y`가 행의 위쪽 절반이면 앞, 아래쪽 절반이면 뒤다. 정확히 가운데는 앞이다.
 ///
 /// Examples
 /// --------
-/// | 경로                            | key                           |
-/// |---------------------------------|-------------------------------|
-/// | `/home/me/`                     | `/home/me`                    |
-/// | `c:\Users\me\`                  | `C:/Users/me`                 |
-/// | `\\wsl.localhost\Ubuntu\home\`  | `\\wsl.localhost\Ubuntu\home` |
-/// | `/`                             | `/`                           |
-pub fn folder_key(path: &str) -> String {
-    let trimmed = path.trim();
-    let bytes = trimmed.as_bytes();
-    let mut key = trimmed.to_string();
-    if trimmed.starts_with("\\\\") || trimmed.starts_with("//") {
-        // 같은 공유 경로가 OSC 7에서는 슬래시로, WSL 조사에서는 역슬래시로 온다. 역슬래시 한 가지 철자로 모은다.
-        key = trimmed.replace('/', "\\");
-        if let Some(host_end) = key[2..].find('\\').map(|at| at + 2) {
-            let host = key[2..host_end].to_ascii_lowercase();
-            if host == "wsl.localhost" || host == "wsl$" {
-                key.replace_range(2..host_end, &host);
-            }
-        }
-        while key.len() > 2 && (key.ends_with('\\') || key.ends_with('/')) {
-            key.pop();
-        }
-    } else if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
-        key = trimmed.replace('\\', "/");
-        key.replace_range(..1, &trimmed[..1].to_ascii_uppercase());
-        while key.len() > 3 && key.ends_with('/') {
-            key.pop();
-        }
-        if key.len() == 2 {
-            key.push('/');
-        }
-    } else {
-        while key.len() > 1 && (key.ends_with('/') || key.ends_with('\\')) {
-            key.pop();
-        }
-    }
-    key
-}
-
-/// 두 폴더 key를 같은 폴더인지 가르는 비교용 글자. 폴더를 "같다"고 보는 기준이 이 한 곳에 있다.
-///
-/// 드라이브 경로(`C:/…`)와 일반 공유 경로(`\\서버\\…`)는 윈도 파일 시스템이라 대소문자를 가리지 않으므로 모두 소문자로 맞춘다.
-/// `\\wsl.localhost\\…`·`\\wsl$\\…`는 배포판 이름까지만 소문자로 맞추고 그 아래는 리눅스 파일 시스템이라 그대로 둔다.
-/// 리눅스 경로도 그대로다. 표시는 이 글자가 아니라 원래 key로 한다.
-///
-/// Examples
-/// --------
-/// | key                           | 비교용 글자                  |
-/// |-------------------------------|------------------------------|
-/// | `C:/Users/Me`                 | `c:/users/me`                |
-/// | `\\srv\\Share\\Dir`           | `\\srv\\share\\dir`          |
-/// | `\\wsl.localhost\\Ubuntu\\App` | `\\wsl.localhost\\ubuntu\\App` |
-/// | `/App`                        | `/App`                       |
-pub fn folder_identity(key: &str) -> String {
-    let key = folder_key(key);
-    let is_wsl_share = key.starts_with("\\\\wsl.localhost\\") || key.starts_with("\\\\wsl$\\");
-    if is_wsl_share {
-        let distribution_end = key[2..].match_indices('\\').nth(1).map_or(key.len(), |(at, _)| at + 2);
-        let (head, tail) = key.split_at(distribution_end);
-        format!("{}{tail}", head.to_ascii_lowercase())
-    } else if is_windows_style(&key) {
-        key.to_ascii_lowercase()
-    } else {
-        key
-    }
-}
-
-/// 두 경로가 같은 작업 폴더를 가리키는지. 끝 구분자와 윈도 경로의 대소문자 차이는 같은 폴더다.
-pub fn same_folder(
-    left: &str,
-    right: &str,
-) -> bool {
-    folder_identity(left) == folder_identity(right)
-}
-
-/// `path`가 `key` 폴더 안(또는 그 폴더 자체)에 있는지.
-pub fn is_inside(
-    key: &str,
-    path: &str,
-) -> bool {
-    let (key, path) = (folder_identity(key), folder_identity(path));
-    let is_root = key.ends_with('/') || key.ends_with('\\');
-    path == key
-        || (is_root && path.starts_with(&key))
-        || path.strip_prefix(&key).is_some_and(|rest| rest.starts_with(['/', '\\']))
+/// | y   | 행 위 | 행 높이 | 결과     |
+/// |-----|-------|---------|----------|
+/// | 105 | 100   | 28      | `Before` |
+/// | 114 | 100   | 28      | `Before` |
+/// | 120 | 100   | 28      | `After`  |
+pub fn drop_position(
+    y: f32,
+    row_top: f32,
+    row_height: f32,
+) -> DropPosition {
+    if y > row_top + row_height / 2.0 { DropPosition::After } else { DropPosition::Before }
 }
 
 /// 행에 보일 폴더 이름. 사용자가 바꾼 이름이 먼저이고, 홈 폴더는 `~`, 나머지는 마지막 폴더 이름이다.
@@ -756,6 +682,29 @@ impl WorkState {
         }
     }
 
+    /// 끌어 온 터미널 행 `moved`를 `target` 행에 놓아 순서를 바꿀 수 있는지. 같은 작업 폴더의 다른 터미널끼리만 거짓이 아니다.
+    /// Unassigned 묶음의 터미널은 폴더가 없어 항상 거짓이다.
+    ///
+    /// Examples
+    /// --------
+    /// | moved | target | 결과                          |
+    /// |-------|--------|-------------------------------|
+    /// | 같은 폴더의 터미널 둘 | 서로 다름 | 참        |
+    /// | 터미널 하나           | 자기 자신 | 거짓      |
+    /// | 다른 폴더의 터미널    | -         | 거짓      |
+    /// | Unassigned 터미널     | -         | 거짓      |
+    pub fn can_reorder(
+        &self,
+        moved: u32,
+        target: u32,
+    ) -> bool {
+        moved != target
+            && match (self.folder_of(moved), self.folder_of(target)) {
+                (Some(left), Some(right)) => left == right,
+                _ => false,
+            }
+    }
+
     /// 한 폴더의 터미널 행. 목록 순서대로 이름을 쓰고, 같은 이름은 두 번째부터 `·2`·`·3`을 붙인다.
     /// 사이드바와 폴더의 탭 줄이 같은 이름표를 쓰도록 둘 다 이 행을 쓴다.
     ///
@@ -1215,18 +1164,6 @@ mod tests {
     }
 
     #[test]
-    fn test_folder_key_normalizes_separators_drive_letters_and_trailing_separators() {
-        assert_eq!(folder_key("/home/me/"), "/home/me");
-        assert_eq!(folder_key("/"), "/");
-        assert_eq!(folder_key("c:\\Users\\me\\"), "C:/Users/me");
-        assert_eq!(folder_key("C:\\"), "C:/");
-        assert_eq!(folder_key("C:/"), "C:/");
-        // WSL 공유 경로는 역슬래시를 그대로 둔다(wsl.exe가 이 모양으로 받는다).
-        assert_eq!(folder_key("\\\\wsl.localhost\\Ubuntu\\home\\me\\"), "\\\\wsl.localhost\\Ubuntu\\home\\me");
-        assert_eq!(folder_key("  /tmp/x  "), "/tmp/x");
-    }
-
-    #[test]
     fn test_folder_key_gives_one_spelling_to_wsl_paths_from_the_osc_report_and_the_wsl_probe() {
         // OSC 7은 슬래시, WSL 조사는 역슬래시로 같은 폴더를 알려 온다. 어느 쪽이든 같은 key가 된다.
         let probe = "\\\\wsl.localhost\\Ubuntu\\home\\me\\app";
@@ -1314,16 +1251,6 @@ mod tests {
     }
 
     #[test]
-    fn test_c_folder_same_folder_rule_is_one_function_ignoring_case_only_for_windows_drive_and_share_paths() {
-        assert!(same_folder("c:\\Users\\me", "C:\\users\\me\\"));
-        assert!(same_folder("\\\\server\\Share\\Dir", "\\\\SERVER\\share\\dir"));
-        // 리눅스 파일 시스템은 대소문자를 가린다: 리눅스 경로와 WSL 공유 경로의 배포판 이하.
-        assert!(!same_folder("/App", "/app"));
-        assert!(same_folder("\\\\wsl.localhost\\Ubuntu\\home\\me", "//WSL.localhost/ubuntu/home/me/"));
-        assert!(!same_folder("\\\\wsl.localhost\\Ubuntu\\home\\App", "\\\\wsl.localhost\\Ubuntu\\home\\app"));
-    }
-
-    #[test]
     fn test_c_folder_spellings_of_one_windows_folder_share_one_row_and_keep_the_first_spelling() {
         let mut work = WorkState::default();
         work.assign_terminal(1, "C:\\Users\\Me", "a");
@@ -1346,5 +1273,28 @@ mod tests {
         assert_eq!(work.folders.len(), 4);
         assert_eq!(work.folder_containing("/app/src"), Some("/app"));
         assert_eq!(work.folder_containing("/App/src"), Some("/App"));
+    }
+
+    #[test]
+    fn test_c_sync_4_a_row_dropped_on_the_upper_half_goes_before_and_on_the_lower_half_after() {
+        assert_eq!(drop_position(105.0, 100.0, 28.0), DropPosition::Before);
+        assert_eq!(drop_position(114.0, 100.0, 28.0), DropPosition::Before, "the exact middle is before");
+        assert_eq!(drop_position(120.0, 100.0, 28.0), DropPosition::After);
+    }
+
+    #[test]
+    fn test_c_sync_5_a_row_can_only_move_among_the_terminals_of_its_own_folder() {
+        let mut state = WorkState::default();
+        state.assign_terminal(1, "/a", "one");
+        state.assign_terminal(2, "/a", "two");
+        state.assign_terminal(3, "/b", "three");
+        state.add_group(4, "loose");
+        assert!(state.can_reorder(1, 2));
+        assert!(!state.can_reorder(1, 1), "itself");
+        assert!(!state.can_reorder(1, 3), "another folder");
+        assert!(!state.can_reorder(4, 1), "an unassigned terminal has no folder");
+        assert!(!state.can_reorder(1, 9), "unknown terminal");
+        state.move_terminal(2, 1, false);
+        assert_eq!(state.terminals_of("/a"), vec![2, 1]);
     }
 }

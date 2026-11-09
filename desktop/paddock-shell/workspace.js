@@ -46,7 +46,7 @@ const { UsagePanel } = require('./usage-panel');
 const agent = require('./agent-model');
 const { startRendererProbe } = require('./renderer-probe');
 const agentAccount = require('./agent-account');
-const { STORAGE, STATUS_ITEMS, MARKDOWN_PREVIEW, element, button, attachMenuKeys } = require('./workspace/shared');
+const { STORAGE, STATUS_ITEMS, MARKDOWN_PREVIEW, PENCIL, element, button, attachMenuKeys } = require('./workspace/shared');
 const { RootSwitcher } = require('./workspace/root-switcher');
 const { AgentActivity } = require('./workspace/agent-activity');
 const { AccountTerminals } = require('./workspace/account-terminals');
@@ -58,6 +58,7 @@ const { QuickSettings } = require('./workspace/quick-settings');
 const { PathBar } = require('./workspace/path-bar');
 const { StatusBar } = require('./workspace/status-bar');
 const { MemoryNotice } = require('./workspace/memory-notice');
+const { AgentStatusHookSync } = require('./workspace/agent-status-hook');
 
 // 터미널 현재 폴더·실행 중 프로그램·메모리처럼 이벤트가 없는 값을 다시 읽는 간격(ms).
 const REFRESH_INTERVAL = 2000;
@@ -91,6 +92,9 @@ const RESIZE_KEY_GUARD_MS = 200;
 
 // 파일 감시가 걸리지 않는 WSL 폴더를 보는 동안 Git 상태·파일 목록을 다시 읽는 간격(watchShownFolder).
 const WSL_FOLDER_REREAD_MS = 5000;
+
+// 감시가 걸리지 않는 WSL 폴더의 열린 파일을 보이는 동안 디스크와 대조하는 간격(watchOpenWslFiles).
+const WSL_OPEN_FILE_CHECK_MS = 2000;
 
 /**
  * 사이드바(Work·Source control·Extensions), Unassigned 작업 목록, 내부 터미널·파일 탭 줄, 본문 경로 줄, 상태 줄을 Theia 서비스와 잇는다.
@@ -130,6 +134,8 @@ class PaddockWorkspace {
         this.pageFolders = new Map();
         this.markdownPreviewSources = new Map();
         this.pendingMarkdownSource = null;
+        // 별도 창으로 한 번 내보낸 Pencil 화면. 되돌린 탭을 다시 내보내지 않으려고 기억한다.
+        this.pencilWindowOffered = new WeakSet();
         this.homePath = '';
         // -- 에이전트 완료 알림 --
         this.activity = new Map();
@@ -175,6 +181,7 @@ class PaddockWorkspace {
         this.pathBar = new PathBar(this);
         this.statusBar = new StatusBar(this);
         this.memoryNotice = new MemoryNotice(this);
+        this.agentStatusHook = new AgentStatusHookSync(this);
     }
 
     // -- 명령·단축키 --
@@ -466,6 +473,8 @@ class PaddockWorkspace {
             }
             // 메모리 안내를 켜거나 기준값을 바꾸면 기본 환경과 등록 계정의 Claude 설정을 맞춘다.
             if (this.memoryNotice.isPreference(preferenceName)) void this.memoryNotice.syncAll();
+            // 에이전트 상태 훅을 켜거나 끄면 같은 설정 파일을 맞춘다.
+            if (this.agentStatusHook.isPreference(preferenceName)) void this.agentStatusHook.syncAll();
             if (preferenceName === 'paddock.interfaceFontFamily' || preferenceName === 'paddock.sidebarIndent') {
                 this.quickSettings.applyInterfacePreferences();
                 if (preferenceName === 'paddock.sidebarIndent') this.refreshSoon();
@@ -488,6 +497,16 @@ class PaddockWorkspace {
             if (this.isTerminal(widget)) this.agentActivity.watchTerminal(widget);
             if (widget instanceof WebviewWidget && widget.viewType === MARKDOWN_PREVIEW.VIEW_TYPE && this.pendingMarkdownSource) {
                 this.markdownPreviewSources.set(widget.id, this.pendingMarkdownSource);
+            }
+            // 묶음을 바꾸면 그 묶음 밖 탭은 DOM에서 떨어지고, Theia는 떨어진 웹뷰의 iframe을 지운다(가려진 탭은 Pencil이 유지를 켜 둬 괜찮다).
+            // 묶음과 무관한 별도 창에 두면 떨어지지 않는다. 처음 열 때만 옮겨, 사용자가 본 창으로 되돌린 탭은 다시 내보내지 않는다.
+            if (widget instanceof WebviewWidget && widget.viewType === PENCIL.VIEW_TYPE && this.layoutReady && !widget.secondaryWindow
+                && !this.pencilWindowOffered.has(widget) && this.preferences.get(PENCIL.OWN_WINDOW_PREFERENCE, true)) {
+                this.pencilWindowOffered.add(widget);
+                // 연 쪽의 활성화가 끝난 뒤 옮긴다.
+                setTimeout(() => {
+                    if (!widget.isDisposed && !widget.secondaryWindow) this.run(() => this.folderTabs.moveTabToWindow(widget.id));
+                }, 0);
             }
             if (this.isFolderPage(widget)) {
                 const folder = this.shownFolder();
@@ -693,6 +712,7 @@ class PaddockWorkspace {
             if (quickSettings.matches(':popover-open')) this.quickSettings.renderQuickSettings();
         });
         this.shell.footer.node.querySelector('.remote-indicator').addEventListener('click', () => this.run(() => this.commands.executeCommand('remote.select')));
+        this.watchOpenWslFiles();
         this.files.onDidFilesChange((event) => {
             this.refreshRepositoriesOf(event.changes.map(change => change.resource));
             // 파일 내용 변경은 행 표시를 바꾸지 않는다. 추가·삭제 때는 수정 시각의 정밀도에 기대지 않고 목록을 다시 읽는다.
@@ -769,6 +789,7 @@ class PaddockWorkspace {
         this.usagePanel.data.restoreSelection(await this.storage.getData(STORAGE.USAGE_SELECTION, {}).catch(() => ({})));
         void this.usagePanel.refresh();
         void this.memoryNotice.syncAll();
+        void this.agentStatusHook.syncAll();
         const liveIds = new Set(this.terminals.all.map(terminal => terminal.id));
         this.state = model.restore(saved || '', liveIds);
         const savedInner = await this.storage.getData(STORAGE.INNER_TABS, '{}');
@@ -1863,6 +1884,43 @@ class PaddockWorkspace {
                 this.refreshRepositoriesOf([uri]);
             }
         }
+    }
+
+    /**
+     * WSL 폴더(\\wsl.localhost\…)의 열린 파일이 에이전트·터미널이 쓴 내용을 바로 보이게 한다. 앱 시작 때 한 번 건다.
+     *
+     * 열린 파일은 Theia가 파일마다 감시를 걸어 디스크가 바뀌면 다시 읽지만, Windows의 파일 감시는 WSL 폴더에 걸리지 않아
+     * 그 파일만 사건이 오지 않는다. 그래서 창이 보이는 동안 몇 초마다, 그리고 창에 초점이 돌아올 때 화면에 보이는 편집기만
+     * 쓴 시각·크기를 읽어 달라졌으면 다시 읽는다. 저장하지 않은 수정이 있는 문서는 다시 읽지 않는다(Theia가 저장 때 충돌을 묻는다).
+     */
+    watchOpenWslFiles() {
+        const stamps = new Map();
+        let n_checking = 0;
+        const check = async () => {
+            if (!document.hidden && n_checking === 0) {
+                const documents = [...this.shell.mainPanel.widgets()]
+                    .filter(widget => widget.isVisible && widget.editor?.document?.sync)
+                    .map(widget => widget.editor.document)
+                    .filter(document => ['wsl.localhost', 'wsl$'].includes(new URI(document.uri).authority.toLowerCase()));
+                n_checking += 1;
+                try {
+                    for (const document of documents) {
+                        const stat = await this.files.resolve(new URI(document.uri), { resolveMetadata: true }).catch(() => null);
+                        const stamp = stat ? `${stat.mtime}:${stat.size}` : null;
+                        const previous = stamps.get(document.uri);
+                        stamps.set(document.uri, stamp);
+                        if (stamp && previous !== undefined && previous !== stamp && !document.dirty) await document.sync();
+                    }
+                } catch (error) {
+                    // 주기 확인이라 실패를 알림으로 띄우지 않는다. 다음 확인에서 다시 읽는다.
+                    console.warn('Could not reread an open WSL file', error);
+                } finally {
+                    n_checking -= 1;
+                }
+            }
+        };
+        setInterval(check, WSL_OPEN_FILE_CHECK_MS);
+        window.addEventListener('focus', check);
     }
 
     /**

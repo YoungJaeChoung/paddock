@@ -1,0 +1,18 @@
+# 폴더 검색(검색할 폴더가 없음): 터미널이 홈 폴더에 있으면 파일 구획이 없고 검색할 폴더도 없다. Ctrl+Shift+F는 검색 구획에 입력칸 대신 안내 문장(`No folder to search.`)을 보이고
+# 홈 폴더 전체를 훑지 않는다. 다시 누르면 닫힌다. 임시 홈에서 기본 셸을 PowerShell로 둬야 한다(셸이 홈에서 시작한다). 실행 이름은 search-nofolder다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+key ctrl-shift-f
+waitstate search open=y scope=- @5000
+waitstate search-notice No folder to search. @5000
+wait 500
+state search-nofolder
+shot search-nofolder
+act search needle
+wait 800
+state search-nofolder-typed
+waitstate n_results=0 n_files=0 capped=n state=idle @5000
+key ctrl-shift-f
+waitstate search open=n @5000
+nolinestart 1 GOT-#
+quit

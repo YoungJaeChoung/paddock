@@ -1,0 +1,58 @@
+# 동기화 ① 터미널 찾기: Ctrl+Shift+H가 띠를 열고, 질의에 따라 스크롤백까지 찾아 `N of M`을 보이며, 다음·이전이 순환하고 일치가 있는 줄로 스크롤한다.
+# 입력칸이 키를 받는 동안 글자는 PTY로 가지 않고, Esc는 띠를 닫아 이후 글자가 PTY로 간다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send 1..200 | ForEach-Object { if ($_ % 17 -eq 0) { ("nee" + "dle $_") } else { "line $_" } }\r
+send echo FILLED\r
+waitline FILLED @20000
+state before-find
+wait 12000
+mem find-before
+key ctrl-shift-h
+waitstate term-find open=y @5000
+shot find-open
+# 띠가 열려 있는 동안 친 글자는 입력칸으로 간다(PTY로 가지 않는다).
+text needle
+waitstate count=1_of_11 @5000
+state find-first
+shot find-first
+dump screen-while-find
+act termfindnext
+waitstate count=2_of_11 @5000
+state find-second
+act termfindprev
+act termfindprev
+waitstate count=11_of_11 @5000
+state find-wrapped-back
+shot find-last
+act termfindnext
+waitstate count=1_of_11 @5000
+wait 1500
+mem find-open
+# 일치가 없으면 No results.
+act termfind zzzz
+waitstate count=No_results @5000
+state find-none
+shot find-none
+# 대문자가 든 질의는 대소문자를 가린다(NEEDLE은 일치 없음).
+act termfind NEEDLE
+waitstate count=No_results @5000
+act termfind line 20
+waitstate matches=2 @5000
+act termfind needle 187
+waitstate count=1_of_1 @5000
+key escape
+waitstate term-find open=n @5000
+send echo AFTER-FIND\r
+waitline AFTER-FIND @10000
+state find-closed
+wait 1500
+mem find-closed
+dump screen-after-find
+# 셸의 키는 그대로다: 띠가 닫힌 뒤 평 Ctrl+H는 PTY로 가서(ConPTY가 Ctrl+Backspace로 읽는다: 키 8·Control 수정 키 4) 앱이 가로채지 않는다.
+send while ($true) { $k = [Console]::ReadKey($true); Write-Host ("GOT-" + [int]$k.Key + "-" + [int]$k.Modifiers) }\r
+wait 1500
+key ctrl-h
+waitline GOT-8-4 @10000
+state ctrl-h-to-pty
+quit

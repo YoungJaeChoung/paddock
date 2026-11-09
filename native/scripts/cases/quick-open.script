@@ -1,0 +1,53 @@
+# 파일 빠른 열기(덩어리 27): Ctrl+Shift+P는 터미널이 활성이어도 앱이 받아(PTY 0) 이름으로 파일을 고르는 목록을 열고, 입력한 글자로 점수 순으로 좁힌다.
+# ↓·Enter가 고른 파일을 파일 탭으로 열고 Esc가 닫는다. 평 Ctrl+P는 셸로 간다. .gitignore에 든 파일은 목록에 없다. 실행기가 임시 홈에 기본 셸을 PowerShell로 둬야 한다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-quick"; mkdir "$p\\src", "$p\\lib\\data.x", "$p\\docs", "$p\\out", "$env:USERPROFILE\\bin" -Force | Out-Null; cd $p; Set-Content .gitignore "out/"; Set-Content src\\a.js one; Set-Content src\\b.js two; Set-Content "lib\\data.x\\jar.txt" three; Set-Content docs\\x.md four; Set-Content out\\ignored.js five; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"\r
+send echo READY-QUICK\r
+waitline READY-QUICK @30000
+send claude.exe -n 600 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+send while ($true) { $k = [Console]::ReadKey($true); Write-Host ("GOT-" + [int]$k.Key) }\r
+wait 1500
+# 터미널이 활성: Ctrl+Shift+P가 목록을 연다(PTY 0).
+key ctrl-shift-p
+waitoverlay quick-open @3000
+waitstate quick-open open=y indexing=n @5000
+state quick-opened
+shot quick-open-empty
+dumptab 2 pty-after-open
+nolinestart 2 GOT-#
+# 질의 `a.j`: `src/a.js`가 첫 줄이고 무시한 `out/ignored.js`·맞지 않는 파일은 없다.
+text a.j
+waitstate quick-row 1 src/a.js @3000
+state quick-ajs
+shot quick-open-query
+# `jar`: 폴더를 가로질러도 파일 이름 `jar.txt`가 맞는다. 지우고 다시: 목록은 점수 순이다.
+act quickopen jar
+waitstate quick-row 1 lib/data.x/jar.txt @3000
+act quickopen .js
+waitstate quick-highlight=1 @3000
+state quick-js
+# ↓로 둘째 줄을 강조하고 Enter로 연다.
+key down
+waitstate quick-highlight=2 @3000
+key enter
+waitoverlay none @3000
+waitstate kind=text state=text @10000
+state quick-opened-file
+act quickopen b.js
+waitstate quick-row 1 src/b.js @3000
+key escape
+waitoverlay none @3000
+# 평 Ctrl+P는 셸로 간다(ReadKey가 키 80을 받는다). 목록은 열리지 않는다.
+act selecttab 2
+wait 800
+key ctrl-p
+waitline GOT-80 @5000
+state ctrl-p
+quit

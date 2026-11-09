@@ -1,0 +1,10 @@
+# 동기화 ② 터미널에 파일 끌어 놓기(WSL 셸, C-D69): Windows 경로가 `/mnt/c/…`로 바뀌어 입력줄에 들어가고, 빈칸은 `\ `로 이스케이프되며 뒤에 빈칸이 하나 붙는다.
+# 이 대본은 실행 이름이 terminal-drop-paths-wsl일 때 임시 홈 경로를 쓴다. 기본 셸은 WSL이다.
+waittabs 1 @30000
+send echo READY-WSL\r
+waitline READY-WSL @20000
+act termdrop C:/Temp/pdk-run/home-terminal-drop-paths-wsl/My Files/a.png|C:/Temp/pdk-run/home-terminal-drop-paths-wsl/b.png
+wait 800
+dump wsl-line
+state wsl-dropped
+quit

@@ -1,0 +1,28 @@
+# 동기화 ② 터미널 경로 붙여넣기(Ctrl+V 경로, C-D69). **클립보드를 바꾸므로 야간에만.** 파일은 경로 글자 + 빈칸(Enter 없음), 비트맵은 `pasted-images\paste-…png`를 저장한 뒤 그 경로.
+# 이 대본은 실행 이름이 terminal-paste-paths일 때 임시 홈 경로를 쓴다. 기본 셸은 PowerShell이다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send Add-Type -AssemblyName System.Windows.Forms, System.Drawing; mkdir "$env:USERPROFILE\\My Files" -Force | Out-Null; Set-Content "$env:USERPROFILE\\My Files\\a.png" x; Set-Content "$env:USERPROFILE\\b.png" y; $saved = Get-Clipboard -Raw\r
+send echo READY-PASTE\r
+waitline READY-PASTE @20000
+send Set-Clipboard -Path "$env:USERPROFILE\\My Files\\a.png", "$env:USERPROFILE\\b.png"\r
+wait 800
+act clipboard
+waitstate clipboard=files:2 @5000
+act termpaste
+wait 800
+dump files-pasted
+key ctrl-c
+wait 500
+send [Windows.Forms.Clipboard]::SetImage((New-Object System.Drawing.Bitmap 20, 10))\r
+wait 800
+act clipboard
+waitstate clipboard=image: @5000
+act termpaste
+wait 1500
+dump bitmap-pasted
+key ctrl-c
+wait 500
+send Set-Clipboard -Value $saved\r
+wait 500
+quit

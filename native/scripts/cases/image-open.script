@@ -7,7 +7,7 @@ waitstate cwd=C: @30000
 send $p = "$env:USERPROFILE\\proj-md"; mkdir "$env:USERPROFILE\\bin" -Force | Out-Null; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
 send echo READY-IMG\r
 waitline READY-IMG @20000
-send claude -n 300 127.0.0.1\r
+send claude.exe -n 300 127.0.0.1\r
 waitstate program=claude @20000
 waitstate row folder @20000
 waitstate files-loaded=true @10000
@@ -24,6 +24,14 @@ waitstate kind=image state=image size=640x480 @10000
 wait 800
 state img-jpg
 shot img-jpg
+# 칸보다 낮은 그림은 맞춤·1:1 모두 세로 가운데에 놓인다(캡처 img-jpg·img-jpg-actual의 그림 위·아래 여백이 같아야 한다).
+act imgzoom
+waitstate zoom=actual @5000
+wait 800
+shot img-jpg-actual
+act imgzoom
+waitstate zoom=fit @5000
+wait 300
 act openpath C:/Temp/pdk-run/home-image-open/proj-md/c.gif
 waitstate kind=image state=image size=100x100 @10000
 wait 800
@@ -61,6 +69,13 @@ act openpath C:/Temp/pdk-run/home-image-open/proj-md/h-49mp.png
 waitstate kind=image state=image size=7000x7000 @30000
 state img-49mp
 mem open-49mp
+# 줄여 올린 그림(4000×4000)의 조각이 원본 크기(7000×7000) 상자 전체를 덮는지: 1:1로 바꿔 오른쪽 아래 끝까지 스크롤한 캡처에 빈 곳이 없어야 한다.
+act imgzoom
+waitstate full=yes @30000
+act imgscroll 7000 7000
+wait 1500
+state img-49mp-end
+shot img-49mp-end
 act closefile
 wait 3000
 mem closed-49mp

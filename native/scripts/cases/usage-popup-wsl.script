@@ -1,0 +1,12 @@
+# 사용량 목록(WSL 계정, 덩어리 30): WSL 계정 행은 `WSL · Ubuntu` 환경 줄과 `\\wsl.localhost` 경로로 읽은 값을 보이고, 이 컴퓨터(Windows)의 기본 Claude는 다른 실행 환경이라 그 계정과 대조하지 않는다.
+# 계정 폴더는 실제 WSL 홈에 이미 있는 것이라 읽기만 한다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+waitstate claude=WSL Real: @40000
+act usageopen claude
+waitstate usage-popup open=yes @10000
+waitstate usage-row 1 claude name=WSL_Real in-bar=yes default=no env=WSL_·_Ubuntu @30000
+state popup-wsl
+shot popup-wsl
+act usageclose
+quit

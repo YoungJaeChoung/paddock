@@ -1,0 +1,86 @@
+# 분리 창 메모리를 창 크기별로 잰다(덩어리 36): 1920×1080, 처음부터 그 크기로 열기. 열기 전 → 열림 20초 → 닫은 뒤 20초 → 열고 닫기 10회 → 15초.
+waittabs 1 @30000
+send echo MEM-A\r
+waitline MEM-A @20000
+key ctrl-shift-t
+waittabs 2 @20000
+send echo MEM-B\r
+wait 20000
+mem before
+gpumem before
+act detachsize 1920 1080
+act movetowindow 2
+waitstate detached=2 @10000
+wait 20000
+mem open
+gpumem open
+act moveback 2
+waitstate detached=- @10000
+wait 20000
+mem after-close
+gpumem after-close
+act movetowindow 2
+waitstate detached=2 @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+wait 15000
+mem after-10
+gpumem after-10
+act quick quitstop
+wait 3000

@@ -1,0 +1,20 @@
+# 저장 결과가 오기 전에 탭을 닫으려 하는 순서(편집 → Ctrl+S → ×): 닫기 묻기에서 `Save`를 고르면 이미 가 있는 저장이 끝났을 때 탭이 닫힌다("cannot be saved right now"가 뜨지 않는다).
+# 1 MiB 파일이라 저장이 몇십 ms 걸려 × 와 겹친다(먼저 끝났다면 묻지 않고 닫힌다 — 어느 쪽이든 저장된 채 탭이 닫혀야 한다). 실행 이름이 file-edit-save-race일 때 임시 홈 경로를 쓴다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-race"; mkdir $p -Force | Out-Null; $line = "export const value = 'a long enough line of source text to fill the file quickly';`n"; $big = $line * [math]::Ceiling(1000000 / $line.Length); [IO.File]::WriteAllText("$p\\big.ts", $big.Substring(0, 1000000)); Write-Host DONE-RACE-FILE\r
+waitline DONE-RACE-FILE @60000
+act openpath C:/Temp/pdk-run/home-file-edit-save-race/proj-race/big.ts
+waitstate kind=text state=text @20000
+act focusfile
+text Z
+waitstate unsaved=yes @3000
+key ctrl-s
+act closefile
+act savechoice save
+wait 2500
+state after-race
+waitnostate proj-race/big.ts selected @10000
+send $x = ([IO.File]::ReadAllBytes("$env:USERPROFILE\\proj-race\\big.ts"))[0]; if ($x -eq 90) { Write-Host ("SA" + "ME-RACE") } else { Write-Host ("DI" + "FF-RACE " + $x) }\r
+waitline SAME-RACE @10000
+quit

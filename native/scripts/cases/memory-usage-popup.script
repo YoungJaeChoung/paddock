@@ -1,0 +1,154 @@
+# 사용량 목록 열고 닫기 20회(덩어리 30): 목록을 닫은 뒤 앱 Private 메모리가 평평하고 닫는 때마다 같은 값으로 돌아온다. 가짜 계정 7개(usage-popup-fixture.sh).
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send claude.exe -n 900 127.0.0.1\r
+waitstate program=claude @20000
+waitstate claude=Alpha One: @30000
+wait 3000
+mem before-open
+gpumem before-open
+act usageopen claude
+waitstate usage-popup open=yes @10000
+wait 800
+act usageclose
+waitstate usage-popup open=no @5000
+wait 400
+wait 1500
+mem after-close-1
+gpumem after-close-1
+act usageopen claude
+waitstate usage-popup open=yes @10000
+wait 800
+act usageclose
+waitstate usage-popup open=no @5000
+wait 400
+act usageopen claude
+waitstate usage-popup open=yes @10000
+wait 800
+act usageclose
+waitstate usage-popup open=no @5000
+wait 400
+act usageopen claude
+waitstate usage-popup open=yes @10000
+wait 800
+act usageclose
+waitstate usage-popup open=no @5000
+wait 400
+act usageopen claude
+waitstate usage-popup open=yes @10000
+wait 800
+act usageclose
+waitstate usage-popup open=no @5000
+wait 400
+wait 1500
+mem after-close-5
+gpumem after-close-5
+act usageopen claude
+waitstate usage-popup open=yes @10000
+wait 800
+act usageclose
+waitstate usage-popup open=no @5000
+wait 400
+act usageopen claude
+waitstate usage-popup open=yes @10000
+wait 800
+act usageclose
+waitstate usage-popup open=no @5000
+wait 400
+act usageopen claude
+waitstate usage-popup open=yes @10000
+wait 800
+act usageclose
+waitstate usage-popup open=no @5000
+wait 400
+act usageopen claude
+waitstate usage-popup open=yes @10000
+wait 800
+act usageclose
+waitstate usage-popup open=no @5000
+wait 400
+act usageopen claude
+waitstate usage-popup open=yes @10000
+wait 800
+act usageclose
+waitstate usage-popup open=no @5000
+wait 400
+wait 1500
+mem after-close-10
+gpumem after-close-10
+act usageopen claude
+waitstate usage-popup open=yes @10000
+wait 800
+act usageclose
+waitstate usage-popup open=no @5000
+wait 400
+act usageopen claude
+waitstate usage-popup open=yes @10000
+wait 800
+act usageclose
+waitstate usage-popup open=no @5000
+wait 400
+act usageopen claude
+waitstate usage-popup open=yes @10000
+wait 800
+act usageclose
+waitstate usage-popup open=no @5000
+wait 400
+act usageopen claude
+waitstate usage-popup open=yes @10000
+wait 800
+act usageclose
+waitstate usage-popup open=no @5000
+wait 400
+act usageopen claude
+waitstate usage-popup open=yes @10000
+wait 800
+act usageclose
+waitstate usage-popup open=no @5000
+wait 400
+wait 1500
+mem after-close-15
+gpumem after-close-15
+act usageopen claude
+waitstate usage-popup open=yes @10000
+wait 800
+act usageclose
+waitstate usage-popup open=no @5000
+wait 400
+act usageopen claude
+waitstate usage-popup open=yes @10000
+wait 800
+act usageclose
+waitstate usage-popup open=no @5000
+wait 400
+act usageopen claude
+waitstate usage-popup open=yes @10000
+wait 800
+act usageclose
+waitstate usage-popup open=no @5000
+wait 400
+act usageopen claude
+waitstate usage-popup open=yes @10000
+wait 800
+act usageclose
+waitstate usage-popup open=no @5000
+wait 400
+act usageopen claude
+waitstate usage-popup open=yes @10000
+wait 800
+act usageclose
+waitstate usage-popup open=no @5000
+wait 400
+wait 1500
+mem after-close-20
+gpumem after-close-20
+act usageopen claude
+waitstate usage-popup open=yes @10000
+wait 2500
+mem popup-open
+gpumem popup-open
+act usageclose
+wait 20000
+mem final-20s
+gpumem final-20s
+quit

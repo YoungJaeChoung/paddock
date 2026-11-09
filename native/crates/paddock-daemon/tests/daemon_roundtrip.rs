@@ -519,16 +519,124 @@ fn test_c_t1_bad_token_dropped_after_hello() {
     let (_good, hello_ok) = daemon.connect_authenticated();
     assert_eq!(hello_ok.pid, daemon.pid());
     assert_eq!(hello_ok.fingerprint, info.fingerprint);
+    assert_eq!(hello_ok.protocol_version, PROTOCOL_VERSION);
+
+    // 틀린 토큰은 앱의 버전이 달라도 거절되고 연결이 닫힌다(버전은 토큰이 맞은 뒤에야 의미가 있다).
+    let mut other_version = Client::connect(&info.endpoint);
+    other_version
+        .send(Frame::json(kind::HELLO, &Hello { token: "wrong".into(), protocol_version: PROTOCOL_VERSION + 1 }));
+    assert_eq!(other_version.next(WAIT).expect("an error frame").kind, kind::ERR);
+    assert!(other_version.next(WAIT).is_none());
+}
+
+/// 토큰이 맞고 프로토콜 버전만 다른 인사를 보낸 연결을 돌려준다.
+fn connect_with_another_version(
+    daemon: &TestDaemon,
+    version: u32,
+) -> (Client, HelloOk) {
+    let info = daemon.wait_for_info();
+    let mut client = Client::connect(&info.endpoint);
+    client.send(Frame::json(kind::HELLO, &Hello { token: info.token, protocol_version: version }));
+    let hello_ok = client.expect(kind::HELLO_OK).parse_json().expect("hello_ok json");
+    (client, hello_ok)
 }
 
 #[test]
-fn test_c_t1_old_protocol_version_is_refused() {
+fn test_c_d89_a_hello_with_another_version_gets_hello_ok_with_the_daemons_version() {
     let daemon = TestDaemon::start();
+    for version in [0, 1, PROTOCOL_VERSION + 1] {
+        let (_client, hello_ok) = connect_with_another_version(&daemon, version);
+        assert_eq!(hello_ok.protocol_version, PROTOCOL_VERSION, "app version {version}");
+        assert_eq!(hello_ok.pid, daemon.pid());
+    }
+}
+
+#[test]
+fn test_c_d89_a_handshake_only_connection_refuses_new_but_accepts_status_and_shutdown() {
+    let mut daemon = TestDaemon::start();
+    let (mut client, _) = connect_with_another_version(&daemon, PROTOCOL_VERSION + 1);
+
+    // 터미널을 여는 요청과 목록 요청은 ERR로 거절되지만 연결은 유지된다.
+    for refused in [
+        Frame::json(
+            kind::NEW,
+            &New {
+                shell: SHELL.into(),
+                cwd: None,
+                cols: 80,
+                rows: 24,
+                wsl_distribution: None,
+                launch: None,
+                preload: None,
+                env: Vec::new(),
+            },
+        ),
+        Frame::new(kind::LIST, Vec::new()),
+        Frame::new(kind::MEMORY_REQUEST, Vec::new()),
+    ] {
+        let kind_sent = refused.kind;
+        client.send(refused);
+        let reply = client.next(WAIT).unwrap_or_else(|| panic!("a reply to kind {kind_sent}"));
+        assert_eq!((reply.kind, reply.as_text()), (kind::ERR, "Unsupported protocol version".to_string()));
+    }
+
+    // 상태는 읽을 수 있고, 거절된 NEW가 터미널을 만들지 않았다.
+    client.send(Frame::new(kind::STATUS_REQUEST, Vec::new()));
+    let status: Status = client.expect(kind::STATUS).parse_json().unwrap();
+    assert_eq!((status.pid, status.n_terminals), (daemon.pid(), 0));
+
+    let mut log = String::new();
+    std::fs::File::open(daemon.log_path()).expect("daemon.log").read_to_string(&mut log).unwrap();
+    assert!(
+        log.contains(&format!("protocol v{} (daemon v{PROTOCOL_VERSION}), handshake only", PROTOCOL_VERSION + 1)),
+        "{log}"
+    );
+    assert!(!daemon.token_in(&log), "token must never be logged");
+
+    // 같은 연결로 종료를 요청하면 STATUS{0}가 오고 프로세스가 사라지며 접속 정보 파일이 지워진다.
+    client.send(Frame::new(kind::SHUTDOWN, Vec::new()));
+    let status: Status = client.expect(kind::STATUS).parse_json().unwrap();
+    assert_eq!(status.n_terminals, 0);
+    assert!(daemon.wait_for_exit(WAIT), "the daemon must exit after SHUTDOWN on a handshake-only connection");
+    assert!(!daemon.info_path().exists(), "daemon.json must be removed");
+}
+
+#[cfg(feature = "test-hooks")]
+#[test]
+fn test_c_d89_strict_hello_hook_rejects_like_v1() {
+    let daemon = TestDaemon::spawn_with_env(&[], &[("PADDOCK_DAEMON_STRICT_HELLO", "1")]);
     let info = daemon.wait_for_info();
+
+    // 버전이 다르면 ERR 뒤 연결이 닫힌다.
     let mut client = Client::connect(&info.endpoint);
-    client.send(Frame::json(kind::HELLO, &Hello { token: info.token, protocol_version: PROTOCOL_VERSION + 1 }));
-    assert_eq!(client.next(WAIT).expect("an error frame").kind, kind::ERR);
-    assert!(client.next(WAIT).is_none());
+    client.send(Frame::json(kind::HELLO, &Hello { token: info.token.clone(), protocol_version: PROTOCOL_VERSION + 1 }));
+    let reply = client.next(WAIT).expect("an error frame");
+    assert_eq!((reply.kind, reply.as_text()), (kind::ERR, "Unsupported protocol version".to_string()));
+    assert!(client.next(WAIT).is_none(), "connection must be closed after the error");
+
+    // 버전이 같으면 평소처럼 통한다.
+    let (_good, hello_ok) = daemon.connect_authenticated();
+    assert_eq!(hello_ok.protocol_version, PROTOCOL_VERSION);
+}
+
+#[cfg(feature = "test-hooks")]
+#[test]
+fn test_c_d89_protocol_version_hook_changes_the_greeting() {
+    let hooked = PROTOCOL_VERSION + 1;
+    let daemon = TestDaemon::spawn_with_env(&[], &[("PADDOCK_DAEMON_PROTOCOL_VERSION", &hooked.to_string())]);
+    daemon.wait_for_info();
+
+    // 현재 버전의 앱은 다른 버전의 데몬을 만난 것이라 데몬의 버전을 알고 인사만 받아들인 연결이 된다.
+    let (mut mismatched, hello_ok) = connect_with_another_version(&daemon, PROTOCOL_VERSION);
+    assert_eq!(hello_ok.protocol_version, hooked);
+    mismatched.send(Frame::new(kind::LIST, Vec::new()));
+    assert_eq!(mismatched.next(WAIT).expect("a reply").kind, kind::ERR);
+
+    // 훅이 흉내 낸 버전과 같은 앱은 모든 요청을 쓸 수 있다.
+    let (mut matching, hello_ok) = connect_with_another_version(&daemon, hooked);
+    assert_eq!(hello_ok.protocol_version, hooked);
+    matching.send(Frame::new(kind::LIST, Vec::new()));
+    matching.expect(kind::LIST_REPLY);
 }
 
 #[test]
@@ -698,6 +806,116 @@ fn test_c_d4b_second_client_attaches_same_daemon() {
     second.send(Frame::new(kind::STATUS_REQUEST, Vec::new()));
     let status: Status = second.expect(kind::STATUS).parse_json().unwrap();
     assert_eq!((status.pid, status.n_terminals), (daemon.pid(), 1));
+}
+
+#[test]
+fn test_c_d76_a_memory_request_is_answered_with_a_report_and_leaves_the_connection_usable() {
+    let daemon = TestDaemon::start();
+    let (mut connection, _hello) = daemon.connect_authenticated();
+    connection.send(Frame::new(kind::MEMORY_REQUEST, Vec::new()));
+    let report: paddock_protocol::message::MemoryReport = connection.expect(kind::MEMORY_REPORT).parse_json().unwrap();
+    // WSL이 없는 환경(Linux)은 WSL 몫이 없다. Windows는 WSL이 있으면 값이 있고 없으면 없다.
+    #[cfg(not(windows))]
+    assert!(report.wsl.is_none());
+    let _ = report;
+    connection.send(Frame::new(kind::STATUS_REQUEST, Vec::new()));
+    let status: Status = connection.expect(kind::STATUS).parse_json().unwrap();
+    assert_eq!(status.pid, daemon.pid());
+}
+
+#[test]
+fn test_c_d77_stop_agent_never_touches_a_shell_and_windows_native_refuses_it() {
+    use paddock_protocol::message::{StopAgent, StopAgentReply};
+    let daemon = TestDaemon::start();
+    let (mut connection, _hello) = daemon.connect_authenticated();
+    let attached = connection.new_terminal(None, 80, 24);
+    connection.send(Frame::json(kind::STOP_AGENT, &StopAgent { id: attached.id, pid: attached.pid, start_mark: None }));
+    let reply: StopAgentReply = connection.expect(kind::STOP_AGENT_REPLY).parse_json().unwrap();
+    assert_eq!(reply.id, attached.id);
+    // 앞쪽이 claude가 아닌 셸이면 멈출 에이전트가 없다. 셸에는 신호를 보내지 않는다(Windows 네이티브는 문장으로 거부한다).
+    #[cfg(windows)]
+    assert_eq!((reply.stopped, reply.message.contains("Ctrl+C")), (false, true));
+    #[cfg(not(windows))]
+    assert!(reply.stopped && reply.message.is_empty());
+    connection.send(Frame::json(kind::STOP_AGENT, &StopAgent { id: 9999, pid: 1, start_mark: None }));
+    let missing: StopAgentReply = connection.expect(kind::STOP_AGENT_REPLY).parse_json().unwrap();
+    assert!(!missing.stopped && missing.message.starts_with("The conversation changed"));
+    connection.send(Frame::new(kind::STATUS_REQUEST, Vec::new()));
+    let _status: Status = connection.expect(kind::STATUS).parse_json().unwrap();
+    // 셸은 그대로 살아 있다.
+    connection.send(Frame::new(kind::LIST, Vec::new()));
+    let list: List = connection.expect(kind::LIST_REPLY).parse_json().unwrap();
+    assert!(list.terminals.iter().any(|terminal| terminal.id == attached.id && terminal.alive));
+}
+
+#[cfg(unix)]
+#[test]
+fn test_c_d77_the_state_carries_the_running_claudes_conversation_and_stop_agent_ends_only_that_process() {
+    use paddock_protocol::message::{CheckIdle, CheckIdleReply, StopAgent, StopAgentReply};
+    let daemon = TestDaemon::start();
+    let (mut client, _) = daemon.connect_authenticated();
+    let attached = client.new_terminal(None, 100, 24);
+    let bin = daemon.home.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::os::unix::fs::symlink("/bin/bash", bin.join("claude")).unwrap();
+    let config = daemon.home.path().join("claude-config");
+    let session = "0b9f2f77-6a1e-4a4c-9d33-2f7a5d1c1a10";
+    type_line(&mut client, &format!("PATH={}:$PATH\r", bin.display()));
+    // 가짜 claude: 계정 폴더에 sessions 기록(pid·대화 ID·interactive·폴더·시작 시각)을 남기고 일하는 척 기다린다. TERM은 기본 동작(끝남)이다.
+    type_line(
+        &mut client,
+        &format!(
+            "CLAUDE_CONFIG_DIR={config} claude -c 'mkdir -p $CLAUDE_CONFIG_DIR/sessions; printf \"{{\\\"pid\\\":%s,\\\"sessionId\\\":\\\"{session}\\\",\\\"kind\\\":\\\"interactive\\\",\\\"cwd\\\":\\\"/w\\\",\\\"startedAt\\\":%s}}\" $$ $(date +%s%3N) > $CLAUDE_CONFIG_DIR/sessions/$$.json; echo READY; while :; do sleep 0.2; done'\r",
+            config = config.display()
+        ),
+    );
+    let mut seen = Vec::new();
+    let state = client
+        .wait_for_state(Duration::from_secs(20), &mut seen, |state| state.conversation.is_some())
+        .unwrap_or_else(|| panic!("the conversation was never reported: {seen:?}"));
+    let conversation = state.conversation.expect("conversation");
+    assert_eq!(
+        (conversation.provider.as_str(), conversation.session_id.as_str(), conversation.cwd.as_str()),
+        ("claude", session, "/w")
+    );
+    assert_eq!(conversation.config_dir.as_deref(), Some(config.to_str().unwrap()));
+    // 다른 pid를 가리키는 요청은 거부하고, 프로세스는 그대로다.
+    client.send(Frame::json(
+        kind::STOP_AGENT,
+        &StopAgent { id: attached.id, pid: conversation.pid + 1, start_mark: conversation.start_mark },
+    ));
+    let refused: StopAgentReply = client.expect(kind::STOP_AGENT_REPLY).parse_json().unwrap();
+    assert!(!refused.stopped && refused.message.starts_with("The conversation changed"), "{refused:?}");
+    // 검증된 pid만 끝내고 셸은 살아 있다.
+    client.send(Frame::json(
+        kind::STOP_AGENT,
+        &StopAgent { id: attached.id, pid: conversation.pid, start_mark: conversation.start_mark },
+    ));
+    let stopped: StopAgentReply = client.expect(kind::STOP_AGENT_REPLY).parse_json().unwrap();
+    assert!(stopped.stopped, "{stopped:?}");
+    let listed = client.list().terminals.into_iter().find(|terminal| terminal.id == attached.id).expect("listed");
+    assert!(listed.alive, "the shell is untouched");
+    // claude가 끝나 앞쪽이 셸이면 지금 읽은 값으로 바로 "한가함"이라고 답한다.
+    client.send(Frame::json(kind::CHECK_IDLE, &CheckIdle { id: attached.id }));
+    let idle: CheckIdleReply = client.expect(kind::CHECK_IDLE_REPLY).parse_json().unwrap();
+    assert!(idle.idle && idle.message.is_empty(), "{idle:?}");
+    // claude가 끝난 바로 뒤 다른 명령이 앞에 오면, 옛 claude를 가리키는 요청은 신호 없이 거부하고 한가함 확인도 거부한다.
+    type_line(&mut client, "sleep 30\r");
+    client
+        .wait_for_state(Duration::from_secs(20), &mut seen, |state| state.program.as_deref() == Some("sleep"))
+        .unwrap_or_else(|| panic!("sleep was never read in front: {seen:?}"));
+    client.send(Frame::json(
+        kind::STOP_AGENT,
+        &StopAgent { id: attached.id, pid: conversation.pid, start_mark: conversation.start_mark },
+    ));
+    let other: StopAgentReply = client.expect(kind::STOP_AGENT_REPLY).parse_json().unwrap();
+    assert!(!other.stopped && other.message.starts_with("Finish the other command"), "{other:?}");
+    client.send(Frame::json(kind::CHECK_IDLE, &CheckIdle { id: attached.id }));
+    let busy: CheckIdleReply = client.expect(kind::CHECK_IDLE_REPLY).parse_json().unwrap();
+    assert!(!busy.idle && busy.message.starts_with("A program is running"), "{busy:?}");
+    client.send(Frame::json(kind::CHECK_IDLE, &CheckIdle { id: 9999 }));
+    let missing: CheckIdleReply = client.expect(kind::CHECK_IDLE_REPLY).parse_json().unwrap();
+    assert!(!missing.idle && missing.message.starts_with("This terminal could not be checked"), "{missing:?}");
 }
 
 #[test]
@@ -1080,6 +1298,37 @@ fn test_c_d37_an_agent_named_program_gets_a_state_and_a_finish_is_announced_once
 
 #[cfg(unix)]
 #[test]
+fn test_c_a2_a_signal_the_agent_prints_rides_on_the_state_and_ends_when_the_agent_leaves() {
+    use paddock_core::agent_model::StatusState;
+    use paddock_protocol::message::Signal;
+    let daemon = TestDaemon::start();
+    let (mut client, _) = daemon.connect_authenticated();
+    client.new_terminal(None, 100, 24);
+    // 에이전트 이름의 실행 파일(claude)이 OSC 7501로 입력 필요(권한)를 알리고 Enter를 기다린다.
+    let bin = daemon.home.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::os::unix::fs::symlink("/bin/bash", bin.join("claude")).unwrap();
+    type_line(&mut client, &format!("PATH={}:$PATH\r", bin.display()));
+    type_line(
+        &mut client,
+        "claude -c 'printf \"\\033]7501;state=blocked:app=claude-code:kind=permission\\033\\\\\"; read -t 20 -r _'\r",
+    );
+    let mut seen = Vec::new();
+    let blocked = client.wait_for_state(Duration::from_secs(30), &mut seen, |state| state.signal.is_some());
+    let blocked = blocked.unwrap_or_else(|| panic!("the reported signal never reached the state: {seen:?}"));
+    assert_eq!(blocked.signal, Some(Signal { state: StatusState::Blocked, kind: Some("permission".to_string()) }));
+    assert_eq!(blocked.program.as_deref(), Some("claude"));
+    assert!(blocked.is_agent);
+    // Enter가 에이전트를 끝내고 셸로 돌아오면 신호는 더는 보이지 않는다.
+    type_line(&mut client, "\r");
+    let back = client.wait_for_state(Duration::from_secs(30), &mut seen, |state| {
+        state.program.as_deref() == Some("bash") && state.signal.is_none()
+    });
+    assert!(back.is_some(), "the signal must end with the agent: {seen:?}");
+}
+
+#[cfg(unix)]
+#[test]
 fn test_c_d37_osc7501_query_is_answered_on_the_pty() {
     let daemon = TestDaemon::start();
     let (mut client, _) = daemon.connect_authenticated();
@@ -1246,7 +1495,7 @@ fn test_c_d39_launch_env_has_no_login_values() {
         is_windows: false,
         permissions: Permissions::Ask,
         flag_settings_file: None,
-        resume_session_id: None,
+        resume: None,
     })
     .expect("launch spec");
     // 시작 파일의 `unset`과 별개로, 데몬이 띄운 첫 프로세스의 환경에도 로그인 변수가 없어야 한다.

@@ -236,6 +236,50 @@ pub fn close_group_message(
     )
 }
 
+/// 저장하지 않은 변경이 있을 때 닫기 전에 묻는 창(파일 탭 닫기·창 닫기). `headline`이 무엇이 저장되지 않았는지 말하고 `detail`이 있으면 그 밑에 보인다.
+/// 단추는 왼쪽부터 버리기(`discard_label`)·`Cancel`·저장(`save_label`)이고, 저장은 `confirm_overlay`(Enter와 같다)·버리기는 `discard_overlay`가 처리한다.
+pub fn unsaved_dialog(
+    title: &'static str,
+    headline: &str,
+    detail: Option<&str>,
+    save_label: &'static str,
+    discard_label: &'static str,
+    focus: &FocusHandle,
+    cx: &mut Context<WorkWindow>,
+) -> impl IntoElement {
+    let palette = colors();
+    let discard = button(discard_label, ButtonKind::Destructive).on_mouse_down(
+        MouseButton::Left,
+        cx.listener(|this, _event: &MouseDownEvent, window, cx| this.discard_overlay(window, cx)),
+    );
+    let cancel = button("Cancel", ButtonKind::Secondary).on_mouse_down(
+        MouseButton::Left,
+        cx.listener(|this, _event: &MouseDownEvent, window, cx| this.cancel_overlay(window, cx)),
+    );
+    let save = button(save_label, ButtonKind::Primary).on_mouse_down(
+        MouseButton::Left,
+        cx.listener(|this, _event: &MouseDownEvent, window, cx| this.confirm_overlay(window, cx)),
+    );
+    let body = div()
+        .flex()
+        .flex_col()
+        .gap(zpx(dialog_size::CONTENT_GAP))
+        .child(headline.to_string())
+        .children(detail.map(|detail| div().text_color(hsla(palette.fg)).child(detail.to_string())))
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .justify_end()
+                .pt(zpx(dialog_size::CONTENT_PADDING))
+                .gap(zpx(dialog_size::BUTTON_GAP))
+                .child(discard)
+                .child(cancel)
+                .child(save),
+        );
+    dialog(focus, title, body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

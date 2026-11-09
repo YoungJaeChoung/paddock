@@ -1,0 +1,32 @@
+# 같은 파일이 두 묶음에 열려 있을 때(편집기를 나눠 쥔다): 한쪽 탭을 닫아도 묻지 않고 편집은 다른 묶음의 탭이 이어 쥔다. 마지막 탭을 닫을 때만 저장 여부를 묻는다.
+# 실행 이름이 file-edit-two-groups일 때 임시 홈 경로(C:/Temp/pdk-run/home-file-edit-two-groups)를 쓴다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send Set-Content "$env:USERPROFILE\\shared.txt" "one"\r
+send echo READY-TWO\r
+waitline READY-TWO @20000
+act openpath C:/Temp/pdk-run/home-file-edit-two-groups/shared.txt
+waitstate file-view kind=text state=text @10000
+act workadd
+waittabs 2 @20000
+wait 1500
+act openpath C:/Temp/pdk-run/home-file-edit-two-groups/shared.txt
+waitstate file-view kind=text state=text @10000
+text y
+waitstate unsaved=yes @3000
+state group2-edited
+# 둘째 묶음 탭을 닫는다: 첫째 묶음에 같은 파일이 열려 있어 묻지 않는다.
+act closefile
+waitoverlay none @3000
+wait 500
+act selectgroup 1
+wait 800
+state group1-after
+# 첫째 묶음에서 편집이 그대로이고(저장 안 함), 이제 마지막 탭이라 닫으면 묻는다.
+act closefile
+waitoverlay close-file @3000
+act savechoice save
+waitoverlay none @3000
+waitstate unsaved-files=0 @5000
+state saved-and-closed
+quit

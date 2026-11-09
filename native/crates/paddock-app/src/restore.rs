@@ -27,6 +27,7 @@ use crate::settings::Settings;
 use crate::state_store;
 use crate::terminal::grid::Grid;
 use crate::terminal::session::{TerminalSession, Want, start_session_with_screen};
+use paddock_core::account_session::Resume;
 
 /// 프롬프트가 뜨기를 확인하는 간격.
 const PROMPT_POLL: Duration = Duration::from_millis(100);
@@ -103,7 +104,7 @@ pub fn want_of(plan: &RestorePlan) -> Want {
                     &home,
                     Settings::load().agent_permissions(),
                     cfg!(windows),
-                    resume_session_id.as_deref(),
+                    resume_session_id.clone().map(Resume::SessionId).as_ref(),
                 )
                 .ok()
             });

@@ -1,0 +1,9 @@
+# Codex 실시간 조회가 답하지 않으면(가짜 app-server가 입력만 읽고 침묵) 15초 안에 `Unavailable`로 끝나고, 앱이 끝난 뒤에도 자식 프로세스가 남지 않는다(덩어리 29).
+waittabs 1 @30000
+waitstate cwd=C: @30000
+mark codex-wait-start
+waitstate codex=Default:(Unavailable) @30000
+mark codex-wait-end
+waitstate reading=no @5000
+state codex-timeout
+quit

@@ -1,0 +1,38 @@
+# 탭 끌기(덩어리 37): Electron에서 고친 결함(분할 중 분리한 탭이 옛 칸 위에 남음)을 끌기로 재현한다.
+# 두 칸의 칸 A 탭을 창 밖에 놓으면 열 A 탭 줄에서 사라지고, 분리 창에서 칸 A 가운데에 끌어 놓으면 열 A 끝으로 돌아온다.
+waittabs 1 @30000
+send echo S-ONE\r
+waitline S-ONE @20000
+key ctrl-shift-t
+waittabs 2 @20000
+key ctrl-shift-c
+waittabs 3 @20000
+wait 1500
+state before
+shot before
+waitstate strip col0 tabs=1,2 @5000
+waitstate strip col1 tabs=3 @5000
+act dragtab 2 outside
+waitstate detached=2 @10000
+waitstate strip col0 tabs=1 @5000
+waitstate strip col1 tabs=3 @5000
+waitnostate strip col0 tabs=1,2 @3000
+state split-detached
+shot split-detached
+act dragback 2 pane 1 center
+waitstate detached=- @10000
+waitstate strip col0 tabs=1,2 @5000
+waitstate strip col1 tabs=3 @5000
+waitstate selected: 2 @5000
+state split-back
+shot split-back
+# 한 칸으로 합치면(둘째 칸의 유일한 탭 3을 분리) 분리한 탭은 흐린 탭으로 남고, 칸 가운데로 끌어 놓으면 되돌아온다
+act dragtab 3 outside
+waitstate detached=3 @10000
+waitstate strip col0 tabs=1,2,3:faded @5000
+act dragback 3 pane 1 center
+waitstate detached=- @10000
+waitstate strip col0 tabs=1,2,3 @5000
+state merged-back
+act quick quitstop
+wait 3000

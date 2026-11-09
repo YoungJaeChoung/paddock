@@ -1,0 +1,9 @@
+# 다음 시작: 분리 창은 복원하지 않고, 분리했던 탭은 첫 칸의 끝에 돌아와 있다.
+waittabs 2 @40000
+wait 1500
+state restored
+waitstate detached=- @5000
+waitstate strip col0 tabs=1,2 @5000
+shot restored
+act quick quitstop
+wait 3000

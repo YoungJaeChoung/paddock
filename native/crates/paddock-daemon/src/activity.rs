@@ -13,12 +13,12 @@ use paddock_core::agent_account::{
     AccountProfile, AttributeInput, Runtime, Scope, ScopeInput, attribute_account, running_scope,
 };
 use paddock_core::agent_model::{
-    Activity, ProgramStatus, activity_state, is_agent, note_input, note_output, note_status, parse_program_status,
-    program_name, settle,
+    Activity, ProgramStatus, activity_state, is_agent, note_input, note_output, note_program, note_status,
+    parse_program_status, program_name, settle,
 };
 use paddock_core::cwd_report::parse_cwd_report;
 use paddock_core::osc_scan::{OscEvent, OscScanner};
-use paddock_protocol::message::TerminalState;
+use paddock_protocol::message::{Conversation, Signal, TerminalState};
 use paddock_protocol::shared_config::{native_profile_directory, read_account_profiles};
 
 use crate::history::AgentSeen;
@@ -188,6 +188,8 @@ impl Tracker {
             self.observed.cwd = observed.cwd;
         }
         if observed.program.is_some() {
+            // 에이전트가 다른 에이전트로 바뀌면 이전 에이전트가 알린 상태는 낡은 값이다.
+            self.activity = note_program(&self.activity, self.observed.program.as_deref(), observed.program.as_deref());
             self.observed.program = observed.program;
             self.observed.account = observed.account;
             self.agent = observed.agent;
@@ -224,6 +226,21 @@ impl Tracker {
             activity: activity_state(&self.activity, now, agent_now),
             finished: false,
             account: self.observed.account.clone(),
+            conversation: self.agent.as_ref().map(|seen| Conversation {
+                provider: seen.conversation.provider.clone(),
+                session_id: seen.conversation.session_id.clone(),
+                cwd: seen.conversation.cwd.clone(),
+                config_dir: seen.conversation.config_dir.clone(),
+                pid: seen.pid,
+                start_mark: seen.start_mark,
+            }),
+            // 에이전트가 직접 알린 상태는 앞쪽 프로그램이 에이전트일 때만 보인다(셸로 돌아오면 숨긴다).
+            signal: self
+                .activity
+                .signal
+                .as_ref()
+                .filter(|_| agent_now == Some(true))
+                .map(|signal| Signal { state: signal.state, kind: signal.kind.clone() }),
         }
     }
 
@@ -333,7 +350,7 @@ fn apply_readings(
 mod tests {
     use super::*;
     use paddock_core::agent_account::{AccountEnv, AccountProfile, Runtime};
-    use paddock_core::agent_model::{ActivityState, limit};
+    use paddock_core::agent_model::{ActivityState, StatusState, limit};
     use paddock_core::agent_resume::AgentConversation;
 
     const ID: u32 = 1;
@@ -448,6 +465,66 @@ mod tests {
         assert!(state.finished);
     }
 
+    /// 앞쪽 프로그램이 `program`(에이전트)이고 터미널에 `status` 본문을 가진 OSC 7501을 출력으로 받은 터미널.
+    fn agent_reporting(
+        program: &str,
+        status: &str,
+        now: u64,
+    ) -> Tracker {
+        let mut tracker = shell_terminal();
+        tracker.apply_probe(observed(program));
+        tracker.note_output(format!("\x1b]7501;{status}\x07").as_bytes(), now);
+        tracker
+    }
+
+    #[test]
+    fn test_c_a2_the_state_carries_the_signal_the_agent_reported_with_its_kind() {
+        let mut tracker = agent_reporting("claude", "state=blocked:app=claude-code:kind=permission", 100);
+        let state = tracker.evaluate(ID, 100).expect("blocked is news");
+        assert_eq!(state.signal, Some(Signal { state: StatusState::Blocked, kind: Some("permission".to_string()) }));
+        assert!(state.is_agent);
+        // 같은 신호가 이어지면 다시 보내지 않고, 바뀌면 보낸다.
+        assert_eq!(tracker.evaluate(ID, 200), None);
+        tracker.note_output(b"\x1b]7501;state=working\x07", 300);
+        let working = tracker.evaluate(ID, 300).expect("changed");
+        assert_eq!(working.signal, Some(Signal { state: StatusState::Working, kind: None }));
+        // 신호를 거두면(clear) 신호가 사라지고 추정 상태만 남는다.
+        tracker.note_output(b"\x1b]7501;state=clear\x07", 400);
+        assert_eq!(tracker.evaluate(ID, 400).expect("cleared").signal, None);
+    }
+
+    #[test]
+    fn test_c_a2_a_signal_is_only_shown_while_an_agent_is_in_front() {
+        let mut tracker = agent_reporting("claude", "state=idle:app=claude-code", 100);
+        assert!(tracker.evaluate(ID, 100).expect("agent").signal.is_some());
+        // 셸로 돌아오면 신호가 보이지 않는다.
+        tracker.apply_probe(observed("bash"));
+        let back = tracker.evaluate(ID, 200).expect("changed");
+        assert!(!back.is_agent);
+        assert_eq!(back.signal, None);
+    }
+
+    #[test]
+    fn test_c_a2_esc_or_ctrl_c_turns_a_working_signal_into_idle_and_other_input_does_not() {
+        let mut tracker = agent_reporting("claude", "state=working:app=claude-code", 100);
+        tracker.evaluate(ID, 100);
+        tracker.note_input(b"\x1b[A", 200);
+        assert_eq!(tracker.evaluate(ID, 200), None, "an arrow key is not an interrupt");
+        tracker.note_input(b"\x1b", 300);
+        let idle = tracker.evaluate(ID, 300).expect("interrupted");
+        assert_eq!(idle.signal, Some(Signal { state: StatusState::Idle, kind: None }));
+        assert!(!idle.finished, "an interrupt is not announced");
+    }
+
+    #[test]
+    fn test_c_a2_switching_to_another_agent_drops_the_old_agents_signal() {
+        let mut tracker = agent_reporting("claude", "state=blocked:app=claude-code:kind=permission", 100);
+        tracker.evaluate(ID, 100);
+        tracker.apply_probe(observed("codex"));
+        let state = tracker.evaluate(ID, 200).expect("changed");
+        assert_eq!((state.program.as_deref(), state.signal), (Some("codex"), None));
+    }
+
     #[test]
     fn test_snapshot_is_the_current_state_and_counts_as_sent() {
         let mut tracker = shell_terminal();
@@ -479,6 +556,7 @@ mod tests {
             distribution: String::new(),
             pid: None,
             started_at: None,
+            start_mark: None,
             session_record: None,
         }
     }
@@ -487,6 +565,7 @@ mod tests {
     fn test_c_d40_a_probe_that_reads_a_shell_clears_the_agent_but_a_failed_probe_keeps_it() {
         let mut tracker = shell_terminal();
         let seen = AgentSeen {
+            start_mark: None,
             pid: 9,
             conversation: paddock_core::agent_resume::AgentConversation {
                 provider: "claude".into(),
@@ -589,6 +668,7 @@ mod tests {
     fn test_c_d46_a_probe_reports_whether_folder_program_or_conversation_changed() {
         let mut tracker = shell_terminal();
         let seen = AgentSeen {
+            start_mark: None,
             pid: 42,
             conversation: AgentConversation {
                 provider: "claude".into(),

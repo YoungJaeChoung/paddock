@@ -1,6 +1,10 @@
 //! 파일을 어떻게 보여 줄지 정하는 규칙: 파일 종류, 텍스트로 볼 수 없는 파일 판정, 크기 글자, 구문 강조 언어.
 //!
 //! 디스크를 읽는 일은 앱이 하고, 여기서는 이름과 앞부분 바이트만 받아 판정하는 순수 규칙만 둔다.
+
+// 경로 판정은 `paths`에 있다. 호출처가 `file_kind::file_name_of`로 쓰던 이름을 그대로 받도록 다시 내보낸다.
+pub use crate::paths::file_name_of;
+
 /// 텍스트 보기가 여는 파일 크기의 상한(1 MiB). 넘으면 안내 탭으로 보낸다.
 pub const TEXT_LIMIT: u64 = 1024 * 1024;
 
@@ -58,6 +62,21 @@ impl FileKind {
             Self::Diff { staged: false } => "diff",
             Self::Diff { staged: true } => "diff-staged",
         }
+    }
+
+    /// 바깥 텍스트 편집기(`Open in external editor`)로 열 만한 종류인지. 글자로 읽는 종류만 참이다.
+    ///
+    /// 이미지·SVG·PDF·오디오·영상·이진 파일은 거짓이다: 이들을 메모장·`open -t`에 보내면 깨진 글자만 보이므로 기본 앱이 맡는다.
+    ///
+    /// Examples
+    /// --------
+    /// | 종류                       | 결과 |
+    /// |----------------------------|------|
+    /// | `Text`·`Markdown`·`Diff`   | 참   |
+    /// | `Image`·`Svg`·`Pdf`        | 거짓 |
+    /// | `Media`·`Binary`           | 거짓 |
+    pub fn opens_in_text_editor(self) -> bool {
+        matches!(self, Self::Text | Self::Markdown | Self::Diff { .. })
     }
 }
 
@@ -187,14 +206,21 @@ pub fn highlight_language_of(
     if size > HIGHLIGHT_LIMIT { None } else { language_of(extension) }
 }
 
-/// 경로의 파일 이름(마지막 구성 요소).
-pub fn file_name_of(path: &str) -> String {
-    path.rsplit(['/', '\\']).next().unwrap_or(path).to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_c_kind_editor_only_text_like_kinds_open_in_text_editor() {
+        for kind in
+            [FileKind::Text, FileKind::Markdown, FileKind::Diff { staged: false }, FileKind::Diff { staged: true }]
+        {
+            assert!(kind.opens_in_text_editor(), "{kind:?}");
+        }
+        for kind in [FileKind::Image, FileKind::Svg, FileKind::Pdf, FileKind::Media, FileKind::Binary] {
+            assert!(!kind.opens_in_text_editor(), "{kind:?}");
+        }
+    }
 
     #[test]
     fn test_c_kind_1_text_and_unknown_extensions_are_text() {

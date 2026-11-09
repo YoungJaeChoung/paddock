@@ -5,6 +5,7 @@
 //! 프로세스 인자로만 넘기므로 공백·따옴표·`$(…)`가 든 경로도 글자 그대로 전달된다. 파일·프로세스 호출은 하지 않는다.
 use serde::{Deserialize, Serialize};
 
+use crate::account_session::Resume;
 use crate::agent_account::{AccountProfile, Runtime};
 use crate::cwd_report::{POWERSHELL_SCRIPT, encode_powershell};
 use crate::shell_catalog::wsl_folder;
@@ -65,6 +66,8 @@ pub enum LaunchError {
     InvalidSettingsPath,
     InvalidPermissions,
     InvalidSessionId,
+    /// 이어 열 대화 파일 경로가 절대 경로가 아니거나 제어 문자가 있다.
+    InvalidResumePath,
     /// 대화 이어하기를 지원하지 않는 도구다(Claude만 지원).
     ResumeTool,
     /// WSL 계정은 Windows에서만 연다.
@@ -86,6 +89,7 @@ impl std::fmt::Display for LaunchError {
             Self::InvalidSettingsPath => "The account settings path is invalid.",
             Self::InvalidPermissions => "Choose ask, allowSkip, or skip for agent permissions.",
             Self::InvalidSessionId => "The conversation identifier is invalid.",
+            Self::InvalidResumePath => "The saved conversation path is invalid.",
             Self::ResumeTool => "The conversation belongs to another CLI or environment.",
             Self::WslNeedsWindows => "Open this WSL account on its Windows device.",
             Self::DifferentDistribution => {
@@ -187,8 +191,8 @@ pub struct AccountLaunchInput<'a> {
     pub permissions: Permissions,
     /// Claude에 `--settings`로 덧붙일 Paddock 전용 설정 파일. 시작 때 파일이 있을 때만 붙는다.
     pub flag_settings_file: Option<Location>,
-    /// 같은 계정 폴더에서 이어 열 Claude 대화 식별자.
-    pub resume_session_id: Option<&'a str>,
+    /// 이어 열 Claude 대화: 같은 계정 폴더면 식별자, 다른 계정이 이어 받으면 대화 파일 경로.
+    pub resume: Option<&'a Resume>,
 }
 
 /// 값을 POSIX 셸 한 단어로 감싼다(`'`는 `'"'"'`로 이어 붙인다).
@@ -216,6 +220,11 @@ fn ensure(
 
 fn has_control(text: &str) -> bool {
     text.chars().any(crate::account_profile::is_control)
+}
+
+/// 대화 식별자 모양이 아니면 `InvalidSessionId`다.
+pub(crate) fn check_session_id(value: &str) -> Result<(), LaunchError> {
+    ensure(is_session_id(value), LaunchError::InvalidSessionId)
 }
 
 /// 대화 식별자 모양(8-4-4-4-12 자리 16진수, 대소문자 무관)인지.
@@ -356,10 +365,10 @@ pub fn account_terminal_spec(input: &AccountLaunchInput) -> Result<Launch, Launc
         )?;
     }
     let mut cli_arguments: Vec<String> = input.permissions.flags(provider).iter().map(ToString::to_string).collect();
-    if let Some(session_id) = input.resume_session_id {
+    if let Some(resume) = input.resume {
         ensure(provider == "claude", LaunchError::ResumeTool)?;
-        ensure(is_session_id(session_id), LaunchError::InvalidSessionId)?;
-        cli_arguments.extend(["--resume".to_string(), session_id.to_string()]);
+        resume.check()?;
+        cli_arguments.extend(["--resume".to_string(), resume.argument().to_string()]);
     }
     let mut env_remove: Vec<String> = AUTH_ENV.iter().map(ToString::to_string).collect();
     // 비대화형 셸 시작 파일이 첫 실행 명령을 가로채지 못하게 한다.
@@ -480,7 +489,7 @@ mod tests {
             is_windows,
             permissions: Permissions::Ask,
             flag_settings_file: None,
-            resume_session_id: None,
+            resume: None,
         }
     }
 
@@ -617,18 +626,37 @@ mod tests {
     }
 
     #[test]
+    fn test_c_d77_another_account_resumes_by_transcript_path_and_a_relative_path_or_a_codex_account_is_refused() {
+        let claude = profile("claude", Runtime::Native);
+        let mut request = input(&claude, "/tmp/account", "/tmp/work", false);
+        let path = Resume::TranscriptPath("/a b/it's/projects/-w/x.jsonl".to_string());
+        request.resume = Some(&path);
+        let script = rcfile_script(&account_terminal_spec(&request).unwrap());
+        assert!(script.contains("'--resume' '/a b/it'\"'\"'s/projects/-w/x.jsonl'"), "{script}");
+        let relative = Resume::TranscriptPath("projects/x.jsonl".to_string());
+        request.resume = Some(&relative);
+        assert_eq!(account_terminal_spec(&request).unwrap_err(), LaunchError::InvalidResumePath);
+        let codex = profile("codex", Runtime::Native);
+        let mut other = input(&codex, "/tmp/account", "/tmp/work", false);
+        other.resume = Some(&path);
+        assert_eq!(account_terminal_spec(&other).unwrap_err(), LaunchError::ResumeTool);
+    }
+
+    #[test]
     fn test_resume_l03_resuming_in_the_same_account_folder_passes_only_the_conversation_identifier() {
         let claude = profile("claude", Runtime::Native);
         let mut request = input(&claude, "/tmp/account", "/tmp/work", false);
-        request.resume_session_id = Some(SESSION);
+        let resume = Resume::SessionId(SESSION.to_string());
+        request.resume = Some(&resume);
         let script = rcfile_script(&account_terminal_spec(&request).unwrap());
         assert!(script.contains(&format!("'--resume' '{SESSION}'")));
         assert!(!script.contains("transcript"));
-        request.resume_session_id = Some("../x");
+        let bad = Resume::SessionId("../x".to_string());
+        request.resume = Some(&bad);
         assert_eq!(account_terminal_spec(&request).unwrap_err(), LaunchError::InvalidSessionId);
         let codex = profile("codex", Runtime::Native);
         let mut other = input(&codex, "/tmp/account", "/tmp/work", false);
-        other.resume_session_id = Some(SESSION);
+        other.resume = Some(&resume);
         assert_eq!(account_terminal_spec(&other).unwrap_err(), LaunchError::ResumeTool);
     }
 
@@ -671,7 +699,8 @@ mod tests {
         assert_eq!(run(&launch).as_deref(), Some("ARGS|"));
         std::fs::write(&flag_file, "{}").unwrap();
         assert_eq!(run(&launch).as_deref(), Some(format!("ARGS|--settings {}", flag_file.display()).as_str()));
-        request.resume_session_id = Some("00000000-0000-4000-8000-000000000014");
+        let again = Resume::SessionId("00000000-0000-4000-8000-000000000014".to_string());
+        request.resume = Some(&again);
         let resumed = account_terminal_spec(&request).unwrap();
         assert_eq!(
             run(&resumed).as_deref(),

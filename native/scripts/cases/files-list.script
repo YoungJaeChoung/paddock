@@ -7,7 +7,7 @@ waitstate cwd=C: @30000
 send $p = "$env:USERPROFILE\\proj-files"; mkdir "$p\\src", "$p\\.git", "$p\\__pycache__", "$p\\Docs", "$env:USERPROFILE\\bin" -Force | Out-Null; Set-Content "$p\\src\\a.js" x; Set-Content "$p\\README.md" x; Set-Content "$p\\zeta.txt" x; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
 send echo READY-FILES\r
 waitline READY-FILES @20000
-send claude -n 120 127.0.0.1\r
+send claude.exe -n 120 127.0.0.1\r
 waitstate program=claude @20000
 waitstate row folder @20000
 waitstate files-loaded=true @10000

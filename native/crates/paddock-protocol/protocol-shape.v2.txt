@@ -1,0 +1,239 @@
+# Message shape of protocol version 2. The tests in src/message.rs compare it with the current shape.
+# How to change it (raise the version or record a compatible change): see the comment on PROTOCOL_VERSION.
+# compatible-changes: 2026-11-09 - TerminalState.signal added (serde(default) optional field, daemon -> app only): an older app ignores the unknown field and an older daemon never sends it, so it reads as None. The handshake frames are untouched.
+version: 2
+
+[handshake kinds]
+HELLO 1
+HELLO_OK 101
+ERR 102
+STATUS_REQUEST 9
+STATUS 109
+SHUTDOWN 8
+BYE 10
+ERR carries plain text
+[handshake messages]
+Hello {
+  "token": "token",
+  "protocol_version": 1
+}
+HelloOk {
+  "pid": 1,
+  "fingerprint": "ff",
+  "protocol_version": 1
+}
+Status {
+  "pid": 1,
+  "n_terminals": 1
+}
+
+[kinds]
+HELLO 1
+NEW 2
+ATTACH 3
+INPUT 4
+RESIZE 5
+LIST 6
+KILL 7
+SHUTDOWN 8
+STATUS_REQUEST 9
+BYE 10
+MEMORY_REQUEST 11
+STOP_AGENT 12
+CHECK_IDLE 13
+HELLO_OK 101
+ERR 102
+LIST_REPLY 103
+ATTACHED 104
+REPLAY 105
+REPLAY_END 106
+OUTPUT 107
+EXITED 108
+STATUS 109
+RESYNC 110
+DETACHED 111
+TERMINAL_STATE 112
+MEMORY_REPORT 113
+STOP_AGENT_REPLY 114
+CHECK_IDLE_REPLY 115
+
+[messages]
+New {
+  "shell": "bash",
+  "cwd": "/work",
+  "cols": 80,
+  "rows": 24,
+  "wsl_distribution": "Debian",
+  "launch": {
+    "program": "claude",
+    "args": [
+      "--resume"
+    ],
+    "env": [
+      [
+        "NAME",
+        "value"
+      ]
+    ],
+    "env_remove": [
+      "REMOVED"
+    ],
+    "cwd": "/work",
+    "title": "Main",
+    "account": {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "provider": "claude",
+      "label": "Main",
+      "runtime": "wsl",
+      "wslDistribution": "Debian"
+    }
+  },
+  "preload": "screen",
+  "env": [
+    [
+      "PATH",
+      "/bin"
+    ]
+  ]
+}
+Attach {
+  "id": 3,
+  "cols": 80,
+  "rows": 24
+}
+Resize {
+  "cols": 80,
+  "rows": 24
+}
+Kill {
+  "id": 3
+}
+Attached {
+  "id": 3,
+  "pid": 5,
+  "cols": 80,
+  "rows": 24,
+  "alive": true
+}
+TerminalState {
+  "id": 3,
+  "cwd": "/work",
+  "program": "claude",
+  "is_agent": true,
+  "activity": "working",
+  "finished": true,
+  "account": {
+    "provider": "claude",
+    "profile": {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "provider": "claude",
+      "label": "Main",
+      "runtime": "wsl",
+      "wslDistribution": "Debian"
+    },
+    "custom": true,
+    "linked": {
+      "id": "linked",
+      "label": "Main"
+    }
+  },
+  "conversation": {
+    "provider": "claude",
+    "session_id": "session",
+    "cwd": "/work",
+    "config_dir": "/config",
+    "pid": 4,
+    "start_mark": 9
+  },
+  "signal": {
+    "state": "blocked",
+    "kind": "permission"
+  }
+}
+StopAgent {
+  "id": 3,
+  "pid": 4,
+  "start_mark": 9
+}
+StopAgentReply {
+  "id": 3,
+  "stopped": true,
+  "message": "m"
+}
+CheckIdle {
+  "id": 3
+}
+CheckIdleReply {
+  "id": 3,
+  "idle": true,
+  "message": "m"
+}
+List {
+  "terminals": [
+    {
+      "id": 3,
+      "pid": 5,
+      "cols": 80,
+      "rows": 24,
+      "alive": false,
+      "shell": "bash",
+      "exit_code": 1,
+      "state": {
+        "id": 3,
+        "cwd": "/work",
+        "program": "claude",
+        "is_agent": true,
+        "activity": "working",
+        "finished": true,
+        "account": {
+          "provider": "claude",
+          "profile": {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "provider": "claude",
+            "label": "Main",
+            "runtime": "wsl",
+            "wslDistribution": "Debian"
+          },
+          "custom": true,
+          "linked": {
+            "id": "linked",
+            "label": "Main"
+          }
+        },
+        "conversation": {
+          "provider": "claude",
+          "session_id": "session",
+          "cwd": "/work",
+          "config_dir": "/config",
+          "pid": 4,
+          "start_mark": 9
+        },
+        "signal": {
+          "state": "blocked",
+          "kind": "permission"
+        }
+      },
+      "account": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "label": "Main",
+        "runtime": "wsl",
+        "wslDistribution": "Debian"
+      }
+    }
+  ]
+}
+MemoryReport {
+  "wsl": {
+    "total": 4,
+    "available": 3,
+    "swap_total": 2,
+    "swap_used": 1,
+    "terminals": {
+      "3": 100
+    },
+    "detached": [
+      5
+    ]
+  }
+}

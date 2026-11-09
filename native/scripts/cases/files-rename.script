@@ -1,0 +1,98 @@
+# 동기화 ② 이름 바꾸기(C-D70): `Rename...` 메뉴·F2. 창 제목·처음 고른 글자(확장자 앞)·같은 이름 거부·규칙 어긋난 이름(OK 흐림)·대소문자만 바꾸기·폴더 이름 바꾸기(열린 탭·펼침 따라감),
+# 이름 바뀐 폴더 두 단계 아래 파일이 1초 안에 목록에 나타나는지(Linux 감시 결함의 Windows 확인), 터미널이 활성이면 F2가 PTY로 가는지.
+# 이 대본은 실행 이름이 files-rename일 때 임시 홈 경로(C:/Temp/pdk-run/home-files-rename)를 쓴다. 기본 셸은 PowerShell이다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-rename"; mkdir "$p\\src\\deep", "$env:USERPROFILE\\bin" -Force | Out-Null; Set-Content "$p\\a.txt" one; Set-Content "$p\\Readme.md" two; Set-Content "$p\\src\\x.txt" three; Set-Content "$p\\src\\deep\\d.txt" four; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo READY-RENAME\r
+waitline READY-RENAME @20000
+send claude.exe -n 900 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+# 처음 연 파일이 늦게 읽혀도 목록이 포커스를 잃지 않는다: 행을 눌러 열자마자 F2·Ctrl+V가 목록으로 간다(터미널로 새지 않음).
+act openfile 2
+waitstate kind=text state=text @10000
+waitstate files-focus=yes @3000
+state first-open
+# 행: 1 src · 2 a.txt · 3 Readme.md. 파일 행 메뉴의 `Rename...`은 `a`만 고른 채 열린다(확장자 앞).
+state before
+act filesmenu 2
+waitstate menu: entry @5000
+waitstate menu-item 3 Rename... @5000
+state file-menu
+shot file-menu
+key escape
+waitstate menu: none @5000
+act filesmenu 2 Rename...
+waitstate rename-target=entry: @5000
+waitstate rename-selected=a @5000
+state dialog-file
+shot dialog-file
+# `b`를 치면 `b.txt`가 되고 Enter로 바뀐다.
+text b
+waitstate rename-input=b.txt @5000
+key enter
+waitstate file-row 0 file b.txt @8000
+state renamed-file
+# 이미 있는 이름이면 덮어쓰지 않고 상태 줄에 알린다.
+act filesrename 3 b.txt
+waitstate already exists @8000
+state exists
+shot exists
+# 규칙에 어긋난 이름: 창이 닫히지 않고 OK가 흐리다(rename-check=invalid).
+act filesmenu 3 Rename...
+waitstate rename-target=entry: @5000
+text /x
+waitstate rename-check=invalid @5000
+key enter
+wait 500
+state invalid-kept-open
+shot invalid
+key escape
+waitoverlay none @5000
+# 대소문자만 바꾸기는 겹침이 아니다.
+act filesrename 2 B.TXT
+waitstate file-row 0 file B.TXT @8000
+state case-only
+# 폴더: src를 펼치고 안의 파일 탭을 연 뒤 이름을 lib으로 바꾼다. 펼침이 그대로이고 탭 경로가 따라간다.
+act files 1
+waitstate file-row 1 file x.txt @5000
+act files 2
+waitstate file-row 2 file d.txt @5000
+act openpath C:/Temp/pdk-run/home-files-rename/proj-rename/src/x.txt
+waitstate file-view kind=text state=text @10000
+state before-folder-rename
+act selectrow 1
+waitstate files-focus=yes @3000
+wait 500
+shot selected-row
+key f2
+waitstate rename-target=entry: @5000
+waitstate rename-selected=src @5000
+state dialog-folder
+shot dialog-folder
+text lib
+key enter
+waitstate file-row 0 dir lib expanded @8000
+waitstate file-row 2 file d.txt @8000
+waitstate lib/x.txt @8000
+state renamed-folder
+shot renamed-folder
+# 감시 결함 확인: 다른 터미널에서 lib\deep 안에 새 파일을 만들면 1초 안에 행이 나타난다.
+key ctrl-shift-t
+waittabs 2 @20000
+wait 1500
+send Set-Content "$env:USERPROFILE\\proj-rename\\lib\\deep\\new2.txt" five\r
+mark created-two-levels-below
+waitstate file-row 2 file new2.txt @1500
+state watch-after-rename
+# 터미널이 활성이면 F2는 PTY로 간다(이름 바꾸기 창이 열리지 않는다).
+send while ($true) { $k = [Console]::ReadKey($true); Write-Host ("GOT-" + [int]$k.Key) }\r
+wait 1500
+key f2
+wait 1500
+dump f2-pty
+waitline GOT-113 @10000
+state f2-to-pty
+quit

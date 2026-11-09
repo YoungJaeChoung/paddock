@@ -15,7 +15,7 @@ use paddock_protocol::daemon_info::{
 use paddock_protocol::endpoint;
 use paddock_protocol::fingerprint::fingerprint_of;
 use paddock_protocol::frame::Frame;
-use paddock_protocol::message::{Hello, HelloOk, PROTOCOL_VERSION, kind};
+use paddock_protocol::message::{Hello, HelloError, HelloOk, PROTOCOL_VERSION, Status, kind};
 use paddock_protocol::peer::PeerError;
 
 use crate::app_log;
@@ -31,6 +31,8 @@ mod timeout {
     pub const DAEMON_START: Duration = Duration::from_secs(8);
     /// 교체할 옛 데몬이 종료 요청에 답하기를 기다리는 시간.
     pub const SHUTDOWN_REPLY: Duration = Duration::from_secs(2);
+    /// 데몬이 상태 요청에 답하기를 기다리는 시간.
+    pub const STATUS_REPLY: Duration = Duration::from_secs(2);
     /// 종료를 요청한 뒤 데몬 프로세스가 사라지기를 기다리는 최대 시간.
     pub const SHUTDOWN_EXIT: Duration = Duration::from_secs(5);
     /// 기다리며 다시 확인하는 간격.
@@ -199,6 +201,11 @@ pub struct DaemonConnection {
     pub frames: Inbox,
     pub daemon_pid: u32,
     pub daemon_fingerprint: String,
+    /// 데몬이 인사에서 알린 프로토콜 버전. 이 필드를 모르던 옛 데몬(인사에 값이 없음)은 1이다.
+    pub daemon_protocol_version: u32,
+    /// 데몬 실행 파일이 앱이 기대하는 것과 다르지만(지문 불일치) 프로토콜은 같아 계속 쓰는 중이다. 데몬 쪽 수정은
+    /// 이 데몬의 터미널이 모두 닫히고 새 데몬이 뜬 뒤에야 반영된다.
+    pub outdated: bool,
     /// 연결한 데몬의 식별 글자(`DaemonInfo::identity`). 터미널 번호는 이 글자와 함께 쓴다.
     pub daemon_id: String,
     /// 앱이 데몬을 부모 작업 개체에서 분리하지 못했다. 앱을 닫으면 데몬과 터미널도 끝난다.
@@ -241,7 +248,9 @@ impl DaemonConnection {
             outbox: Outbox::spawn(send_half),
             frames,
             daemon_pid: hello_ok.pid,
+            daemon_protocol_version: protocol_version_of(&hello_ok),
             daemon_fingerprint: hello_ok.fingerprint,
+            outdated: false,
             daemon_id: info.identity(),
             breakaway_denied: info.breakaway_denied,
         })
@@ -291,26 +300,63 @@ fn say_hello<S: Read + Write>(
     let reply = Frame::read_from(&mut stream)?;
     match reply.kind {
         kind::HELLO_OK => reply.parse_json::<HelloOk>().map(|hello_ok| (stream, hello_ok)),
+        kind::ERR if reply.as_text() == HelloError::UnsupportedVersion.to_string() => {
+            Err(io::Error::new(io::ErrorKind::PermissionDenied, UnsupportedProtocol))
+        }
         kind::ERR => Err(io::Error::new(io::ErrorKind::PermissionDenied, reply.as_text())),
         _ => Err(io::Error::new(io::ErrorKind::InvalidData, "Unexpected reply from daemon")),
     }
 }
 
-/// 앱의 데몬 지문이 실행 중인 데몬과 다를 때 어떻게 할지.
+/// 데몬이 프로토콜 버전이 다르다는 이유로 인사를 거절했다. 인사의 버전을 따지고 인사 전용 연결을 모르던 옛 데몬(버전 1)의
+/// 답이다. 다른 거절(토큰 오류 등)과 구별해야 이 데몬을 교체 대상으로 알릴 수 있다. 문장은 데몬이 보낸 그대로다.
+#[derive(Debug)]
+struct UnsupportedProtocol;
+
+impl std::fmt::Display for UnsupportedProtocol {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        f.write_str(&HelloError::UnsupportedVersion.to_string())
+    }
+}
+
+impl std::error::Error for UnsupportedProtocol {}
+
+/// 인사 오류가 프로토콜 버전을 이유로 한 거절인가.
+fn is_unsupported_protocol(error: &io::Error) -> bool {
+    error.get_ref().is_some_and(|inner| inner.is::<UnsupportedProtocol>())
+}
+
+/// 인사 답에 담긴 데몬의 프로토콜 버전. 값이 없던(0) 옛 데몬은 버전 1이다.
+fn protocol_version_of(hello_ok: &HelloOk) -> u32 {
+    if hello_ok.protocol_version == 0 { 1 } else { hello_ok.protocol_version }
+}
+
+/// 실행 중인 데몬이 앱의 것과 다를 때 어떻게 할지.
+///
+/// 데몬의 프로토콜 버전이 앱과 다르면 데몬을 쓸 수 없다. 프로토콜은 같고 실행 파일(지문)만 다르면 계속 쓸 수 있다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MismatchPolicy {
-    /// 데몬을 그대로 두고 쓰지 않는다. 데몬과 터미널은 살아 있다.
-    Quit,
-    /// 옛 데몬에 종료를 요청하고 새로 띄운다. 옛 데몬의 터미널은 사라진다.
+pub enum Policy {
+    /// 데몬을 절대 교체하지 않는다. 프로토콜이 다르면 쓰지 않고 알리며, 데몬과 터미널은 살아 있다.
+    /// 앱을 쓰는 중 새 터미널에 연결할 때 쓴다 — 같은 앱의 다른 연결이 끊기면 안 된다.
+    Keep,
+    /// `Keep`에 더해, 프로토콜은 같고 지문만 다른 데몬은 터미널이 하나도 없을 때만 교체한다. 앱을 시작할 때 쓴다.
+    ReplaceIfIdle,
+    /// 프로토콜이 다른 데몬을 종료하고 새로 띄운다. 옛 데몬의 터미널은 사라진다. 사용자가 교체를 고른 뒤에 쓴다.
+    /// 프로토콜은 같고 지문만 다른 데몬은 `ReplaceIfIdle`처럼 다룬다.
     Replace,
 }
 
 /// `ensure`의 결과.
 pub enum Ensure {
     Connected(DaemonConnection),
-    /// 실행 중인 데몬의 지문이 앱이 기대하는 것과 달라 사용자 결정이 필요하다. 데몬은 그대로 남아 있다.
-    MismatchKept {
-        daemon_fingerprint: String,
+    /// 실행 중인 데몬의 프로토콜 버전이 앱과 달라 사용자 결정이 필요하다. 데몬은 그대로 남아 있다.
+    /// `daemon_version`이 None이면 인사를 거절한 옛 데몬(버전 1)이라 `Replace`가 프로세스를 강제로 끝낸다.
+    ProtocolMismatch {
+        pid: u32,
+        daemon_version: Option<u32>,
     },
     /// 실행 중인 데몬이 연결은 받지만 인사에 답하지 않는다(멈춤). 사용자가 데몬을 다시 시작할지 정한다.
     Stalled {
@@ -327,18 +373,19 @@ enum Existing {
 
 /// 데몬에 연결한다. 없으면 분리해서 띄운다.
 ///
-/// `daemon_exe`는 앱이 짝으로 기대하는 데몬 실행 파일이다. 실행 중인 데몬의 지문이 이 파일의 지문과 다르면
-/// `policy`에 따라 데몬을 그대로 두거나(`MismatchKept`) 교체한다. 지문 불일치는 앱 기록 파일에 남긴다.
+/// `daemon_exe`는 앱이 짝으로 기대하는 데몬 실행 파일이다. 실행 중인 데몬은 프로토콜 버전을 먼저 비교하고(다르면
+/// `ProtocolMismatch`로 알리거나 `Replace`가 교체한다), 같으면 지문을 비교한다. 지문만 다르면 데몬을 쓴다(`outdated`).
+/// `ReplaceIfIdle`은 그 데몬에 터미널이 하나도 없을 때만 교체한다. 불일치는 앱 기록 파일에 남긴다.
 /// 인사에 답하지 않는 데몬은 `Stalled`로 알리고 건드리지 않는다. 연결 실패(다른 사용자 소유 등)는 오류로 돌려주며,
 /// 그 경우 새 데몬을 띄우지 않는다.
 pub fn ensure(
     daemon_exe: &Path,
-    policy: MismatchPolicy,
+    policy: Policy,
 ) -> io::Result<Ensure> {
     let expected = fingerprint_of(daemon_exe)?;
-    match connect_existing(&expected, policy)? {
+    match connect_existing(daemon_exe, &expected, policy)? {
         Existing::Ready(ensure) => Ok(ensure),
-        Existing::Absent => launch_and_connect(daemon_exe).map(Ensure::Connected),
+        Existing::Absent => launch_and_connect(daemon_exe, &expected),
     }
 }
 
@@ -347,15 +394,31 @@ pub fn ensure(
 /// 멈춘 데몬은 종료 요청에도 답하지 못하므로 프로세스를 직접 끝낸다. `daemon.json`의 pid가 데몬 실행 파일의
 /// 프로세스일 때만 끝낸다 — 그 번호를 다른 프로그램이 물려받았을 수 있기 때문이다.
 pub fn restart_stalled_daemon(daemon_exe: &Path) -> io::Result<DaemonConnection> {
+    let expected = fingerprint_of(daemon_exe)?;
     if let Some(info) = read_info() {
         app_log::event(&format!("restarting stalled daemon pid {}", info.pid));
         if info.is_running() {
-            terminate_daemon(info.pid, daemon_exe)?;
-            wait_until_gone(&info);
+            terminate_and_wait(&info, daemon_exe)?;
         }
         remove_info_owned_by(info.pid);
     }
-    launch_and_connect(daemon_exe)
+    match launch_and_connect(daemon_exe, &expected)? {
+        Ensure::Connected(connection) => Ok(connection),
+        Ensure::ProtocolMismatch { .. } | Ensure::Stalled { .. } => {
+            Err(io::Error::other("Another terminal daemon started first and cannot be used"))
+        }
+    }
+}
+
+/// 데몬 프로세스를 강제로 끝내고 사라지기를 기다린다. 사라지지 않으면 오류다 — 그대로 진행하면 `daemon.json`만 지워지고
+/// 옛 데몬이 단일 실행 잠금을 쥔 채 남아 새 데몬이 뜨지 못한다.
+fn terminate_and_wait(
+    info: &DaemonInfo,
+    daemon_exe: &Path,
+) -> io::Result<()> {
+    terminate_daemon(info.pid, daemon_exe)?;
+    wait_until_gone(info);
+    if info.is_running() { Err(io::Error::other("The old daemon did not exit")) } else { Ok(()) }
 }
 
 fn wait_until_gone(info: &DaemonInfo) {
@@ -365,9 +428,13 @@ fn wait_until_gone(info: &DaemonInfo) {
     }
 }
 
+/// `daemon.json`의 데몬에 붙어 정책대로 쓸지·알릴지·교체할지 정한다.
+///
+/// 프로토콜 버전을 지문보다 먼저 본다 — 버전이 다른 데몬은 인사 전용 연결만 주므로 지문이 같아도 쓸 수 없다.
 fn connect_existing(
+    daemon_exe: &Path,
     expected_fingerprint: &str,
-    policy: MismatchPolicy,
+    policy: Policy,
 ) -> io::Result<Existing> {
     match read_info() {
         None => Ok(Existing::Absent),
@@ -377,23 +444,66 @@ fn connect_existing(
             Ok(Existing::Absent)
         }
         Some(info) => match DaemonConnection::connect(&info) {
+            Ok(connection) if connection.daemon_protocol_version != PROTOCOL_VERSION => {
+                app_log::event(&format!(
+                    "protocol mismatch: daemon v{} app v{PROTOCOL_VERSION} (pid {}), policy {policy:?}",
+                    connection.daemon_protocol_version, connection.daemon_pid,
+                ));
+                match policy {
+                    Policy::Replace => shut_down(&connection, &info).map(|()| Existing::Absent),
+                    Policy::Keep | Policy::ReplaceIfIdle => {
+                        let (pid, daemon_version) = (connection.daemon_pid, Some(connection.daemon_protocol_version));
+                        connection.close();
+                        Ok(Existing::Ready(Ensure::ProtocolMismatch { pid, daemon_version }))
+                    }
+                }
+            }
             Ok(connection) if connection.daemon_fingerprint == expected_fingerprint => {
                 Ok(Existing::Ready(Ensure::Connected(connection)))
             }
-            Ok(connection) => {
-                app_log::event(&format!(
-                    "fingerprint mismatch: daemon {}.. app {}.. (pid {}), policy {policy:?}",
-                    short(&connection.daemon_fingerprint),
-                    short(expected_fingerprint),
-                    connection.daemon_pid,
-                ));
+            Ok(mut connection) => {
+                // 프로토콜은 같고 데몬 실행 파일만 다르다. 터미널이 하나도 없는 때만(시작할 때만) 바꾼다 — 터미널이 있으면
+                // 그 셸을 끝내게 되고, 앱을 쓰는 중이면 같은 앱의 다른 연결이 끊긴다.
+                let n_terminals = matches!(policy, Policy::ReplaceIfIdle | Policy::Replace)
+                    .then(|| n_terminals_of(&connection))
+                    .flatten();
+                if n_terminals == Some(0) {
+                    app_log::event(&format!(
+                        "idle outdated daemon replaced: daemon {}.. app {}.. (pid {})",
+                        short(&connection.daemon_fingerprint),
+                        short(expected_fingerprint),
+                        connection.daemon_pid,
+                    ));
+                    shut_down(&connection, &info).map(|()| Existing::Absent)
+                } else {
+                    app_log::event(&format!(
+                        "outdated daemon kept: daemon {}.. app {}.. (pid {}){}",
+                        short(&connection.daemon_fingerprint),
+                        short(expected_fingerprint),
+                        connection.daemon_pid,
+                        n_terminals.map(|n| format!(", {n} terminals")).unwrap_or_default(),
+                    ));
+                    connection.outdated = true;
+                    Ok(Existing::Ready(Ensure::Connected(connection)))
+                }
+            }
+            // 인사의 버전을 따지는 옛 데몬(버전 1)은 우리 인사를 거절하고 연결을 닫아 종료 요청도 보낼 수 없다.
+            // 교체를 고른 경우에만 프로세스를 직접 끝낸다(마지막 몇 초의 터미널 기록이 사라질 수 있다).
+            Err(error) if is_unsupported_protocol(&error) => {
+                app_log::event(&format!("daemon pid {} refused the hello: {error}, policy {policy:?}", info.pid));
                 match policy {
-                    MismatchPolicy::Quit => {
-                        let daemon_fingerprint = connection.daemon_fingerprint.clone();
-                        connection.close();
-                        Ok(Existing::Ready(Ensure::MismatchKept { daemon_fingerprint }))
+                    Policy::Replace => {
+                        app_log::event(&format!(
+                            "force-stopping daemon pid {} (protocol v1 cannot be asked to exit)",
+                            info.pid
+                        ));
+                        terminate_and_wait(&info, daemon_exe)?;
+                        remove_info_of(&info);
+                        Ok(Existing::Absent)
                     }
-                    MismatchPolicy::Replace => shut_down(&connection, &info).map(|()| Existing::Absent),
+                    Policy::Keep | Policy::ReplaceIfIdle => {
+                        Ok(Existing::Ready(Ensure::ProtocolMismatch { pid: info.pid, daemon_version: None }))
+                    }
                 }
             }
             // 파이프나 소켓이 없거나(`NotFound`) 소켓 파일만 남아 접속이 거부되는데(`ConnectionRefused`) 프로세스는 있다:
@@ -419,6 +529,13 @@ fn short(fingerprint: &str) -> &str {
     fingerprint.get(..12).unwrap_or(fingerprint)
 }
 
+/// 데몬이 쥔 터미널 수. 시간 안에 답이 없으면 None이다.
+fn n_terminals_of(connection: &DaemonConnection) -> Option<u32> {
+    connection.send(&Frame::new(kind::STATUS_REQUEST, Vec::new())).ok()?;
+    let reply = connection.wait_for_any(&[kind::STATUS], timeout::STATUS_REPLY)?;
+    reply.parse_json::<Status>().ok().map(|status| status.n_terminals)
+}
+
 /// 이 연결로 데몬에 종료를 요청한다(모든 터미널의 셸이 끝나고 터미널 기록은 남는다). 요청이 데몬에 쓰이기를 `wait`까지 기다린다.
 ///
 /// 앱이 곧 끝나므로 요청이 보내지기 전에 프로세스가 사라지지 않게 한다. 데몬이 종료를 마치기까지는 기다리지 않는다.
@@ -431,19 +548,28 @@ pub fn request_shutdown(
 }
 
 /// 옛 데몬에 종료를 요청하고 프로세스가 사라지기를 기다린다. 사라지지 않으면 오류다.
+///
+/// 요청이 쓰이지 않았거나 답이 없어도 프로세스가 사라지면 성공이다 — 다른 앱이 같은 데몬을 먼저 끝내는 중일 수 있다.
 fn shut_down(
     connection: &DaemonConnection,
     info: &DaemonInfo,
 ) -> io::Result<()> {
     app_log::event(&format!("replacing daemon pid {}", info.pid));
-    connection.send(&Frame::new(kind::SHUTDOWN, vec![]))?;
-    let _ = connection.wait_for_any(&[kind::STATUS], timeout::SHUTDOWN_REPLY);
+    if connection.send(&Frame::new(kind::SHUTDOWN, vec![])).is_ok() {
+        let _ = connection.wait_for_any(&[kind::STATUS], timeout::SHUTDOWN_REPLY);
+    }
     wait_until_gone(info);
     if info.is_running() { Err(io::Error::other("The old daemon did not exit")) } else { Ok(()) }
 }
 
 /// 데몬을 띄우고 그 데몬이 `daemon.json`을 쓰면 연결한다. 시간 안에 뜨지 않으면 오류다.
-fn launch_and_connect(daemon_exe: &Path) -> io::Result<DaemonConnection> {
+///
+/// 두 앱이 동시에 시작하면 데몬도 둘이 뜨지만 단일 실행 잠금을 진 쪽만 남는다. 진 데몬은 `AddrInUse`로 끝나므로,
+/// `daemon.json`에 다른 데몬이 쓰여 있으면 그 데몬에 붙는다(`Policy::Keep`).
+fn launch_and_connect(
+    daemon_exe: &Path,
+    expected_fingerprint: &str,
+) -> io::Result<Ensure> {
     let started = Instant::now();
     // 데이터 폴더와 기록 폴더는 데몬을 띄우기 전에 앱이 만든다. 앱과 데몬이 같은 폴더의 접근 권한을
     // 동시에 처음 설정하면 서로 부딪쳐 데몬이 "액세스 거부"로 시작하지 못할 수 있다.
@@ -451,25 +577,50 @@ fn launch_and_connect(daemon_exe: &Path) -> io::Result<DaemonConnection> {
     let launched = launch_daemon(daemon_exe)
         .map_err(|error| io::Error::new(error.kind(), format!("Could not start the terminal daemon: {error}")))?;
     let end = Instant::now() + timeout::DAEMON_START;
-    let mut connection = None;
-    while connection.is_none() && Instant::now() < end {
-        // 옛 데몬의 흔적이 아니라 방금 띄운 데몬이 쓴 정보일 때만 접속한다.
-        connection =
-            read_info().filter(|info| info.pid == launched.pid).and_then(|info| DaemonConnection::connect(&info).ok());
-        if connection.is_none() {
+    let mut outcome: Option<io::Result<Ensure>> = None;
+    let mut joined_other = false;
+    while outcome.is_none() && Instant::now() < end {
+        outcome = match read_info() {
+            // 방금 띄운 데몬이 쓴 정보.
+            Some(info) if info.pid == launched.pid => match DaemonConnection::connect(&info) {
+                // 앱 옆 데몬 파일이 다른 프로토콜로 인사한다. 이 연결은 인사만 되므로 쓰지 않고 원인을 알린다 — 그대로 쓰면
+                // 첫 요청이 거절되고, 다시 시도해도 같은 파일이 뜬다.
+                Ok(connection) if connection.daemon_protocol_version != PROTOCOL_VERSION => {
+                    let error = io::Error::other(format!(
+                        "The daemon beside the app speaks protocol v{}; this Paddock needs v{PROTOCOL_VERSION}",
+                        connection.daemon_protocol_version
+                    ));
+                    connection.close();
+                    Some(Err(error))
+                }
+                Ok(connection) => Some(Ok(Ensure::Connected(connection))),
+                Err(_) => None,
+            },
+            // 다른 데몬의 정보: 잠금을 다른 데몬이 먼저 얻었다. 죽은 데몬의 흔적은 아직 실행 중이 아니라서 건너뛴다.
+            Some(info) if info.is_running() => match connect_existing(daemon_exe, expected_fingerprint, Policy::Keep) {
+                Ok(Existing::Ready(ensure)) => {
+                    joined_other = true;
+                    Some(Ok(ensure))
+                }
+                Ok(Existing::Absent) | Err(_) => None,
+            },
+            _ => None,
+        };
+        if outcome.is_none() {
             thread::sleep(timeout::POLL);
         }
     }
     // 기록은 데몬이 준비된 뒤에 남긴다. 데몬이 시작하며 폴더 권한을 바꾸는 동안 앱이 기록 파일을 열어 두고 있으면
     // 권한 변경이 그 파일 때문에 실패할 수 있다.
     app_log::event(&format!(
-        "launched daemon pid {} (breakaway denied: {}), ready: {}, {} ms",
+        "launched daemon pid {} (breakaway denied: {}), ready: {}, {} ms{}",
         launched.pid,
         launched.breakaway_denied,
-        connection.is_some(),
-        started.elapsed().as_millis()
+        matches!(outcome, Some(Ok(_))),
+        started.elapsed().as_millis(),
+        if joined_other { ", but another daemon holds the lock: connected to it" } else { "" },
     ));
-    connection.ok_or_else(|| io::Error::new(io::ErrorKind::TimedOut, "The terminal daemon did not start"))
+    outcome.unwrap_or_else(|| Err(io::Error::new(io::ErrorKind::TimedOut, "The terminal daemon did not start")))
 }
 
 #[cfg(test)]
@@ -485,7 +636,8 @@ mod tests {
     use paddock_protocol::message::{Status, kind};
 
     use super::*;
-    use crate::test_support::{DaemonCleanup, TempHome, daemon_exe};
+    use crate::terminal::session::{TerminalSession, Want, start_session};
+    use crate::test_support::{DaemonCleanup, TempHome, altered_copy, daemon_exe};
 
     /// 쓴 내용을 기록하고 정해 둔 응답을 읽어 주는 가짜 연결.
     struct FakeStream {
@@ -532,27 +684,10 @@ mod tests {
         assert!(!written.lock().unwrap().is_empty(), "hello is sent to a same-user server");
     }
 
-    /// 실행 파일 뒤에 한 바이트를 덧붙인 사본. 그대로 실행되지만 지문이 다르다.
-    fn altered_copy(
-        exe: &Path,
-        into: &Path,
-    ) -> std::path::PathBuf {
-        let copy = into.join(format!("paddock-daemon-altered{}", std::env::consts::EXE_SUFFIX));
-        let mut bytes = std::fs::read(exe).unwrap();
-        bytes.push(0);
-        std::fs::write(&copy, bytes).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&copy, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        copy
-    }
-
     fn connected(ensure: Ensure) -> DaemonConnection {
         match ensure {
             Ensure::Connected(connection) => connection,
-            Ensure::MismatchKept { .. } | Ensure::Stalled { .. } => panic!("expected a connection"),
+            Ensure::ProtocolMismatch { .. } | Ensure::Stalled { .. } => panic!("expected a connection"),
         }
     }
 
@@ -562,34 +697,226 @@ mod tests {
     }
 
     #[test]
+    fn test_handshake_names_the_protocol_version_refusal_apart_from_other_errors() {
+        let refuse = |text: &str| {
+            let stream =
+                FakeStream { written: Arc::default(), reply: Cursor::new(reply_bytes(&Frame::text(kind::ERR, text))) };
+            say_hello(stream, "token").err().expect("server error must surface")
+        };
+        let version = refuse("Unsupported protocol version");
+        assert!(is_unsupported_protocol(&version));
+        assert_eq!(version.to_string(), "Unsupported protocol version");
+        assert!(!is_unsupported_protocol(&refuse("Bad token")));
+    }
+
+    #[test]
+    fn test_a_hello_answer_without_a_protocol_version_means_version_1() {
+        let answer = |protocol_version| HelloOk { pid: 1, fingerprint: "f".into(), protocol_version };
+        assert_eq!(protocol_version_of(&answer(0)), 1);
+        assert_eq!(protocol_version_of(&answer(2)), 2);
+    }
+
+    #[test]
     fn test_ensure_launches_daemon_then_reuses_it() {
         let _home = TempHome::new();
         let _cleanup = DaemonCleanup;
         let exe = daemon_exe();
-        let first = connected(ensure(&exe, MismatchPolicy::Quit).unwrap());
-        let second = connected(ensure(&exe, MismatchPolicy::Quit).unwrap());
+        let first = connected(ensure(&exe, Policy::Keep).unwrap());
+        let second = connected(ensure(&exe, Policy::Keep).unwrap());
         assert_eq!(first.daemon_pid, second.daemon_pid);
         assert_eq!(status_of(&first).pid, first.daemon_pid);
         assert_eq!(read_info().unwrap().pid, first.daemon_pid);
     }
 
+    #[cfg(unix)]
+    const SHELL: &str = "bash";
+    #[cfg(windows)]
+    const SHELL: &str = "cmd";
+
+    /// 데몬에 터미널 하나를 연다. 돌려받은 세션을 쥐고 있는 동안 그 연결과 터미널이 산다.
+    fn open_terminal(connection: DaemonConnection) -> TerminalSession {
+        let want = Want::New { shell: SHELL.to_string(), cwd: None, wsl_distribution: None };
+        start_session(connection, want, Instant::now()).unwrap()
+    }
+
+    /// 앱 기록 파일의 내용.
+    fn app_log_text() -> String {
+        std::fs::read_to_string(paddock_protocol::daemon_info::native_dir().join("logs").join("app.log"))
+            .unwrap_or_default()
+    }
+
+    /// 데몬을 띄우고 `daemon.json`이 써질 때까지만 기다린다(인사하지 않는다). 인사를 거절하는 데몬은 `ensure`로 띄울 수 없다.
+    fn launch_without_greeting(exe: &Path) -> u32 {
+        let launched = launch_daemon(exe).unwrap();
+        let end = Instant::now() + Duration::from_secs(8);
+        while !read_info().is_some_and(|info| info.pid == launched.pid) {
+            assert!(Instant::now() < end, "the daemon did not write daemon.json");
+            std::thread::sleep(Duration::from_millis(30));
+        }
+        launched.pid
+    }
+
     #[test]
-    fn test_c7_fingerprint_mismatch_quit_keeps_daemon() {
+    fn test_c7_outdated_daemon_with_terminals_is_used_without_asking() {
         let home = TempHome::new();
         let _cleanup = DaemonCleanup;
         let exe = daemon_exe();
-        let running = connected(ensure(&exe, MismatchPolicy::Quit).unwrap());
-        let old_fingerprint = fingerprint_of(&exe).unwrap();
+        let running = connected(ensure(&exe, Policy::Keep).unwrap());
+        let old_pid = running.daemon_pid;
+        let _terminal = open_terminal(running);
 
-        // 앱이 기대하는 데몬 파일이 실행 중인 데몬과 달라진 상황(앱만 업데이트됨).
+        // 앱만 업데이트돼 기대하는 데몬 파일의 지문이 실행 중인 데몬과 다르다. 터미널이 있으므로 묻지 않고 그 데몬을 쓴다.
         let altered = altered_copy(&exe, home.dir.path());
-        match ensure(&altered, MismatchPolicy::Quit).unwrap() {
-            Ensure::MismatchKept { daemon_fingerprint } => assert_eq!(daemon_fingerprint, old_fingerprint),
-            Ensure::Connected(_) | Ensure::Stalled { .. } => panic!("a mismatched daemon must not be used"),
+        let used = connected(ensure(&altered, Policy::ReplaceIfIdle).unwrap());
+        assert_eq!(used.daemon_pid, old_pid);
+        assert!(used.outdated);
+        assert_eq!(used.daemon_fingerprint, fingerprint_of(&exe).unwrap());
+        assert_eq!(status_of(&used).n_terminals, 1, "the terminal must still be alive");
+        assert_eq!(read_info().unwrap().pid, old_pid);
+        assert!(app_log_text().contains("outdated daemon kept"), "{}", app_log_text());
+    }
+
+    #[test]
+    fn test_c7_outdated_daemon_with_no_terminals_is_replaced_at_start() {
+        let home = TempHome::new();
+        let _cleanup = DaemonCleanup;
+        let exe = daemon_exe();
+        let running = connected(ensure(&exe, Policy::Keep).unwrap());
+        let old_pid = running.daemon_pid;
+        let old_info = read_info().unwrap();
+        running.close();
+
+        let altered = altered_copy(&exe, home.dir.path());
+        let replaced = connected(ensure(&altered, Policy::ReplaceIfIdle).unwrap());
+        assert_ne!(replaced.daemon_pid, old_pid);
+        assert_eq!(replaced.daemon_fingerprint, fingerprint_of(&altered).unwrap());
+        assert!(!replaced.outdated);
+        assert!(!old_info.is_running(), "the old daemon must be gone");
+        assert_eq!(read_info().unwrap().pid, replaced.daemon_pid);
+        assert!(app_log_text().contains("idle outdated daemon replaced"), "{}", app_log_text());
+    }
+
+    #[test]
+    fn test_c7_outdated_daemon_is_kept_when_connecting_for_a_new_terminal() {
+        let home = TempHome::new();
+        let _cleanup = DaemonCleanup;
+        let exe = daemon_exe();
+        let running = connected(ensure(&exe, Policy::Keep).unwrap());
+        let old_pid = running.daemon_pid;
+        running.close();
+
+        // 세션 중 새 터미널을 위한 연결은 터미널이 하나도 없어도 데몬을 바꾸지 않는다.
+        let altered = altered_copy(&exe, home.dir.path());
+        let used = connected(ensure(&altered, Policy::Keep).unwrap());
+        assert_eq!(used.daemon_pid, old_pid);
+        assert!(used.outdated);
+        assert_eq!(read_info().unwrap().pid, old_pid);
+    }
+
+    #[test]
+    fn test_c7_protocol_mismatch_asks_then_replace_shuts_the_old_daemon_down() {
+        let mut home = TempHome::new();
+        let _cleanup = DaemonCleanup;
+        let exe = daemon_exe();
+        // 프로토콜 버전 1이라고 인사하는 데몬(지문은 앱과 같다 — 앱은 지문보다 버전을 먼저 본다).
+        home.set_env("PADDOCK_DAEMON_PROTOCOL_VERSION", Some("1"));
+        let old_pid = launch_without_greeting(&exe);
+        let old_info = read_info().unwrap();
+        // 새로 뜨는 데몬은 훅 없이 실제 버전으로 인사해야 한다.
+        home.set_env("PADDOCK_DAEMON_PROTOCOL_VERSION", None);
+
+        for policy in [Policy::Keep, Policy::ReplaceIfIdle] {
+            match ensure(&exe, policy).unwrap() {
+                Ensure::ProtocolMismatch { pid, daemon_version } => {
+                    assert_eq!((pid, daemon_version), (old_pid, Some(1)))
+                }
+                Ensure::Connected(_) | Ensure::Stalled { .. } => {
+                    panic!("a daemon with another protocol must not be used")
+                }
+            }
+            assert!(old_info.is_running(), "{policy:?} must leave the daemon running");
         }
-        // Quit을 골라도 데몬과 그 터미널은 그대로다.
-        assert_eq!(status_of(&running).pid, running.daemon_pid);
-        assert_eq!(read_info().unwrap().pid, running.daemon_pid);
+
+        let replaced = connected(ensure(&exe, Policy::Replace).unwrap());
+        assert_ne!(replaced.daemon_pid, old_pid);
+        assert_eq!(replaced.daemon_protocol_version, PROTOCOL_VERSION);
+        assert!(!old_info.is_running(), "the old daemon must be gone");
+        assert_eq!(read_info().unwrap().pid, replaced.daemon_pid);
+        // 종료 요청이 닿는 데몬이라 프로세스를 강제로 끝내지 않는다.
+        assert!(!app_log_text().contains("force-stopping"), "{}", app_log_text());
+    }
+
+    #[test]
+    fn test_launching_a_daemon_that_speaks_another_protocol_fails_with_the_cause() {
+        let mut home = TempHome::new();
+        let _cleanup = DaemonCleanup;
+        let exe = daemon_exe();
+        // 앱 옆의 데몬 파일이 다른 프로토콜로 인사한다. 연결해 쓰면 첫 요청이 ERR가 되어 같은 파일을 다시 띄우는 일이 반복된다.
+        home.set_env("PADDOCK_DAEMON_PROTOCOL_VERSION", Some("1"));
+        let error = ensure(&exe, Policy::ReplaceIfIdle).err().expect("a daemon of another protocol must not be used");
+        assert_eq!(
+            error.to_string(),
+            format!("The daemon beside the app speaks protocol v1; this Paddock needs v{PROTOCOL_VERSION}")
+        );
+        assert!(app_log_text().contains("ready: false"), "{}", app_log_text());
+    }
+
+    #[test]
+    fn test_c7_replace_falls_back_to_terminate_when_the_old_daemon_rejects_the_hello() {
+        let mut home = TempHome::new();
+        let _cleanup = DaemonCleanup;
+        let exe = daemon_exe();
+        // 버전이 다른 인사를 ERR로 거절하고 연결을 닫는 데몬(인사의 버전을 따지던 옛 v1 데몬).
+        home.set_env("PADDOCK_DAEMON_PROTOCOL_VERSION", Some("1"));
+        home.set_env("PADDOCK_DAEMON_STRICT_HELLO", Some("1"));
+        let old_pid = launch_without_greeting(&exe);
+        let old_info = read_info().unwrap();
+        home.set_env("PADDOCK_DAEMON_PROTOCOL_VERSION", None);
+        home.set_env("PADDOCK_DAEMON_STRICT_HELLO", None);
+
+        for policy in [Policy::Keep, Policy::ReplaceIfIdle] {
+            match ensure(&exe, policy).unwrap() {
+                Ensure::ProtocolMismatch { pid, daemon_version } => assert_eq!((pid, daemon_version), (old_pid, None)),
+                Ensure::Connected(_) | Ensure::Stalled { .. } => panic!("a rejecting daemon must not be used"),
+            }
+            assert!(old_info.is_running(), "{policy:?} must leave the daemon running");
+        }
+
+        let replaced = connected(ensure(&exe, Policy::Replace).unwrap());
+        assert_ne!(replaced.daemon_pid, old_pid);
+        assert_eq!(replaced.daemon_protocol_version, PROTOCOL_VERSION);
+        assert!(!old_info.is_running(), "the old daemon must be gone");
+        assert_eq!(read_info().unwrap().pid, replaced.daemon_pid);
+        assert!(app_log_text().contains("force-stopping"), "{}", app_log_text());
+    }
+
+    /// 두 앱이 동시에 시작해도 데몬이 하나만 남는다. 경쟁을 재현한다는 보장은 없어 회귀 방지용이다.
+    #[test]
+    fn test_two_apps_starting_at_once_end_up_on_one_daemon() {
+        let _home = TempHome::new();
+        let _cleanup = DaemonCleanup;
+        let exe = daemon_exe();
+        let (first, second) = std::thread::scope(|scope| {
+            let first = scope.spawn(|| connected(ensure(&exe, Policy::ReplaceIfIdle).unwrap()));
+            let second = scope.spawn(|| connected(ensure(&exe, Policy::ReplaceIfIdle).unwrap()));
+            (first.join().unwrap(), second.join().unwrap())
+        });
+        assert_eq!(first.daemon_pid, second.daemon_pid);
+        assert_eq!(read_info().unwrap().pid, first.daemon_pid);
+        assert_eq!(status_of(&first).pid, first.daemon_pid);
+        assert_eq!(status_of(&second).pid, first.daemon_pid);
+        // 잠금에 진 데몬이 모두 끝나기를 기다린다. 정리가 이긴 데몬을 먼저 끝내면 아직 잠금을 기다리던 진 데몬이 이어받아 남는다.
+        let n_launched = app_log_text().matches("launched daemon pid").count();
+        let end = Instant::now() + Duration::from_secs(6);
+        let n_lost = || {
+            let log =
+                std::fs::read_to_string(paddock_protocol::daemon_info::native_dir().join("logs").join("daemon.log"));
+            log.unwrap_or_default().matches("another daemon is already running").count()
+        };
+        while n_lost() + 1 < n_launched && Instant::now() < end {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert_eq!(n_lost() + 1, n_launched, "every daemon but one must have lost the lock and exited");
     }
 
     /// 데몬 기록 파일에서 "connection N closed" 줄 수.
@@ -608,35 +935,15 @@ mod tests {
 
     #[test]
     fn test_mismatch_probe_connection_is_closed_when_the_app_gives_up_on_it() {
-        let home = TempHome::new();
+        let mut home = TempHome::new();
         let _cleanup = DaemonCleanup;
         let exe = daemon_exe();
-        let _running = connected(ensure(&exe, MismatchPolicy::Quit).unwrap());
+        home.set_env("PADDOCK_DAEMON_PROTOCOL_VERSION", Some("1"));
+        launch_without_greeting(&exe);
         let n_closed_before = n_closed_connections();
-        // 지문이 달라 쓰지 않는 데몬에 건 확인용 연결이 열려 있으면, 데몬은 그 연결 때문에 유휴 종료하지 못한다.
-        let altered = altered_copy(&exe, home.dir.path());
-        assert!(matches!(ensure(&altered, MismatchPolicy::Quit).unwrap(), Ensure::MismatchKept { .. }));
+        // 프로토콜이 달라 쓰지 않는 데몬에 건 확인용 연결이 열려 있으면, 데몬은 그 연결 때문에 유휴 종료하지 못한다.
+        assert!(matches!(ensure(&exe, Policy::Keep).unwrap(), Ensure::ProtocolMismatch { .. }));
         assert!(wait_for_closed_connections(n_closed_before + 1), "the probe connection stayed open");
-    }
-
-    #[test]
-    fn test_c7_fingerprint_mismatch_replace_restarts_daemon() {
-        let home = TempHome::new();
-        let _cleanup = DaemonCleanup;
-        let exe = daemon_exe();
-        let old = connected(ensure(&exe, MismatchPolicy::Quit).unwrap());
-
-        let altered = altered_copy(&exe, home.dir.path());
-        let replaced = connected(ensure(&altered, MismatchPolicy::Replace).unwrap());
-        assert_ne!(replaced.daemon_pid, old.daemon_pid);
-        assert_eq!(replaced.daemon_fingerprint, fingerprint_of(&altered).unwrap());
-        let end = Instant::now() + Duration::from_secs(5);
-        while paddock_protocol::daemon_info::read_info().is_some_and(|info| info.pid == old.daemon_pid)
-            && Instant::now() < end
-        {
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        assert_eq!(read_info().unwrap().pid, replaced.daemon_pid);
     }
 
     #[test]
@@ -709,12 +1016,12 @@ mod tests {
         let _home = TempHome::new();
         let _cleanup = DaemonCleanup;
         let exe = daemon_exe();
-        let first = connected(ensure(&exe, MismatchPolicy::Quit).unwrap());
+        let first = connected(ensure(&exe, Policy::Keep).unwrap());
         assert!(!first.breakaway_denied);
         let mut info = read_info().unwrap();
         info.breakaway_denied = true;
         paddock_protocol::daemon_info::write_info(&info).unwrap();
-        assert!(connected(ensure(&exe, MismatchPolicy::Quit).unwrap()).breakaway_denied);
+        assert!(connected(ensure(&exe, Policy::Keep).unwrap()).breakaway_denied);
     }
 
     #[cfg(unix)]
@@ -723,10 +1030,10 @@ mod tests {
         let _home = TempHome::new();
         let _cleanup = DaemonCleanup;
         let exe = daemon_exe();
-        let running = connected(ensure(&exe, MismatchPolicy::Quit).unwrap());
+        let running = connected(ensure(&exe, Policy::Keep).unwrap());
         // 멈춘 데몬: 연결은 받지만 인사에 답하지 못한다.
         unsafe { libc::kill(running.daemon_pid as i32, libc::SIGSTOP) };
-        let outcome = ensure(&exe, MismatchPolicy::Quit).unwrap();
+        let outcome = ensure(&exe, Policy::Keep).unwrap();
         assert!(matches!(outcome, Ensure::Stalled { pid } if pid == running.daemon_pid));
         let restarted = restart_stalled_daemon(&exe).unwrap();
         assert_ne!(restarted.daemon_pid, running.daemon_pid);
@@ -757,7 +1064,7 @@ mod tests {
         };
         paddock_protocol::daemon_info::write_info(&stale).unwrap();
 
-        let connection = connected(ensure(&exe, MismatchPolicy::Quit).unwrap());
+        let connection = connected(ensure(&exe, Policy::Keep).unwrap());
         assert_ne!(connection.daemon_pid, stale.pid, "a new daemon must be started");
         assert_ne!(read_info().unwrap().identity(), stale.identity());
         other_program.kill().unwrap();

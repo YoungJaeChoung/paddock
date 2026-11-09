@@ -1,0 +1,48 @@
+# 상태 줄 Memory 게이지와 90% 경고(덩어리 31): 가짜 값을 주입해(act memoryfake) 이 컴퓨터와 WSL 중 더 빡빡한 쪽이 보이고, 90%에서 한 번만 경고하며,
+# 80% 아래로 내려가야 다시 무장하고, 가장 큰 WSL 터미널이 이 창에 있으면 `Go to <이름>`이 그 터미널로 간다. Memory 항목을 끄면 묶음이 사라진다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+key ctrl-shift-t
+waittabs 2 @20000
+act selecttab 2
+waitstate selected: @5000
+# 이 컴퓨터의 실제 사용률이 90%를 넘어 이미 뜬 경고가 있으면 먼저 닫는다(점검이 실제 값에 기대지 않게 한다).
+act memoryclose
+# 이 컴퓨터 32 GiB 중 16 GiB 사용 → 50%, 출처는 이 컴퓨터다.
+act memoryfake 32 16
+waitstate memory percent=50 source=system warned=no notice=- target=- @5000
+waitstate memory-tip System memory in use: 50%. @3000
+state p50
+shot 01-system-50
+# WSL 26 GiB 중 24 GiB 사용(92%) + 가장 큰 터미널은 1번 탭(3 GiB) → WSL 쪽이 빡빡하고 경고가 뜨며 `Go to` 단추가 이 창의 터미널을 가리킨다.
+act memoryfake 32 16 26 2 8 1 3
+waitstate memory percent=92 source=wsl warned=yes @5000
+waitstate notice=WSL memory is 92% full. @3000
+waitstate target=Go to @3000
+state p92
+shot 02-wsl-92-notice
+# `Go to`는 그 터미널(1번 탭)을 선택하고 경고를 닫는다.
+act memorygoto
+waitstate notice=- @5000
+state after-goto
+# 같은 90% 넘는 값이 이어져도 다시 경고하지 않는다(warned=yes 유지).
+act memoryfake 32 16 26 1 8 1 3
+waitstate memory percent=96 source=wsl warned=yes notice=- @5000
+# 85%로 내려가도 80% 아래가 아니라 그대로 warned=yes이고 새 경고는 없다.
+act memoryfake 32 16 26 4 8 1 3
+waitstate memory percent=85 source=wsl warned=yes notice=- @5000
+# 70%로 내려가면 다시 무장한다.
+act memoryfake 32 16 26 8 8 1 3
+waitstate memory percent=69 source=wsl warned=no notice=- @5000
+# 다시 넘으면 한 번 더 경고한다.
+act memoryfake 32 16 26 2 8 1 3
+waitstate warned=yes notice=WSL memory is 92% full. @5000
+act memoryclose
+waitstate notice=- @3000
+# Memory 항목을 끄면 묶음이 사라진다.
+act quick statusbar memory off
+waitstate items=claude:on,codex:on,memory:off @5000
+waitstate memory percent=- @5000
+files memory-off
+shot 03-memory-off
+quit

@@ -11,6 +11,10 @@ test('빈 이름은 경고 없이 확인만 막고, 규칙을 어긴 이름만 �
     assert.match(validateEntryName('a\\b'), /\/ or \\/);
     assert.match(validateEntryName('..'), /reserved/);
     assert.match(validateEntryName('a\tb'), /control characters/);
+    assert.match(validateEntryName(' a'), /start or end with a space/);
+    assert.match(validateEntryName('a '), /start or end with a space/);
+    assert.match(validateEntryName('a.'), /end with a period/);
+    assert.equal(validateEntryName('.env'), '');
 });
 
 test('같은 이름이 있으면 덮어쓰지 않고 copy·copy n을 확장자 앞에 붙인다', () => {

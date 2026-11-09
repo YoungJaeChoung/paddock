@@ -1,0 +1,43 @@
+# 분리 창의 터미널 찾기(덩어리 38): 분리 창에서 Ctrl+Shift+H가 그 창에 찾기 띠를 열고(입력칸 키는 PTY로 가지 않는다), Esc가 띠를 닫아 키가 그 터미널로 돌아간다.
+# 찾기 상태는 본 창이 하나만 쥐고 띠 입력칸은 분리 창에 그려진다. 본 창으로 되돌리면 띠가 닫힌다.
+waittabs 1 @30000
+send echo FIND-NEEDLE-A\r
+waitline FIND-NEEDLE-A @20000
+key ctrl-shift-t
+waittabs 2 @20000
+sendto 2 echo FIND-NEEDLE-B\r
+wait 1200
+act movetowindow 2
+waitstate detached=2 @10000
+keywin 2 ctrl-shift-h
+waitstate term-find open=y terminal=2 @5000
+state find-open
+shotwin 2 detached-find-open
+textwin 2 NEEDLE
+waitstate query=NEEDLE @5000
+waitstate count=1_of_ @5000
+state find-typed
+shotwin 2 detached-find-typed
+# 일치 다음(띠의 › 단추와 같은 동작; 합성 Enter 키는 본 창 띠에서도 일치를 넘기지 않아 act로 본다)
+act termfindnext
+waitstate count=2_of_2 @5000
+state find-next
+# 띠가 열려 있는 동안 친 글자는 터미널로 가지 않는다
+nolinestart 2 ^NEEDLE
+keywin 2 escape
+waitstate term-find open=n @5000
+state find-closed
+# Esc 뒤의 글자는 분리 창의 터미널(PTY)로 간다
+textwin 2 echo BACK-TO-PTY
+keywin 2 enter
+wait 1500
+dumptab 2 detached-grid
+# 다시 열고 본 창으로 되돌리면 띠가 닫힌다
+keywin 2 ctrl-shift-h
+waitstate term-find open=y terminal=2 @5000
+act moveback 2
+waitstate detached=- @10000
+waitstate term-find open=n @5000
+state find-after-back
+act quick quitstop
+wait 3000

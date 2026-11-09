@@ -6,6 +6,7 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const backend = require('../backend-module');
 const { AccountProfiles } = require('../account-profiles');
+const { hasAgentStatusHook } = require('../agent-status-hook-settings');
 
 // 백엔드의 계정 목록은 모듈을 불러올 때 정한 설정 폴더를 쓴다. 계정 폴더 경로를 같은 규칙으로 계산한다.
 const BACKEND_CONFIG = new AccountProfiles().configDirectory;
@@ -261,7 +262,10 @@ test('UR10 the Paddock settings file is written at start and follows the usage a
     const flagFile = path.join(root, 'claude', 'flag-settings.json');
     const userFile = path.join(root, '.claude', 'settings.json');
     const userModified = fs.statSync(userFile).mtimeMs;
-    assert.deepEqual(JSON.parse(fs.readFileSync(flagFile, 'utf8')), {});
+    // The agent status hook is on by default (Linux); nothing else is in the file until a toggle turns it on.
+    const initial = JSON.parse(fs.readFileSync(flagFile, 'utf8'));
+    assert.equal('statusLine' in initial, false);
+    assert.equal(hasAgentStatusHook(initial), process.platform === 'linux');
     assert.equal(fs.statSync(path.join(root, 'bin', process.platform === 'win32' ? 'claude.cmd' : 'claude')).isFile(), true);
     const post = async (route, query) => {
         const { reply, response } = respond();
@@ -286,7 +290,55 @@ test('UR10 the Paddock settings file is written at start and follows the usage a
     await restarted.pendingDefaultWrites;
     const restartedFlags = JSON.parse(fs.readFileSync(flagFile, 'utf8'));
     assert.equal('statusLine' in restartedFlags, false);
-    if (process.platform === 'linux') assert.equal(restartedFlags.hooks.PreToolUse.length, 1);
+    if (process.platform === 'linux') assert.equal(restartedFlags.hooks.PreToolUse.length, 2);
+});
+
+test('UR10b the agent status hook route turns the hooks and the script on and off in the Paddock settings file', { skip: process.platform !== 'linux' && 'the hook needs sh and /proc' }, async context => {
+    const { root, contribution, routes } = fixture(context);
+    await contribution.pendingDefaultWrites;
+    const flagFile = path.join(root, 'claude', 'flag-settings.json');
+    const script = path.join(root, 'usage', 'agent-status-hook.sh');
+    const marker = path.join(root, 'usage', 'agent-status-hook.off');
+    assert.equal(hasAgentStatusHook(JSON.parse(fs.readFileSync(flagFile, 'utf8'))), true, 'on by default');
+    assert.equal(fs.existsSync(script), true);
+    const post = async (query) => {
+        const { reply, response } = respond();
+        routes.get('POST /paddock/agent-status-hook')({ query }, response);
+        await contribution.pendingDefaultWrites;
+        return reply;
+    };
+    assert.deepEqual((await post({ enabled: 'false' })).value, { state: 'off' });
+    assert.equal(hasAgentStatusHook(JSON.parse(fs.readFileSync(flagFile, 'utf8'))), false);
+    assert.equal(fs.existsSync(marker), true);
+    assert.deepEqual((await post({ enabled: 'true' })).value, { state: 'on' });
+    assert.equal(hasAgentStatusHook(JSON.parse(fs.readFileSync(flagFile, 'utf8'))), true);
+    assert.equal(fs.existsSync(marker), false);
+    assert.equal((await post({})).status, 400);
+    // A restart keeps the saved off choice.
+    await post({ enabled: 'false' });
+    const restarted = new (contribution.constructor)();
+    restarted.configure({ get() {}, post() {}, delete() {} });
+    await restarted.pendingDefaultWrites;
+    assert.equal(hasAgentStatusHook(JSON.parse(fs.readFileSync(flagFile, 'utf8'))), false);
+    assert.equal(fs.existsSync(marker), true);
+});
+
+test('UR10c a failed status hook script copy does not stop the settings file and keeps the hook command out of it', { skip: process.platform !== 'linux' && 'the hook needs sh and /proc' }, async context => {
+    // The app folder has no hook script to copy.
+    const emptyApp = fs.mkdtempSync(path.join(os.tmpdir(), 'paddock-empty-app-'));
+    const previousApp = process.env.THEIA_APP_PROJECT_PATH;
+    process.env.THEIA_APP_PROJECT_PATH = emptyApp;
+    context.after(() => {
+        if (previousApp === undefined) delete process.env.THEIA_APP_PROJECT_PATH;
+        else process.env.THEIA_APP_PROJECT_PATH = previousApp;
+        fs.rmSync(emptyApp, { recursive: true, force: true });
+    });
+    const { root, contribution } = fixture(context);
+    await contribution.pendingDefaultWrites;
+    const flagFile = path.join(root, 'claude', 'flag-settings.json');
+    assert.equal(fs.existsSync(flagFile), true, 'the settings file is still written');
+    assert.equal(hasAgentStatusHook(JSON.parse(fs.readFileSync(flagFile, 'utf8'))), false);
+    assert.equal(contribution.startupWarnings.some(warning => warning.startsWith('The agent status hook script could not be installed')), true);
 });
 
 test('UR11 the WSL launcher route reports unsupported without WSL and rejects a missing flag', async context => {

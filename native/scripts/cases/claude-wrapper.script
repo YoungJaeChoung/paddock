@@ -1,0 +1,10 @@
+# claude 실행 래퍼(덩어리 32): 앱이 시작할 때 설정 폴더 bin에 놓은 claude.cmd가 PATH 맨 앞에서 먼저 불려, 받은 인자를 그대로 찍는 가짜 claude.exe를
+# `--settings <flag-settings.json>`과 함께 실행한다(래퍼를 거친 증거). 준비물은 scripts/assets/fake-claude-args.sh다. 사용자 PC 전용(홈 경로는 임시 폴더 이름과 같아야 한다).
+waittabs 1 @30000
+waitstate cwd=C: @30000
+waitstate usage-setup computer state=on @60000
+send claude --version\r
+waitfor ARGS|--settings C:\Temp\pdk-run\home-claude-wrapper\.paddock\config\claude\flag-settings.json --version @30000
+dump wrapper
+shot wrapper
+quit

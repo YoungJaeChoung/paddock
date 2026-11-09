@@ -1,0 +1,326 @@
+# 메모리(3단계 총측정, 덩어리 28): 2단계 총측정 장면(터미널 4·파일 탭 4·폴더 검색 1회·Source control 보기)에 3단계의 것을 더해 20초 쉰 뒤 Private 메모리와 같은 순간 그래픽 몫·Rust 보유량(`gpumem`)을 잰다 —
+# 편집 탭 5개(고친 채)·검토 메모 3·터미널 찾기 띠·빠른 열기 1회. 모두 버리고 닫은 뒤 8초 뒤를 잰다. 이 한 바퀴를 3번 되풀이해 늘지 않는지(반복 평평)·`RustLiveMB`가 열기 전으로 돌아오는지 본다.
+# 같은 날 2단계 마감 exe에도 같은 대본을 돌린다(알 수 없는 `act`는 무시되므로 새 기능 몫만 빠진 같은 장면이 된다). `pasted-images` 1개는 실제 클립보드가 필요해 야간 I28이 맡는다(파일 하나라 메모리 몫이 없다).
+# 임시 홈에 prep-stage2.sh로 proj-a를 채우고 기본 셸을 PowerShell로 둬야 한다. 이 대본의 실행 이름은 memory-stage2다(대본 안의 임시 홈 경로가 그 이름을 쓴다).
+waittabs 1 @30000
+waitstate cwd=C: @30000
+mem start-1-terminal
+gpumem start-1-terminal
+send $p = "$env:USERPROFILE\\proj-a"; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p; git init -q -b main; git config user.name Tester; git config user.email t@example.com; git add -A; git commit -q -m base; 1..30 | ForEach-Object { Set-Content "file-$_.txt" "changed $_" }; 1..10 | ForEach-Object { Set-Content "new-$_.txt" new }\r
+send echo READY-A\r
+waitline READY-A @180000
+send claude.exe -n 600 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+act workadd
+waittabs 3 @20000
+waitstate cwd=C: @30000
+send cd \\\\wsl.localhost\\Ubuntu\\tmp\\pdk-stage2\\proj\r
+send echo READY-W\r
+waitline READY-W @30000
+send claude.exe -n 600 127.0.0.1\r
+wait 4000
+key ctrl-shift-c
+waittabs 4 @20000
+wait 3000
+state four-terminals
+act selecttab 1
+wait 5000
+mem before-open
+gpumem before-open
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/code-200k.ts
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/README.md
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/f-1080p.png
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/bulk.txt
+wait 1500
+text x
+wait 500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/file-1.txt
+wait 1500
+text x
+wait 500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/file-2.txt
+wait 1500
+text x
+wait 500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/file-3.txt
+wait 1500
+text x
+wait 500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/code-200k.ts
+wait 1500
+text x
+wait 500
+wait 5000
+act selectlines 1 2
+act note first note
+act selectlines 3 3
+act note second note
+act selectlines 5 6
+act note third note
+wait 500
+act search needle
+wait 15000
+act view scm
+wait 3000
+act quickopen file
+wait 3000
+act quickclose
+wait 800
+act selecttab 1
+wait 800
+act termfind needle
+wait 1500
+state r1-scene
+wait 12000
+mem r1-final-20s
+gpumem r1-final-20s
+key escape
+wait 800
+act clearnotes
+act view work
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+key ctrl-shift-f
+wait 600
+wait 8000
+mem r1-after-close
+gpumem r1-after-close
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/code-200k.ts
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/README.md
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/f-1080p.png
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/bulk.txt
+wait 1500
+text x
+wait 500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/file-1.txt
+wait 1500
+text x
+wait 500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/file-2.txt
+wait 1500
+text x
+wait 500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/file-3.txt
+wait 1500
+text x
+wait 500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/code-200k.ts
+wait 1500
+text x
+wait 500
+wait 5000
+act selectlines 1 2
+act note first note
+act selectlines 3 3
+act note second note
+act selectlines 5 6
+act note third note
+wait 500
+act search needle
+wait 15000
+act view scm
+wait 3000
+act quickopen file
+wait 3000
+act quickclose
+wait 800
+act selecttab 1
+wait 800
+act termfind needle
+wait 1500
+state r2-scene
+wait 12000
+mem r2-final-20s
+gpumem r2-final-20s
+key escape
+wait 800
+act clearnotes
+act view work
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+key ctrl-shift-f
+wait 600
+wait 8000
+mem r2-after-close
+gpumem r2-after-close
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/code-200k.ts
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/README.md
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/f-1080p.png
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/bulk.txt
+wait 1500
+text x
+wait 500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/file-1.txt
+wait 1500
+text x
+wait 500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/file-2.txt
+wait 1500
+text x
+wait 500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/file-3.txt
+wait 1500
+text x
+wait 500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/code-200k.ts
+wait 1500
+text x
+wait 500
+wait 5000
+act selectlines 1 2
+act note first note
+act selectlines 3 3
+act note second note
+act selectlines 5 6
+act note third note
+wait 500
+act search needle
+wait 15000
+act view scm
+wait 3000
+act quickopen file
+wait 3000
+act quickclose
+wait 800
+act selecttab 1
+wait 800
+act termfind needle
+wait 1500
+state r3-scene
+wait 12000
+mem r3-final-20s
+gpumem r3-final-20s
+key escape
+wait 800
+act clearnotes
+act view work
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+key ctrl-shift-f
+wait 600
+wait 8000
+mem r3-after-close
+gpumem r3-after-close
+shot memory-stage3
+quit

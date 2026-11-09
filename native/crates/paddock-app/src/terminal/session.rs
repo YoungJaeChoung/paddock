@@ -51,6 +51,11 @@ pub struct TerminalSession {
     /// 이 터미널을 쥔 데몬의 식별 글자. `id`는 데몬마다 1부터 매겨지므로 이 글자와 함께 터미널을 가리킨다.
     pub daemon: String,
     pub shell_pid: u32,
+    /// 이 터미널의 셸 이름(`powershell`·`cmd`·`gitbash`·`wsl`·`bash`). 파일 경로를 붙여 넣을 때 셸이 읽는 모양을 정하는 데 쓴다.
+    /// 새로 만들거나 되살린 터미널은 요청한 셸이고, 데몬에 이미 있는 터미널에 붙은 것은 비어 있다가 붙인 쪽이 데몬 목록의 값으로 채운다.
+    pub shell: String,
+    /// `shell`이 `wsl`일 때 요청한 배포판(기본 배포판이거나 데몬에 이미 있던 터미널에 붙었으면 None). 상태 줄 사용량이 그 터미널의 로그인을 같은 배포판의 계정과 대조하는 데 쓴다.
+    pub wsl_distribution: Option<String>,
     pub grid: Arc<Grid>,
     /// 이 터미널에 묶인 연결로 데몬에 보내는 통로. 터미널을 끝내는 요청(`KILL`)도 이 연결로 보낸다.
     pub outbox: Outbox,
@@ -93,6 +98,14 @@ pub fn start_session_with_screen(
     screen: Option<String>,
     connected_at: Instant,
 ) -> io::Result<TerminalSession> {
+    let shell_name = match &want {
+        Want::New { shell, .. } | Want::Launch { shell, .. } => shell.clone(),
+        Want::Attach { .. } => String::new(),
+    };
+    let requested_distribution = match &want {
+        Want::New { wsl_distribution, .. } | Want::Launch { wsl_distribution, .. } => wsl_distribution.clone(),
+        Want::Attach { .. } => None,
+    };
     let request = match want {
         Want::New { shell, cwd, wsl_distribution } => Frame::json(
             kind::NEW,
@@ -157,7 +170,15 @@ pub fn start_session_with_screen(
         let frames = connection.frames;
         // 보내는 통로(`outbox`)는 세션과 격자의 입력·크기 함수가 쥐고 있어 연결이 유지된다.
         thread::spawn(move || run_receive_loop(frames, &loop_grid, connected_at));
-        Ok(TerminalSession { id: attached.id, daemon, shell_pid: attached.pid, grid, outbox: connection.outbox })
+        Ok(TerminalSession {
+            id: attached.id,
+            daemon,
+            shell_pid: attached.pid,
+            shell: shell_name,
+            wsl_distribution: requested_distribution,
+            grid,
+            outbox: connection.outbox,
+        })
     }
 }
 
@@ -212,6 +233,11 @@ pub fn run_receive_loop(
                     record_state(grid, state);
                 }
             }
+            kind::MEMORY_REPORT => {
+                if let Ok(report) = frame.parse_json::<paddock_protocol::message::MemoryReport>() {
+                    crate::usage::memory::store_report(report);
+                }
+            }
             kind::EXITED => {
                 let code = frame.as_text();
                 app_log::event(&format!("terminal exited: {code}"));
@@ -254,7 +280,7 @@ mod tests {
     use paddock_protocol::message::kind;
 
     use super::*;
-    use crate::daemon_client::{Ensure, MismatchPolicy, ensure, inbox_channel};
+    use crate::daemon_client::{Ensure, Policy, ensure, inbox_channel};
     use crate::test_support::{DaemonCleanup, TempHome, daemon_exe};
 
     #[cfg(unix)]
@@ -314,6 +340,8 @@ mod tests {
             activity,
             finished,
             account: None,
+            conversation: None,
+            signal: None,
         };
         Frame::json(kind::TERMINAL_STATE, &state)
     }
@@ -427,9 +455,9 @@ mod tests {
     }
 
     fn connect(exe: &std::path::Path) -> crate::daemon_client::DaemonConnection {
-        match ensure(exe, MismatchPolicy::Quit).unwrap() {
+        match ensure(exe, Policy::Keep).unwrap() {
             Ensure::Connected(connection) => connection,
-            Ensure::MismatchKept { .. } | Ensure::Stalled { .. } => panic!("expected a connection"),
+            Ensure::ProtocolMismatch { .. } | Ensure::Stalled { .. } => panic!("expected a connection"),
         }
     }
 
@@ -458,6 +486,27 @@ mod tests {
         assert_eq!(again.id, first.id);
         assert_eq!(again.shell_pid, first.shell_pid);
         assert_eq!(again.grid.visible_text(), before);
+    }
+
+    #[test]
+    fn test_c_d69_tab_content_knows_its_shell_after_attach_and_restore() {
+        let _home = TempHome::new();
+        let _cleanup = DaemonCleanup;
+        let exe = daemon_exe();
+        // 새로 만든(또는 되살려 `Want::New`로 만든) 터미널은 요청한 셸을 안다.
+        let first = start_session(
+            connect(&exe),
+            Want::New { shell: SHELL.to_string(), cwd: None, wsl_distribution: None },
+            Instant::now(),
+        )
+        .unwrap();
+        assert_eq!(first.shell, SHELL);
+        // 데몬에 이미 있는 터미널에 붙은 세션은 셸을 모른 채 오고, 붙인 쪽이 데몬 목록의 값으로 채운다(`startup`).
+        let again = start_session(connect(&exe), Want::Attach { id: first.id }, Instant::now()).unwrap();
+        assert_eq!(again.shell, "");
+        let listed = list_terminals(&connect(&exe)).unwrap();
+        let from_list = listed.terminals.iter().find(|terminal| terminal.id == first.id).map(|t| t.shell.clone());
+        assert_eq!(from_list.as_deref(), Some(SHELL), "the daemon's list names the shell of an existing terminal");
     }
 
     #[test]

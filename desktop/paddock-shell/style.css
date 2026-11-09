@@ -161,6 +161,9 @@ body {
 .paddock-shell .row-main { display: flex; flex: 1; align-items: center; gap: 5px; min-width: 0; height: 28px; padding: 0 0 0 8px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
 .paddock-shell .folder-row { color: var(--p-fg-soft); }
 .paddock-shell .folder-row.is-current { background: var(--p-current-bg); color: var(--p-fg-strong); font-weight: 600; }
+.paddock-shell .repo-row { color: var(--p-fg-soft); }
+.paddock-shell .repo-row.is-current { color: var(--p-fg-strong); }
+.paddock-shell .work-row.in-repo { padding-left: 12px; }
 .paddock-shell .terminal-row .row-main { padding-left: calc(22px + var(--p-sidebar-indent, 12px)); }
 .paddock-shell .terminal-row.is-remote .row-main { cursor: pointer; }
 .paddock-shell .terminal-row.is-remote .row-meta { max-width: 92px; font-size: 11px; }
@@ -173,18 +176,20 @@ body {
 .paddock-shell .row-suffix, .paddock-shell .row-meta { flex: none; color: var(--p-fg-muted); font-size: 12px; }
 .paddock-shell .row-meta { max-width: 70px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .paddock-shell .terminal-row[data-agent-state] > .row-meta { margin-left: 6px; }
-.paddock-shell .agent-status { display: inline-flex; flex: 0 0 65px; align-items: center; gap: 5px; margin-left: 8px; color: var(--p-fg-muted); font-size: 12px; white-space: nowrap; }
+.paddock-shell .agent-status { display: inline-flex; flex: 0 0 76px; align-items: center; gap: 5px; margin-left: 8px; color: var(--p-fg-muted); font-size: 12px; white-space: nowrap; }
 .paddock-shell .agent-status::before { content: ''; flex: none; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
 .paddock-shell .agent-status.is-working { color: var(--p-accent); }
 .paddock-shell .agent-status.is-waiting { color: var(--p-warning); }
+.paddock-shell .agent-status.is-blocked { color: var(--p-warning); }
+.paddock-shell .agent-status.is-error { color: var(--p-danger); }
 /* 좁은 사이드바에서는 이름의 클릭 영역을 첫 줄에 확보하고, 프로그램과 상태를 둘째 줄에 둔다. */
 @container paddock-sidebar (max-width: 239px) {
-    .paddock-shell .terminal-row[data-agent-state] { display: grid; grid-template-columns: minmax(0, 1fr) 65px; grid-template-rows: 26px 16px; column-gap: 8px; padding-bottom: 4px; }
+    .paddock-shell .terminal-row[data-agent-state] { display: grid; grid-template-columns: minmax(0, 1fr) 76px; grid-template-rows: 26px 16px; column-gap: 8px; padding-bottom: 4px; }
     .paddock-shell .terminal-row[data-agent-state] .row-main { grid-column: 1 / -1; grid-row: 1; width: 100%; height: 26px; }
     .paddock-shell .terminal-row[data-agent-state] .row-meta { grid-column: 1; grid-row: 2; margin-left: calc(22px + var(--p-sidebar-indent, 12px)); line-height: 16px; }
     .paddock-shell .terminal-row[data-agent-state] .agent-status { grid-column: 2; grid-row: 2; margin-left: 0; line-height: 16px; }
     .paddock-shell .terminal-row.has-environment[data-agent-state] { grid-template-rows: 42px 16px; }
-    .paddock-shell .unassigned-row[data-agent-state] { grid-template-columns: minmax(0, 1fr) 65px 24px; }
+    .paddock-shell .unassigned-row[data-agent-state] { grid-template-columns: minmax(0, 1fr) 76px 24px; }
     .paddock-shell .unassigned-row[data-agent-state] .row-main { grid-column: 1 / 3; }
     .paddock-shell .unassigned-row[data-agent-state] .row-meta { margin-left: 12px; }
     .paddock-shell .unassigned-row[data-agent-state] .work-close { grid-column: 3; grid-row: 1 / 3; align-self: center; }

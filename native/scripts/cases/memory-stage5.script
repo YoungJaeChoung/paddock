@@ -1,0 +1,224 @@
+# 메모리 총측정(5단계 마감, 덩어리 39): 4단계 총측정 장면(memory-stage4의 첫 바퀴, 같은 조건으로 20초 쉰 뒤 잼)에 분리 창을 더한다 —
+# 설계 크기 900×600(act detachsize)의 분리 창 1(터미널) → 20초 → 분리 창 2(PDF 파일) → 20초 → 끌어·메뉴로 되돌림 → 20초 → 둘 다 열고 닫기 10회 → 20초.
+# 각 단계에서 Private 메모리와 그래픽 몫·Rust 보유량을 잰다. 4단계 마감 exe에는 분리 창 명령이 없어 memory-stage5-base.script가 같은 시간만 쉰다. 실행기: PREP=stage4-fixture.sh, 임시 홈 이름 memory-stage2.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+mem start-1-terminal
+gpumem start-1-terminal
+send $p = "$env:USERPROFILE\\proj-a"; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p; git init -q -b main; git config user.name Tester; git config user.email t@example.com; git add -A; git commit -q -m base; 1..30 | ForEach-Object { Set-Content "file-$_.txt" "changed $_" }; 1..10 | ForEach-Object { Set-Content "new-$_.txt" new }\r
+send echo READY-A\r
+waitline READY-A @180000
+send claude.exe -n 600 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+act workadd
+waittabs 3 @20000
+waitstate cwd=C: @30000
+send cd \\\\wsl.localhost\\Ubuntu\\tmp\\pdk-stage2\\proj\r
+send echo READY-W\r
+waitline READY-W @30000
+send claude.exe -n 600 127.0.0.1\r
+wait 4000
+key ctrl-shift-c
+waittabs 4 @20000
+wait 3000
+state four-terminals
+act selecttab 1
+wait 5000
+mem before-open
+gpumem before-open
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/code-200k.ts
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/README.md
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/f-1080p.png
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+wait 3000
+act quick open
+wait 500
+act quick close
+wait 1500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/bulk.txt
+wait 1500
+text x
+wait 500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/file-1.txt
+wait 1500
+text x
+wait 500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/file-2.txt
+wait 1500
+text x
+wait 500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/file-3.txt
+wait 1500
+text x
+wait 500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/code-200k.ts
+wait 1500
+text x
+wait 500
+wait 5000
+act selectlines 1 2
+act note first note
+act selectlines 3 3
+act note second note
+act selectlines 5 6
+act note third note
+wait 500
+act search needle
+wait 15000
+act view scm
+wait 3000
+act quickopen file
+wait 3000
+act quickclose
+wait 800
+act selecttab 1
+wait 800
+act termfind needle
+wait 1500
+state r1-scene
+act usageopen claude
+wait 2500
+mem r1-popup-open
+act usageclose
+wait 800
+act usageopen claude
+wait 800
+act usageclose
+wait 800
+act usageopen claude
+wait 800
+act usageclose
+wait 800
+wait 8000
+mem r1-final-20s
+gpumem r1-final-20s
+act detachsize 900 600
+act movetowindow 2
+waitstate detached=2 @10000
+wait 20000
+mem detach1-open
+gpumem detach1-open
+act movetowindow file C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 20000
+mem detach2-open
+gpumem detach2-open
+act dragback 2 pane 1 center
+waitstate detached=- @10000
+act moveback file C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+waitstate sample-3p.pdf selected shown place=main @10000
+wait 20000
+mem after-close
+gpumem after-close
+act movetowindow 2
+waitstate detached=2 @10000
+act movetowindow file C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+act moveback file C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+waitstate sample-3p.pdf selected shown place=main @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act movetowindow file C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+act moveback file C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+waitstate sample-3p.pdf selected shown place=main @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act movetowindow file C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+act moveback file C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+waitstate sample-3p.pdf selected shown place=main @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act movetowindow file C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+act moveback file C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+waitstate sample-3p.pdf selected shown place=main @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act movetowindow file C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+act moveback file C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+waitstate sample-3p.pdf selected shown place=main @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act movetowindow file C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+act moveback file C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+waitstate sample-3p.pdf selected shown place=main @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act movetowindow file C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+act moveback file C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+waitstate sample-3p.pdf selected shown place=main @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act movetowindow file C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+act moveback file C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+waitstate sample-3p.pdf selected shown place=main @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act movetowindow file C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+act moveback file C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+waitstate sample-3p.pdf selected shown place=main @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act movetowindow file C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+act moveback file C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+waitstate sample-3p.pdf selected shown place=main @10000
+wait 800
+wait 20000
+mem after-10
+gpumem after-10
+act quick quitstop
+wait 3000

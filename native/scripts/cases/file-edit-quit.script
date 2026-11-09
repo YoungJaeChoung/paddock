@@ -1,0 +1,81 @@
+# 저장하지 않은 파일 닫기·종료(덩어리 25): 탭을 닫으면 `Save`·`Don't Save`·`Cancel`을 묻고, 폴더를 목록에서 빼려는 묻기 창은 `(N unsaved)`를 덧붙이며,
+# 창을 닫으면 터미널 종료 묻기보다 먼저 `Save all`·`Discard`·`Cancel`을 묻는다. `Save all`은 모두 저장된 뒤에야 이어 가고, 저장하지 못하면 창을 그대로 둔다.
+# 실행 이름이 file-edit-quit일 때 임시 홈 경로(C:/Temp/pdk-run/home-file-edit-quit)를 쓴다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-quit"; mkdir $p, "$env:USERPROFILE\\bin" -Force | Out-Null; foreach ($n in "a","b","c","d") { [IO.File]::WriteAllText("$p\\$n.txt", "one`ntwo`n") }; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo READY-QUIT\r
+waitline READY-QUIT @30000
+send claude.exe -n 900 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+# --- a.txt: 닫기 묻기에서 `Cancel`은 그대로 두고 `Don't Save`는 버리고 닫는다(파일 그대로).
+act openpath C:/Temp/pdk-run/home-file-edit-quit/proj-quit/a.txt
+waitstate kind=text state=text @10000
+text x
+waitstate unsaved=yes @3000
+act closefile
+waitoverlay close-file @3000
+state close-prompt
+shot close-prompt
+act savechoice cancel
+waitoverlay none @3000
+waitstate unsaved=yes @3000
+act closefile
+waitoverlay close-file @3000
+act savechoice dont
+waitoverlay none @3000
+waitnostate file-pane @3000
+state a-discarded
+send $x = [BitConverter]::ToString([IO.File]::ReadAllBytes("$env:USERPROFILE\\proj-quit\\a.txt")); if ($x -eq '6F-6E-65-0A-74-77-6F-0A') { Write-Host ("SA" + "ME-A") } else { Write-Host ("DI" + "FF-A " + $x) }\r
+waitline SAME-A @10000
+# --- b.txt: `Save`는 저장한 뒤 탭을 닫는다.
+act openpath C:/Temp/pdk-run/home-file-edit-quit/proj-quit/b.txt
+waitstate kind=text state=text @10000
+text y
+waitstate unsaved=yes @3000
+act closefile
+waitoverlay close-file @3000
+act savechoice save
+waitoverlay none @3000
+waitstate unsaved-files=0 @5000
+state b-saved
+send $x = [BitConverter]::ToString([IO.File]::ReadAllBytes("$env:USERPROFILE\\proj-quit\\b.txt")); if ($x -eq '79-6F-6E-65-0A-74-77-6F-0A') { Write-Host ("SA" + "ME-B") } else { Write-Host ("DI" + "FF-B " + $x) }\r
+waitline SAME-B @10000
+# --- 폴더를 목록에서 빼는 묻기 창이 저장하지 않은 파일 수를 알린다.
+act openpath C:/Temp/pdk-run/home-file-edit-quit/proj-quit/c.txt
+waitstate kind=text state=text @10000
+text z
+waitstate unsaved=yes @3000
+act menu folder 1
+act menuitem Remove from list
+waitoverlay remove-folder @5000
+state remove-folder-prompt
+shot remove-folder-prompt
+act cancel
+waitoverlay none @3000
+# --- 창 닫기: 저장하지 않은 파일이 둘이다(c·d). `Cancel`은 그대로 둔다.
+act openpath C:/Temp/pdk-run/home-file-edit-quit/proj-quit/d.txt
+waitstate kind=text state=text lines=2 @10000
+text w
+waitstate unsaved-files=2 @3000
+closewindow
+waitoverlay quit-unsaved @5000
+state quit-prompt
+shot quit-prompt
+act savechoice cancel
+waitoverlay none @3000
+state quit-cancelled
+# `Save all`: 둘 다 저장하고, 저장된 뒤에야 기존 터미널 종료 묻기가 이어진다.
+closewindow
+waitoverlay quit-unsaved @5000
+act savechoice save
+waitoverlay quit @10000
+state after-save-all
+send $x = [BitConverter]::ToString([IO.File]::ReadAllBytes("$env:USERPROFILE\\proj-quit\\c.txt")) + ":" + [BitConverter]::ToString([IO.File]::ReadAllBytes("$env:USERPROFILE\\proj-quit\\d.txt")); if ($x -eq '7A-6F-6E-65-0A-74-77-6F-0A:77-6F-6E-65-0A-74-77-6F-0A') { Write-Host ("SA" + "ME-CD") } else { Write-Host ("DI" + "FF-CD " + $x) }\r
+waitline SAME-CD @10000
+act quitstop

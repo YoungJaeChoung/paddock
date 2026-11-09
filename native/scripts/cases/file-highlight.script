@@ -5,7 +5,7 @@ waitstate cwd=C: @30000
 send $p = "$env:USERPROFILE\\proj-hl"; mkdir $p, "$env:USERPROFILE\\bin" -Force | Out-Null; Set-Content "$p\\a.ts" "// comment`nexport function add(a: number, b: number): number {`n  const text = 'hello';`n  return a + b + 42;`n}"; Set-Content "$p\\b.py" "# comment`nclass Greeter:`n    def hello(self, name: str) -> str:`n        return f'hello {name}' + str(42)"; Set-Content "$p\\c.yaml" "# comment`nname: paddock`nitems:`n  - one: 1`n  - two: 'text'"; Set-Content "$p\\d.json" '{"name": "paddock", "n": 42, "ok": true}'; Set-Content "$p\\e.rs" "fn main() {`n    let n: u32 = 42;`n    println!(`"hi`");`n}"; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
 send echo READY-HL\r
 waitline READY-HL @30000
-send claude -n 300 127.0.0.1\r
+send claude.exe -n 300 127.0.0.1\r
 waitstate program=claude @20000
 waitstate row folder @20000
 waitstate files-loaded=true @10000

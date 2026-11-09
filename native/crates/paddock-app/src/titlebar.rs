@@ -38,8 +38,11 @@ fn control(
         .child(glyph)
 }
 
-/// 제목줄. 시스템 제목줄을 쓰는 OS에서는 None이다.
-pub fn titlebar_view(window: &Window) -> Option<Div> {
+/// 제목줄. `title`은 왼쪽에 보이는 이름이다(본 창은 앱 이름, 분리 창은 탭 이름). 시스템 제목줄을 쓰는 OS에서는 None이다.
+pub fn titlebar_view(
+    window: &Window,
+    title: &str,
+) -> Option<Div> {
     let palette = colors();
     cfg!(windows).then(|| {
         let maximize = if window.is_maximized() {
@@ -67,7 +70,7 @@ pub fn titlebar_view(window: &Window) -> Option<Div> {
                     .window_control_area(WindowControlArea::Drag)
                     .text_size(zpx(text::TITLEBAR_BRAND))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child("Paddock"),
+                    .child(title.to_string()),
             )
             .child(control("window-minimize", font::CONTROL_MINIMIZE, WindowControlArea::Min))
             .child(maximize)

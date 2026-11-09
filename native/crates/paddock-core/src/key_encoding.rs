@@ -28,6 +28,8 @@ pub struct KeyInput<'a> {
 /// | Alt + 글자 `x`             | -          | `ESC x`          |
 /// | Alt + `backspace`          | -          | `ESC 0x7f`       |
 /// | Alt + `left`               | -          | `ESC [ 1 ; 3 D`  |
+/// | `f2`                       | -          | `ESC O Q`        |
+/// | `f5`                       | -          | `ESC [ 15 ~`     |
 /// | `shift` 하나               | -          | `None`           |
 pub fn encode_key(
     input: &KeyInput<'_>,
@@ -63,6 +65,17 @@ pub fn encode_key(
         "delete" => Some(tilde(3)),
         "insert" => Some(tilde(2)),
         "space" if input.control => Some(format!("{alt_prefix}\0")),
+        // 기능 키: F1~F4는 `ESC O P..S`(Alt는 `ESC [ 1 ; 3 P..S`), F5~F12는 `~`로 끝나는 번호 키다(xterm과 같은 번호).
+        name if name.starts_with('f') && name[1..].parse::<u8>().is_ok_and(|n| (1..=12).contains(&n)) => {
+            let n: u8 = name[1..].parse().unwrap_or(1);
+            match n {
+                1..=4 => {
+                    let letter = ['P', 'Q', 'R', 'S'][usize::from(n - 1)];
+                    Some(if input.alt { format!("\x1b[1;3{letter}") } else { format!("\x1bO{letter}") })
+                }
+                _ => Some(tilde([15, 17, 18, 19, 20, 21, 23, 24][usize::from(n - 5)])),
+            }
+        }
         _ => None,
     };
     let key = input.key.as_bytes();
@@ -162,6 +175,25 @@ pub fn paste_bytes(
         out.extend_from_slice(b"\x1b[201~");
     }
     out
+}
+
+/// 마우스 버튼을 뗐을 때 클립보드에 자동으로 복사할 글자(copy on selection). 설정이 켜져 있고(`enabled`), 방금까지 끌어 고르는 중이었고(`was_selecting`),
+/// 고른 글자가 있을 때만 있다. 그냥 클릭(고른 글자 없음)이나 이미 끝난 선택 위의 버튼 뗌은 복사하지 않아 한 번 고른 선택은 한 번만 복사된다.
+///
+/// Examples
+/// --------
+/// | 설정 | 끌던 중 | 고른 글자 | 결과         |
+/// |------|---------|-----------|--------------|
+/// | 켬   | 예      | `abc`     | `abc`        |
+/// | 켬   | 예      | (없음)    | None         |
+/// | 켬   | 아니오  | `abc`     | None         |
+/// | 끔   | 예      | `abc`     | None         |
+pub fn copy_on_selection_text(
+    enabled: bool,
+    was_selecting: bool,
+    selected: Option<String>,
+) -> Option<String> {
+    selected.filter(|text| enabled && was_selecting && !text.is_empty())
 }
 
 #[cfg(test)]
@@ -280,5 +312,42 @@ mod tests {
     fn test_paste_bytes_brackets_only_when_requested() {
         assert_eq!(paste_bytes("a", false), b"a".to_vec());
         assert_eq!(paste_bytes("a", true), b"\x1b[200~a\x1b[201~".to_vec());
+    }
+
+    #[test]
+    fn test_c_d71_copy_on_selection_writes_once_when_the_setting_is_on() {
+        let selected = || Some("abc".to_string());
+        assert_eq!(copy_on_selection_text(true, true, selected()), Some("abc".to_string()));
+        // 설정이 꺼져 있으면 복사하지 않는다.
+        assert_eq!(copy_on_selection_text(false, true, selected()), None);
+        // 끌어 고르던 중이 아니면(이미 끝난 선택 위에서 버튼을 뗐거나 다른 곳을 눌렀다 뗌) 복사하지 않아 한 번만 복사된다.
+        assert_eq!(copy_on_selection_text(true, false, selected()), None);
+        // 그냥 클릭은 고른 글자가 없다.
+        assert_eq!(copy_on_selection_text(true, true, None), None);
+        assert_eq!(copy_on_selection_text(true, true, Some(String::new())), None);
+    }
+
+    #[test]
+    fn test_c_d70_function_keys_are_sent_as_xterm_sequences_so_f2_reaches_the_shell() {
+        let table = [
+            ("f1", false, "\x1bOP"),
+            ("f2", false, "\x1bOQ"),
+            ("f4", false, "\x1bOS"),
+            ("f5", false, "\x1b[15~"),
+            ("f10", false, "\x1b[21~"),
+            ("f12", false, "\x1b[24~"),
+            ("f2", true, "\x1b[1;3Q"),
+            ("f6", true, "\x1b[17;3~"),
+        ];
+        for (name, alt, expected) in table {
+            assert_eq!(
+                bytes(&KeyInput { alt, ..key(name) }, false),
+                Some(expected.as_bytes().to_vec()),
+                "{name} alt={alt}"
+            );
+        }
+        assert_eq!(bytes(&key("f0"), false), None);
+        assert_eq!(bytes(&key("f13"), false), None);
+        assert_eq!(bytes(&key("fn"), false), None);
     }
 }

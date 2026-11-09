@@ -7,7 +7,7 @@ mem start-1-terminal
 send $p = "$env:USERPROFILE\\proj-mem"; mkdir "$p", "$env:USERPROFILE\\bin" -Force | Out-Null; cd $p; git init -q -b main; git config user.name Tester; git config user.email t@example.com; 1..1000 | ForEach-Object { Set-Content "file-$_.txt" "line $_" }; git add -A; git commit -q -m base; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"\r
 send echo READY-MEM\r
 waitline READY-MEM @120000
-send claude -n 120 127.0.0.1\r
+send claude.exe -n 120 127.0.0.1\r
 waitstate program=claude @20000
 waitstate row folder @20000
 key ctrl-shift-c

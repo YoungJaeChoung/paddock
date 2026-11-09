@@ -1,11 +1,12 @@
-//! 파일 목록 구획: 머리줄(`<폴더> FILES`, 새 파일·새 폴더·새로 고침·검색 단추)과 그 아래 가상 목록.
+//! 파일 목록 구획: 머리줄(`<폴더> FILES`, 새 파일·새 폴더·새로 고침·검색 단추)과 그 아래 가상 목록(검색이 열려 있으면 검색 보기).
 //!
 //! 행의 높이가 모두 같아서 화면에 보이는 행만 그린다 — 항목이 천 개여도 그리기 비용은 보이는 행 수에 비례한다.
 use gpui_kit::{
-    Context, FontWeight, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement, Styled, div,
-    uniform_list,
+    Context, ExternalPaths, FontWeight, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement,
+    Styled, div, uniform_list,
 };
-use paddock_core::theme::{file_row, files_header as size, text};
+use paddock_core::file_tree::ListFocusEvent;
+use paddock_core::theme::{drop_target, file_row, files_header as size, text};
 use paddock_core::work_model::folder_name;
 
 use super::row::{MarkLook, file_glyph, file_row};
@@ -36,6 +37,20 @@ fn action_button(id: &'static str) -> gpui_kit::Stateful<gpui_kit::Div> {
 /// 단추 안의 작은 `+` 표지(그림 옆에 붙어 "새로 만들기"를 뜻한다).
 fn plus() -> impl IntoElement {
     div().flex_none().text_size(zpx(size::PLUS_SIZE)).child("+")
+}
+
+/// 머리줄의 검색 단추. 검색 보기가 열려 있는 동안은 눌린 모양이다.
+fn search_button(
+    open: bool,
+    cx: &mut Context<WorkWindow>,
+) -> gpui_kit::Stateful<gpui_kit::Div> {
+    let palette = colors();
+    let button = action_button("files-search").child("\u{2315}");
+    let button = if open { button.bg(hsla(palette.hover_bg)).text_color(hsla(palette.fg_strong)) } else { button };
+    button.on_mouse_down(
+        MouseButton::Left,
+        cx.listener(|this, _event: &MouseDownEvent, window, cx| this.toggle_search(window, cx)),
+    )
 }
 
 /// 행의 Git 변경 표시. 안내 행과 바뀌지 않은 행은 표시가 없다.
@@ -112,32 +127,51 @@ pub fn files_section(
             MouseButton::Left,
             cx.listener(|this, _event: &MouseDownEvent, window, cx| this.refresh_files(window, cx)),
         ))
-        // 검색은 폴더 검색을 만들 때 켠다. 그때까지 자리만 지킨다.
-        .child(action_button("files-search").opacity(size::DISABLED_OPACITY).child("\u{2315}"));
+        .child(search_button(window_view.search.open, cx));
     let n_rows = files.rows().len();
     let body = if !expanded {
         None
+    } else if window_view.search.open {
+        // 검색 보기가 열려 있으면 파일 목록 자리를 검색이 쓴다.
+        Some(div().flex_1().min_h_0().child(crate::search::view::search_body(window_view, cx)).into_any_element())
     } else if files.is_loaded() {
+        // 목록의 빈 자리에 놓으면 머리줄 새 파일이 만드는 폴더에 받는다(행 위에 놓은 것은 그 행이 먼저 받는다).
         Some(
-            div().flex_1().min_h_0().child(
-                uniform_list(
-                    "files-list",
-                    n_rows,
-                    cx.processor(|this: &mut WorkWindow, range: std::ops::Range<usize>, _window, cx| {
-                        let current = this.selected_file_path().filter(|_| this.file_active());
-                        range
-                            .filter_map(|index| {
-                                this.files.rows().get(index).cloned().map(|row| {
-                                    let is_current = !row.is_dir && current.as_deref() == Some(row.path.as_str());
-                                    let mark = mark_look(this.git.marks(), &row);
-                                    file_row(index, &row, is_current, mark, cx)
+            div()
+                .id("files-body")
+                .flex_1()
+                .min_h_0()
+                .drag_over::<ExternalPaths>(|style, _, _, _| {
+                    style
+                        .bg(hsla(colors().hover_bg))
+                        .border(zpx(drop_target::BORDER_WIDTH))
+                        .border_color(hsla(colors().accent))
+                })
+                .on_drop(cx.listener(|this, dropped: &ExternalPaths, window, cx| {
+                    this.drop_into_files(dropped, None, window, cx)
+                }))
+                .child(
+                    uniform_list(
+                        "files-list",
+                        n_rows,
+                        cx.processor(|this: &mut WorkWindow, range: std::ops::Range<usize>, _window, cx| {
+                            let current = this.selected_file_path().filter(|_| this.file_active());
+                            range
+                                .filter_map(|index| {
+                                    this.files.rows().get(index).cloned().map(|row| {
+                                        let is_current = !row.is_dir && current.as_deref() == Some(row.path.as_str());
+                                        let mark = mark_look(this.git.marks(), &row);
+                                        let is_selected = this.files.list_focused()
+                                            && this.files.selected_row() == Some(row.path.as_str());
+                                        file_row(index, &row, is_current, is_selected, mark, cx)
+                                    })
                                 })
-                            })
-                            .collect::<Vec<_>>()
-                    }),
+                                .collect::<Vec<_>>()
+                        }),
+                    )
+                    .size_full(),
                 )
-                .size_full(),
-            ),
+                .into_any_element(),
         )
     } else {
         Some(
@@ -148,9 +182,19 @@ pub fn files_section(
                 .items_center()
                 .text_size(zpx(text::SMALL))
                 .text_color(hsla(palette.fg_muted))
-                .child("Reading\u{2026}"),
+                .child(files.failure().map_or_else(|| "Reading\u{2026}".to_string(), str::to_string))
+                .into_any_element(),
         )
     };
-    let section = div().flex().flex_col().child(header).children(body);
+    // 목록 밖을 누르면 목록이 키를 받지 않는다(F2·Ctrl+V가 터미널로 간다).
+    let section = div()
+        .id("files-section")
+        .flex()
+        .flex_col()
+        .on_mouse_down_out(cx.listener(|this, _event: &MouseDownEvent, _window, _cx| {
+            this.files.focus_event(ListFocusEvent::OtherAreaPressed)
+        }))
+        .child(header)
+        .children(body);
     if expanded { section.flex_1().min_h_0() } else { section.flex_none() }
 }

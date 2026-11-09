@@ -9,4 +9,8 @@ pub mod launch;
 pub mod model;
 pub mod store;
 #[cfg(feature = "gui")]
+pub mod switch;
+pub mod switch_job;
+pub mod transcript;
+#[cfg(feature = "gui")]
 pub mod window;

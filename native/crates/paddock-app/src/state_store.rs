@@ -72,6 +72,7 @@ mod tests {
             sidebar_collapsed: true,
             files,
             files_collapsed: true,
+            ..SessionState::default()
         };
         save(&state).unwrap();
         assert_eq!(load(&live(&[2, 5]), DAEMON), state);

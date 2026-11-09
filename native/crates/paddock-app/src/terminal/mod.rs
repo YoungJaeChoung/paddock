@@ -1,6 +1,9 @@
 //! 터미널 하나를 앱 안에서 다루는 부분: 화면 격자, 데몬 세션, 색 규칙, 그리기와 입력.
 
 pub mod banner;
+pub mod find;
+#[cfg(feature = "gui")]
+pub mod find_bar;
 pub mod grid;
 pub mod ime;
 #[cfg(feature = "gui")]

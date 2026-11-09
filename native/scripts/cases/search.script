@@ -1,0 +1,94 @@
+# 폴더 검색 (D56): Ctrl+Shift+F로 파일 목록 자리에 검색 보기가 열리고 PTY에는 바이트가 가지 않는다. `act search needle` → 7개 파일에서 7건(.gitignore의 ignored/ 폴더와
+# files.exclude 기본 이름 .git 안의 일치는 빠진다) → `act searchrow 1`이 파일 탭을 열고 12번째 줄로 간다(file-view line=12). 옵션 단추(대소문자·단어·정규식),
+# 2,001줄 파일은 2,000건에서 멈추고 상한 안내(capped=y), 정확히 2,000줄 파일은 안내 없음(capped=n). 다시 Ctrl+Shift+F를 누르면 닫히고 결과가 비워진다.
+# 임시 홈에 prep-search.sh로 proj-search 폴더를 채우고 기본 셸을 PowerShell로 둬야 한다. 실행 이름은 search다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-search"; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo READY-SEARCH\r
+waitline READY-SEARCH @20000
+send claude.exe -n 300 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+# 두 번째 터미널(옆 칸). 키 입력을 그대로 보여 주는 읽기 루프를 돌려 PTY로 가는 바이트를 가려 낸다.
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+send while ($true) { $k = [Console]::ReadKey($true); Write-Host ("GOT-" + [int]$k.Key) }\r
+wait 1500
+state search-before
+key ctrl-shift-f
+waitstate search open=y @5000
+wait 800
+state search-opened
+shot search-opened
+act search needle
+waitstate n_results=7 n_files=7 capped=n state=done @20000
+wait 500
+state search-needle
+shot search-needle
+# 결과 행 1번(file-01.txt 12번째 줄)을 눌러 파일 탭을 연다.
+act searchrow 1
+waitstate file-view kind=text state=text @10000
+waitstate line=12 @10000
+wait 1000
+state search-row-1
+shot search-row-1
+# 옵션: 대소문자 구별 → NEEDLE(file-13)이 빠져 6건
+act searchopt case
+waitstate n_results=6 n_files=6 capped=n state=done @20000
+state search-case
+act searchopt case
+waitstate n_results=7 @20000
+# 단어 전체: zebras(file-06)는 빠지고 Zebra·zebra만 → 2건. 정규식 꺼짐이면 `zebra(s)?`은 글자 그대로라 0건, 켜면 3건.
+act search zebra
+waitstate n_results=3 n_files=3 capped=n state=done @20000
+state search-zebra
+act searchopt word
+waitstate n_results=2 n_files=2 @20000
+state search-zebra-word
+act searchopt word
+act search zebra(s)?
+waitstate n_results=0 n_files=0 capped=n state=done @20000
+state search-zebra-literal
+act searchopt regex
+waitstate n_results=3 n_files=3 capped=n state=done @20000
+state search-zebra-regex
+act searchopt regex
+# 잘못된 정규식은 오류 줄로 알린다.
+act searchopt regex
+act search (
+waitstate search-error @20000
+state search-bad-regex
+act searchopt regex
+# 상한: 2,001줄 파일 → 2,000건에서 멈춘다(capped=y), 정확히 2,000줄 파일 → 상한 안내 없음.
+act search bulk
+waitstate n_results=2000 n_files=1 capped=y state=done @30000
+wait 800
+state search-capped
+shot search-capped
+act search exact
+waitstate n_results=2000 n_files=1 capped=n state=done @30000
+state search-exact
+# 새 질의는 도는 검색을 대신한다: 연달아 두 번 부르면 마지막 질의의 결과만 남는다.
+act search line
+act search needle
+waitstate n_results=7 n_files=7 capped=n state=done @20000
+state search-replaced
+# Ctrl+Shift+F를 다시 누르면 닫히고 결과가 비워진다. 키는 PTY로 가지 않는다.
+key ctrl-shift-f
+waitstate search open=n @5000
+state search-closed
+dumptab 2 pty-after-search
+nolinestart 2 GOT-#
+key ctrl-shift-f
+waitstate search open=y @5000
+act search needle
+waitstate n_results=7 n_files=7 capped=n state=done @20000
+key escape
+waitstate search open=n @5000
+state search-escaped
+dumptab 2 pty-after-escape
+nolinestart 2 GOT-#
+quit

@@ -1,0 +1,130 @@
+# 파일 분리 창 메모리(덩어리 38): 텍스트 편집기·PDF를 연 채 열기 전 → 분리(설계 크기 900×600으로 바로 연다: act detachsize) → 20초 → 되돌림 → 20초 → 열고 닫기 10회 → 20초. 각 단계에서 Private 메모리와 그래픽 몫을 잰다.
+# 실행기가 임시 홈에 prep-fd.sh로 proj-fdp 폴더를 채우고 기본 셸을 PowerShell로 둔다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-fdp"; Set-Content "$p\\notes.txt" ((1..400 | ForEach-Object { "line $_ of the notes file" }) -join "`n"); cd $p\r
+send echo MEM-FD\r
+waitline MEM-FD @20000
+act openpath C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/notes.txt
+waitstate kind=text state=text @10000
+act openpath C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/sample-3p.pdf
+waitstate kind=pdf state=pdf pages=3 @15000
+wait 20000
+mem before-detach
+gpumem before-detach
+act detachsize 900 600
+act movetowindow file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/notes.txt
+waitstate notes.txt place=detached @10000
+wait 20000
+mem text-open
+gpumem text-open
+act moveback file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/notes.txt
+waitstate notes.txt selected shown place=main @10000
+wait 20000
+mem text-back
+gpumem text-back
+act movetowindow file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 20000
+mem pdf-open
+gpumem pdf-open
+act moveback file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf selected shown place=main @10000
+wait 20000
+mem pdf-back
+gpumem pdf-back
+act movetowindow file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/notes.txt
+waitstate notes.txt place=detached @10000
+act movetowindow file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 1500
+act moveback file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/notes.txt
+act moveback file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/sample-3p.pdf
+waitnostate place=detached @10000
+wait 800
+act movetowindow file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/notes.txt
+waitstate notes.txt place=detached @10000
+act movetowindow file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 1500
+act moveback file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/notes.txt
+act moveback file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/sample-3p.pdf
+waitnostate place=detached @10000
+wait 800
+act movetowindow file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/notes.txt
+waitstate notes.txt place=detached @10000
+act movetowindow file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 1500
+act moveback file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/notes.txt
+act moveback file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/sample-3p.pdf
+waitnostate place=detached @10000
+wait 800
+act movetowindow file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/notes.txt
+waitstate notes.txt place=detached @10000
+act movetowindow file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 1500
+act moveback file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/notes.txt
+act moveback file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/sample-3p.pdf
+waitnostate place=detached @10000
+wait 800
+act movetowindow file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/notes.txt
+waitstate notes.txt place=detached @10000
+act movetowindow file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 1500
+act moveback file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/notes.txt
+act moveback file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/sample-3p.pdf
+waitnostate place=detached @10000
+wait 800
+act movetowindow file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/notes.txt
+waitstate notes.txt place=detached @10000
+act movetowindow file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 1500
+act moveback file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/notes.txt
+act moveback file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/sample-3p.pdf
+waitnostate place=detached @10000
+wait 800
+act movetowindow file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/notes.txt
+waitstate notes.txt place=detached @10000
+act movetowindow file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 1500
+act moveback file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/notes.txt
+act moveback file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/sample-3p.pdf
+waitnostate place=detached @10000
+wait 800
+act movetowindow file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/notes.txt
+waitstate notes.txt place=detached @10000
+act movetowindow file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 1500
+act moveback file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/notes.txt
+act moveback file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/sample-3p.pdf
+waitnostate place=detached @10000
+wait 800
+act movetowindow file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/notes.txt
+waitstate notes.txt place=detached @10000
+act movetowindow file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 1500
+act moveback file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/notes.txt
+act moveback file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/sample-3p.pdf
+waitnostate place=detached @10000
+wait 800
+act movetowindow file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/notes.txt
+waitstate notes.txt place=detached @10000
+act movetowindow file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 1500
+act moveback file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/notes.txt
+act moveback file C:/Temp/pdk-run/home-memory-file-detach/proj-fdp/sample-3p.pdf
+waitnostate place=detached @10000
+wait 800
+wait 20000
+mem after-10
+gpumem after-10
+act quick quitstop
+wait 3000

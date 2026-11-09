@@ -20,7 +20,7 @@ use crate::tabs::{StripGeometry, pane_tab_row};
 use crate::terminal::paint::hsla;
 use crate::window_view::{DividerStart, WorkWindow};
 
-/// 칸 트리 전체를 그린다. 그리는 동안 본문이 차지한 크기를 `measured`에 남겨 탭 줄과 끌기가 쓰게 한다.
+/// 칸 트리 전체를 그린다. 그리는 동안 본문이 차지한 크기를 `measured`에, 왼쪽 위 자리를 창의 `body_origin`에 남겨 탭 줄과 끌기가 쓰게 한다.
 pub fn pane_area(
     window_view: &WorkWindow,
     layout: &Layout,
@@ -35,14 +35,19 @@ pub fn pane_area(
         .collect();
     let mut n_panes_visited = 0;
     let tree = node(window_view, layout, &[], &mut n_panes_visited, &lower, cx);
+    let origin = window_view.body_origin.clone();
     div().size_full().relative().child(tree).child(
         canvas(
             |bounds, _window, _cx| bounds,
             move |_bounds, bounds: Bounds<Pixels>, _window, _cx| {
                 measured.set((f32::from(bounds.size.width), f32::from(bounds.size.height)));
+                origin.set((f32::from(bounds.origin.x), f32::from(bounds.origin.y)));
             },
         )
+        // 위치를 정하지 않으면 칸 트리 뒤의 흐름 자리에 놓여 `body_origin`이 본문 아래 끝이 된다.
         .absolute()
+        .top_0()
+        .left_0()
         .size_full(),
     )
 }
@@ -104,7 +109,8 @@ fn pane(
 ) -> Div {
     let current = tabs.get(selected.min(tabs.len().saturating_sub(1))).copied();
     let view = current.and_then(|id| window_view.workspace.tab(id)).map(|tab| tab.content.view.clone());
-    let body = div().flex_1().min_h_0().size_full().children(view).on_mouse_down(
+    let find_bar = current.and_then(|id| crate::terminal::find_bar::find_overlay(window_view, id, cx));
+    let body = div().flex_1().min_h_0().size_full().relative().children(view).children(find_bar).on_mouse_down(
         MouseButton::Left,
         cx.listener(move |this, _event: &MouseDownEvent, window, cx| {
             if let Some(id) = current.filter(|id| this.workspace.selected() != Some(*id) || this.file_active()) {

@@ -1,0 +1,18 @@
+# 상태 줄 사용량이 좁은 폭에서 `Usage` 단추 하나로 접힌다(덩어리 29). 넓으면 Claude·Codex 묶음이 펼쳐진다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+waitstate codex=Default:5h=40 @30000
+send claude.exe -n 600 127.0.0.1\r
+waitstate program=claude @20000
+waitstate claude=Default:5h=23,week=61 @15000
+resize 1400 700
+waitstate usage mode=full button=no @5000
+shot 01-wide
+state wide
+resize 600 700
+waitstate usage mode=compact button=yes @5000
+shot 02-compact
+state compact
+resize 1400 700
+waitstate usage mode=full button=no @5000
+quit

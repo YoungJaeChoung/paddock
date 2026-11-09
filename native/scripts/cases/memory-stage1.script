@@ -8,7 +8,7 @@ waitstate cwd=C: @30000
 send $a = "$env:USERPROFILE\\proj-a"; $b = "$env:USERPROFILE\\proj-b"; mkdir $a, $b, "$env:USERPROFILE\\bin" -Force | Out-Null; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $a\r
 send echo READY-A\r
 waitline READY-A @20000
-send claude -n 20 127.0.0.1\r
+send claude.exe -n 20 127.0.0.1\r
 waitstate program=claude @20000
 waitstate row folder @20000
 # 같은 폴더에 옆 칸 터미널을 하나 더 연다(분할 2칸).
@@ -22,7 +22,7 @@ waitstate cwd=C: @30000
 send cd "$env:USERPROFILE\\proj-b"\r
 send echo READY-B\r
 waitline READY-B @20000
-send claude -n 20 127.0.0.1\r
+send claude.exe -n 20 127.0.0.1\r
 waitstate program=claude @20000
 waitstate row folder @20000
 # 계정 터미널: Accounts 창에서 Claude 계정을 추가하면서 연다.

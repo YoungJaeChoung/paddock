@@ -11,6 +11,7 @@ use image::{DynamicImage, ImageDecoder, ImageReader, Limits as Limits_};
 use paddock_core::file_kind::extension_of;
 use paddock_core::image_view::{
     DECODE_PIXELS, INLINE_DECODE_PIXELS, INLINE_SOURCE_PIXELS, MAX_PIXELS, decode_size_within, fit_decode_size,
+    tile_counts, tile_rect,
 };
 
 use super::svg_load::{FILE_LIMIT as SVG_LIMIT, rasterize};
@@ -32,6 +33,31 @@ impl std::fmt::Debug for Pixels {
     ) -> std::fmt::Result {
         write!(f, "Pixels({}x{})", self.width, self.height)
     }
+}
+
+/// 원본 크기 픽셀을 `TILE_SIDE` 조각으로 나눈다. 순서는 위에서 아래, 왼쪽에서 오른쪽(`row * cols + col`)이고
+/// 오른쪽·아래 끝 조각은 짧다. 1:1로 볼 때 보이는 조각만 그래픽 메모리에 올리려고 쓴다.
+///
+/// 원본 한 장은 조각 복사가 끝나면 바로 버린다. 바이트 수가 가로×세로×4와 다르면 빈 목록이다.
+pub fn split_tiles(pixels: Pixels) -> Vec<Pixels> {
+    let Pixels { width, height, bgra } = pixels;
+    let (n_cols, n_rows) = tile_counts((width, height));
+    let row_bytes = width as usize * 4;
+    let mut tiles = Vec::new();
+    if bgra.len() == row_bytes * height as usize {
+        for row in 0..n_rows {
+            for col in 0..n_cols {
+                let (x, y, tile_width, tile_height) = tile_rect((width, height), col, row);
+                let mut tile = Vec::with_capacity(tile_width as usize * tile_height as usize * 4);
+                for line in y..y + tile_height {
+                    let start = line as usize * row_bytes + x as usize * 4;
+                    tile.extend_from_slice(&bgra[start..start + tile_width as usize * 4]);
+                }
+                tiles.push(Pixels { width: tile_width, height: tile_height, bgra: tile });
+            }
+        }
+    }
+    tiles
 }
 
 /// 이미지 하나를 읽은 결과.
@@ -249,6 +275,27 @@ mod tests {
     }
 
     #[test]
+    fn test_split_tiles_cuts_the_pixels_into_row_major_pieces_that_rejoin_to_the_original() {
+        let (width, height) = (700u32, 530u32);
+        let bgra: Vec<u8> =
+            (0..width * height).flat_map(|index| [(index % 251) as u8, (index / width % 253) as u8, 7, 255]).collect();
+        let tiles = split_tiles(Pixels { width, height, bgra: bgra.clone() });
+        assert_eq!(tiles.len(), 4);
+        assert_eq!(
+            tiles.iter().map(|tile| (tile.width, tile.height)).collect::<Vec<_>>(),
+            [(512, 512), (188, 512), (512, 18), (188, 18)]
+        );
+        // 조각의 첫 픽셀은 원본의 같은 자리 픽셀이다.
+        assert_eq!(&tiles[1].bgra[..4], &bgra[512 * 4..512 * 4 + 4]);
+        assert_eq!(&tiles[2].bgra[..4], &bgra[512 * width as usize * 4..512 * width as usize * 4 + 4]);
+        let total: usize = tiles.iter().map(|tile| tile.bgra.len()).sum();
+        assert_eq!(total, bgra.len());
+        // 작은 그림은 조각 하나이고, 바이트 수가 어긋난 입력은 빈 목록이다.
+        assert_eq!(split_tiles(Pixels { width: 2, height: 1, bgra: vec![0; 8] }).len(), 1);
+        assert!(split_tiles(Pixels { width: 2, height: 2, bgra: vec![0; 8] }).is_empty());
+    }
+
+    #[test]
     fn test_a_missing_or_non_image_file_fails_with_a_reason_instead_of_panicking() {
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("none.png").to_string_lossy().into_owned();
@@ -264,7 +311,7 @@ mod tests {
     }
 
     #[test]
-    fn test_c_review_9_a_document_image_over_sixteen_megapixels_is_refused_and_a_smaller_one_is_reduced() {
+    fn test_a_document_image_over_sixteen_megapixels_is_refused_and_a_smaller_one_is_reduced() {
         let dir = tempfile::tempdir().unwrap();
         let huge = png_header_only(dir.path(), "huge.png", 5000, 4000);
         assert!(matches!(load_document_image(&huge), RasterLoad::TooLarge { width: 5000, height: 4000 }));
@@ -282,7 +329,7 @@ mod tests {
     }
 
     #[test]
-    fn test_c_review_8_a_document_svg_is_drawn_safely_and_not_decoded_as_a_raster() {
+    fn test_a_document_svg_is_drawn_safely_and_not_decoded_as_a_raster() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("a.svg");
         fs::write(&path, "<svg xmlns='http://www.w3.org/2000/svg' width='30' height='10'><rect width='30' height='10' fill='#00ff00'/></svg>").unwrap();
@@ -296,7 +343,7 @@ mod tests {
     }
 
     #[test]
-    fn test_c_review_m3_a_fit_view_decodes_only_to_the_pane_size_and_reports_the_original() {
+    fn test_a_fit_view_decodes_only_to_the_pane_size_and_reports_the_original() {
         let dir = tempfile::tempdir().unwrap();
         let path = write_png(dir.path(), "wide.png", 400, 300);
         match load_raster_with(&path, Limits::viewer(Some((200, 200)))) {

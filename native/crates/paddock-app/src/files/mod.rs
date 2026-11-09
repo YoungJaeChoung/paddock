@@ -3,14 +3,28 @@
 //! 읽기·감시·메뉴 규칙은 창 없이 시험할 수 있어 항상 빌드되고, 그리기는 `gui` 기능일 때만 빌드된다.
 //! 파일 시스템 일은 모두 서비스의 작업 스레드가 하고 창은 완성된 `Snapshot`만 받는다 — 느린 파일 시스템에서도 창이 멈추지 않는다.
 use std::collections::HashSet;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TryRecvError, channel};
 use std::thread::{JoinHandle, ThreadId};
 use std::time::{Duration, Instant};
 
 use paddock_core::file_tree::{Directory, child_path};
 
 pub mod active;
+#[cfg(feature = "gui")]
+pub mod clipboard;
+/// 파일 편집 흐름(저장·저장 여부 묻기·디스크 변경 띠·줄로 가기).
+#[cfg(feature = "gui")]
+pub mod editing;
+/// 자동 점검용 편집 명령·상태 글.
+#[cfg(all(feature = "gui", feature = "automation"))]
+pub mod editing_automation;
+/// 편집 흐름의 화면 조각(상태 줄 저장 표시·디스크 변경 띠).
+#[cfg(feature = "gui")]
+pub mod editing_view;
 pub mod image_load;
 #[cfg(feature = "gui")]
 pub mod image_view;
@@ -24,28 +38,40 @@ pub mod menu_model;
 #[cfg(feature = "gui")]
 pub mod notice_view;
 pub mod open;
+pub mod ops;
 #[cfg(feature = "gui")]
 pub mod pane;
 pub mod pdf_render;
 #[cfg(feature = "gui")]
 pub mod pdf_view;
 pub mod reader;
+/// 검토 메모(고른 줄에 메모를 남겨 에이전트에게 한 번에 보낸다).
+#[cfg(feature = "gui")]
+pub mod review_notes;
 #[cfg(feature = "gui")]
 pub mod row;
 pub mod state;
 pub mod svg_load;
 #[cfg(feature = "gui")]
+pub mod tab_flow;
+#[cfg(feature = "gui")]
 pub mod text_view;
+#[cfg(feature = "gui")]
+pub mod transfer;
 pub mod watcher;
+pub mod write_service;
 
 use reader::{ListingCache, folder_exists, read_tree};
 use watcher::{FolderWatcher, is_wsl_share};
+
+/// 읽기 작업 스레드가 오류로 멈췄을 때 목록 자리에 보이는 안내.
+pub const STOPPED_NOTICE: &str = "The file list stopped unexpectedly. Refresh to try again.";
 
 /// 파일 사건이 처음 온 뒤 목록을 다시 읽기까지 모으는 시간.
 const DEBOUNCE: Duration = Duration::from_millis(300);
 
 /// 파일 사건이 오지 않는 폴더(WSL 공유)의 수정 시각을 비교하는 주기. 사건 감시 중인 폴더는 이 주기마다 폴더가 아직 있는지만 본다.
-const POLL_INTERVAL: Duration = Duration::from_secs(3);
+const POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 /// 서비스에 보내는 요청: 어느 폴더의 어떤 펼침 상태를 읽을지.
 #[derive(Clone, Debug)]
@@ -88,6 +114,8 @@ pub struct FileService {
     commands: Sender<Command>,
     snapshots: Receiver<Snapshot>,
     worker: Option<JoinHandle<()>>,
+    /// 감시가 폴더 안 변경(파일 내용만 바뀐 것 포함)을 알린 횟수. 목록이 달라지지 않아도 올라가므로 열린 파일의 변경 확인 신호로 쓴다.
+    events: Arc<AtomicUsize>,
 }
 
 impl FileService {
@@ -96,11 +124,23 @@ impl FileService {
         let (commands, inbox) = channel();
         let (outbox, snapshots) = channel();
         let wake = commands.clone();
+        let events = Arc::new(AtomicUsize::new(0));
+        let counted = events.clone();
         let worker = std::thread::Builder::new()
             .name("paddock-files".to_string())
-            .spawn(move || Worker::new(wake, outbox).run(&inbox))
+            .spawn(move || {
+                // 읽기 중 오류(패닉)는 이 스레드 안에서 끝낸다. 결과를 보내는 쪽이 닫히므로 창은 `try_recv`의 `Disconnected`로 알아챈다.
+                if catch_unwind(AssertUnwindSafe(|| Worker::new(wake, outbox, counted).run(&inbox))).is_err() {
+                    crate::app_log::event("files: the folder reader stopped unexpectedly");
+                }
+            })
             .ok();
-        Self { commands, snapshots, worker }
+        Self { commands, snapshots, worker, events }
+    }
+
+    /// 감시가 지금까지 알린 변경 횟수. 값이 달라졌으면 감시하는 폴더 안 어딘가가 바뀐 것이다(목록에 보이는 이름이 같아도).
+    pub fn n_events(&self) -> usize {
+        self.events.load(Ordering::Relaxed)
     }
 
     /// 요청을 보낸다. 기다리지 않고 돌아오며, 결과는 `try_recv`로 받는다.
@@ -119,9 +159,17 @@ impl FileService {
         let _ = self.commands.send(Command::Pause(paused));
     }
 
-    /// 도착한 읽기 결과 하나. 없으면 None이다.
-    pub fn try_recv(&self) -> Option<Snapshot> {
-        self.snapshots.try_recv().ok()
+    /// 도착한 읽기 결과 하나. 아직 없으면 `Empty`, 작업 스레드가 사라져 더 올 것이 없으면 `Disconnected`다(스레드를 만들지 못한 경우 포함).
+    pub fn try_recv(&self) -> Result<Snapshot, TryRecvError> {
+        self.snapshots.try_recv()
+    }
+
+    /// 작업 스레드가 없는 서비스. 스레드가 오류로 사라진 상태를 시험에서 만든다.
+    #[cfg(test)]
+    pub fn stopped() -> Self {
+        let (commands, _) = channel();
+        let (_, snapshots) = channel();
+        Self { commands, snapshots, worker: None, events: Arc::new(AtomicUsize::new(0)) }
     }
 }
 
@@ -147,15 +195,19 @@ struct Worker {
     last: Option<(String, Directory)>,
     /// 파일 사건을 처음 받은 시각. 모으는 시간이 지나면 읽는다.
     changed_at: Option<Instant>,
+    /// 감시가 사건을 알릴 때마다 올리는 횟수(`FileService::n_events`와 같은 값).
+    events: Arc<AtomicUsize>,
 }
 
 impl Worker {
     fn new(
         wake: Sender<Command>,
         outbox: Sender<Snapshot>,
+        events: Arc<AtomicUsize>,
     ) -> Self {
         Self {
             wake,
+            events,
             outbox,
             cache: ListingCache::default(),
             request: None,
@@ -268,10 +320,12 @@ impl Worker {
         self.polled = false;
         if let Some(folder) = &request.folder {
             let wake = self.wake.clone();
+            let events = self.events.clone();
             let watching = if is_wsl_share(folder) {
                 None
             } else {
                 FolderWatcher::start(Path::new(folder), request.hidden.clone(), move || {
+                    events.fetch_add(1, Ordering::Relaxed);
                     let _ = wake.send(Command::Changed);
                 })
                 .ok()
@@ -366,7 +420,7 @@ mod tests {
         let mut last = None;
         let mut finished = false;
         while !finished && Instant::now() < deadline {
-            while let Some(snapshot) = service.try_recv() {
+            while let Ok(snapshot) = service.try_recv() {
                 finished = finished || done(&snapshot);
                 last = Some(snapshot);
                 if finished {
@@ -572,5 +626,77 @@ mod tests {
         assert!(!watcher::is_wsl_share(r"C:\Users\me"));
         assert!(!watcher::is_wsl_share(r"\\server\share"));
         assert!(!watcher::is_wsl_share("/home/me"));
+    }
+
+    /// 폴더 `a`(안에 `b/`)를 펼친 목록에서 `a`의 이름을 바꾼 뒤 `a2/b/`에 파일을 만들면 한 디바운스 안에 그 행이 나타나는지.
+    fn watch_follows_rename(rename: impl Fn(&Path, &Path)) {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("a").join("b")).unwrap();
+        std::fs::write(dir.path().join("a").join("b").join("old.txt"), "o").unwrap();
+        // 펼친 폴더의 경로는 목록 행이 쓰는 철자(`child_path`: 부모의 구분자 철자)와 같아야 한다 — Windows에서 `join("a/b")`는 구분자가 섞인다.
+        let expanded = |names: &[&str]| -> HashSet<String> {
+            names
+                .iter()
+                .map(|name| {
+                    name.split('/')
+                        .fold(dir.path().to_string_lossy().to_string(), |parent, part| child_path(&parent, part))
+                })
+                .collect()
+        };
+        let service = FileService::start();
+        let mut request = request_for(dir.path(), false);
+        request.expanded = expanded(&["a", "a/b"]);
+        service.request(request.clone());
+        wait_for(&service, Duration::from_secs(5), |_| true).expect("first snapshot");
+        rename(&dir.path().join("a"), &dir.path().join("a2"));
+        // 앱은 이름을 바꾼 직후 펼침 기억을 새 경로로 옮겨 다시 요청한다.
+        request.expanded = expanded(&["a2", "a2/b"]);
+        service.request(request);
+        wait_for(&service, Duration::from_secs(5), |snapshot| names(snapshot) == ["a2"]).expect("renamed folder row");
+        std::fs::write(dir.path().join("a2").join("b").join("c.txt"), "c").unwrap();
+        let seen = wait_for(&service, Duration::from_secs(1), |snapshot| {
+            let leaf = |snapshot: &Snapshot| {
+                snapshot
+                    .directory
+                    .children
+                    .first()
+                    .and_then(|a2| a2.directory.as_ref())
+                    .and_then(|a2| a2.children.first())
+                    .and_then(|b| b.directory.as_ref())
+                    .map(|b| b.children.iter().map(|e| e.name.clone()).collect::<Vec<_>>())
+            };
+            leaf(snapshot).is_some_and(|files| files.contains(&"c.txt".to_string()))
+        })
+        .expect("a snapshot within one second of creating the file");
+        assert!(seen.directory.children.first().is_some_and(|a2| a2.name == "a2"));
+    }
+
+    #[test]
+    fn test_c_d70_watch_follows_a_renamed_folder_two_levels_down() {
+        // 터미널 `mv`와 같은 운영체제 이름 바꾸기, 그리고 앱의 이름 바꾸기(`ops::rename_entry`) 둘 다.
+        watch_follows_rename(|from, to| std::fs::rename(from, to).unwrap());
+        watch_follows_rename(|from, to| {
+            let new_name = to.file_name().unwrap().to_string_lossy().to_string();
+            ops::rename_entry(&from.to_string_lossy(), &new_name).unwrap();
+        });
+    }
+
+    #[test]
+    fn test_c_live_2_a_change_that_only_edits_a_files_content_still_counts_as_a_watch_event() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "one").unwrap();
+        let service = FileService::start();
+        service.request(request_for(dir.path(), false));
+        wait_for(&service, Duration::from_secs(5), |_| true).expect("first snapshot");
+        std::thread::sleep(Duration::from_millis(300));
+        let before = service.n_events();
+        std::fs::write(dir.path().join("a.txt"), "two, longer").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while service.n_events() == before && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(service.n_events() > before, "the editor of an open file is told within a second");
+        // 이름 목록이 같아 새 읽기 결과는 오지 않는다 — 그래서 목록 변화만 보면 열린 파일의 변경을 놓친다.
+        assert!(wait_for(&service, Duration::from_millis(600), |_| true).is_none());
     }
 }

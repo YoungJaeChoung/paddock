@@ -1,0 +1,50 @@
+# 계정 바꾸기(덩어리 33), Windows 네이티브. 준비물은 scripts/assets/account-switch-fixture.sh(등록 계정 A·B와 대화를 흉내 내는 가짜 claude.exe)다.
+# A 계정 터미널에서 가짜 claude가 대화를 열면 상태에 `conversation=<ID>`가 보이고, 계정 고르기 메뉴가 `Continue` 모양(`Current(A),B`)이 된다.
+# Windows 네이티브는 CLI를 안전하게 멈출 수 없어 `Continue with B`는 `Exit Claude with Ctrl+C first…`로 거부되고 탭·대화는 그대로다.
+# 빈 셸 탭에서는 `Start` 모양(`A,B`)이고 `Start in this terminal with A`가 같은 탭 자리에 A 계정 터미널을 연다. 셸이 아닌 프로그램이 도는 터미널은 기존 새 터미널 메뉴(`new`)이고,
+# 일하는 중인 셸에 `starthere`를 직접 보내면 `A program is running in this terminal…`로 거부한다. 거부는 데몬이 앞쪽을 지금 다시 읽어 정하므로,
+# Enter 직후(저장된 상태가 아직 셸이라고 할 때)에 보내도 거부해야 한다. 사용자 PC 전용(Add-Type으로 C# 컴파일).
+waittabs 1 @30000
+waitstate cwd=C: @30000
+act plusmenu
+waitstate menu: new-terminal @5000
+act menuitem Claude · A
+waittabs 2 @30000
+waitfor STARTED aaaaaaaa-1111-4111-8111-000000000001 @30000
+waitstate account-switch switching=no conversation=aaaaaaaa-1111-4111-8111-000000000001 start-mark=yes @30000
+state conversation
+act pickermenu
+waitstate account-menu kind=continue items=Current(A),B @5000
+shot 01-continue-menu
+act continuewith B
+waitstate notice=Exit Claude with Ctrl+C first, then switch accounts. Windows cannot safely stop this CLI automatically. @30000
+waitstate account-switch switching=no conversation=aaaaaaaa-1111-4111-8111-000000000001 @5000
+state refused
+files after-refused
+act selecttab 1
+waitstate selected: @5000
+act pickermenu
+waitstate account-menu kind=start items=A,B @5000
+shot 02-start-menu
+act starthere A
+waitfor STARTED aaaaaaaa-1111-4111-8111-000000000001 @30000
+waitstate account-switch switching=no conversation=aaaaaaaa-1111-4111-8111-000000000001 @30000
+waittabs 2 @5000
+state started-here
+act tabadd
+waittabs 3 @20000
+act selecttab 3
+send ping -n 200 127.0.0.1\r
+wait 800
+act starthere A
+waitstate notice=A program is running in this terminal. Choose New terminal… to open the account beside it. @30000
+waittabs 3 @5000
+state busy-immediate
+waitstate program=PING @30000
+act pickermenu
+waitstate account-menu kind=new @5000
+act starthere A
+waitstate notice=A program is running in this terminal. Choose New terminal… to open the account beside it. @30000
+waittabs 3 @5000
+state busy
+quit

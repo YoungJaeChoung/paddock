@@ -1,6 +1,7 @@
 ﻿# 사용: automation-run.ps1 -Exe <paddock-app.exe> -Script <대본> -Out <결과 폴더> -HomeDir <임시 사용자 폴더> [-TimeoutSec 120]
 # 자동 점검 대본(automation 기능으로 빌드한 앱)을 실행하고, 대본이 남기는 요청 파일을 처리한다.
 #   shot-NAME.req -> 창 캡처 NAME.png (PrintWindow)
+#   shotwin-ID-NAME.req -> 터미널 ID의 분리 창 캡처 NAME.png (앱이 남긴 hwnd-ID.txt의 창 핸들을 쓴다)
 #   mem-NAME.req  -> 앱·데몬의 Private 메모리(MB)를 mem.log에 한 줄
 # -Offscreen 이면 창을 화면 밖(x=-3000)에 활성화 없이 띄워 사용자의 화면·포커스를 가리지 않는다(캡처는 PrintWindow라 가려져도 된다).
 # 키보드·마우스 입력은 보내지 않는다. -HomeDir의 폴더로 USERPROFILE을 바꿔 실행해
@@ -42,9 +43,13 @@ Use-TestHome $HomeDir
 $proc = Start-Process -FilePath $Exe -ArgumentList "--script `"$Script`" --out `"$Out`"$(if ($Offscreen) { ' --offscreen' })" -PassThru
 "started pid=$($proc.Id) script=$Script" | Out-File "$Out\runner.log" -Append -Encoding utf8
 
-function Capture($path) {
+function Capture($path, $windowName = 'main') {
     $proc.Refresh()
     $handle = $proc.MainWindowHandle
+    # 앱이 창 핸들을 hwnd-NAME.txt에 남겼으면 그 창을 캡처한다(창이 여럿이면 MainWindowHandle이 어느 창인지 알 수 없다).
+    $handleFile = Join-Path $Out "hwnd-$windowName.txt"
+    if (Test-Path $handleFile) { try { $handle = [IntPtr][int64](Get-Content $handleFile -Raw).Trim() } catch {} }
+    elseif ($windowName -ne 'main') { $handle = [IntPtr]::Zero }
     if ($handle -eq [IntPtr]::Zero) { "no window handle for $path" | Out-File "$Out\runner.log" -Append -Encoding utf8; return }
     $rect = New-Object CaptureNative+Rect
     [void][CaptureNative]::GetWindowRect($handle, [ref]$rect)
@@ -89,7 +94,11 @@ $started = Get-Date
 while (-not $proc.HasExited -and ((Get-Date) - $started).TotalSeconds -lt $TimeoutSec) {
     foreach ($request in Get-ChildItem $Out -Filter *.req -ErrorAction SilentlyContinue) {
         $name = $request.BaseName
-        if ($name -like "shot-*") { Capture "$Out\$($name.Substring(5)).png" }
+        if ($name -like "shotwin-*") {
+            $parts = $name.Substring(8).Split('-', 2)
+            Capture "$Out\$($parts[1]).png" $parts[0]
+        }
+        elseif ($name -like "shot-*") { Capture "$Out\$($name.Substring(5)).png" }
         elseif ($name -like "mem-*") { Sample-Memory $name.Substring(4) }
         elseif ($name -like "net-*") { Sample-Network $name.Substring(4) }
         Rename-Item $request.FullName ($request.FullName + ".done") -Force

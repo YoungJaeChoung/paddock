@@ -232,6 +232,35 @@ impl Grid {
         (0..term.screen_lines()).map(|row| line_text(&term, Line(row as i32))).collect()
     }
 
+    /// 지금 화면의 `row`번째 줄(위에서 0부터, 스크롤백을 올려 보는 중이면 그 화면 기준)의 글자와 글자마다의 시작 칸을 돌려준다.
+    /// 전각 글자의 둘째 칸은 건너뛰므로 글자 수와 칸 수가 다를 수 있고, 줄 끝 공백은 자르지 않는다. 화면 밖 줄이면 둘 다 비어 있다.
+    ///
+    /// Examples
+    /// --------
+    /// | 줄 내용  | 글자      | 시작 칸    |
+    /// |----------|-----------|------------|
+    /// | `한a b`  | `한a b`   | 0, 2, 3, 4 |
+    pub fn row_cells(
+        &self,
+        row: i32,
+    ) -> (String, Vec<usize>) {
+        let term = self.term.lock();
+        let line = row - term.grid().display_offset() as i32;
+        let mut text = String::new();
+        let mut columns = Vec::new();
+        if row >= 0 && (row as usize) < term.screen_lines() {
+            let cells = &term.grid()[Line(line)];
+            for col in 0..term.columns() {
+                let cell = &cells[Column(col)];
+                if !cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
+                    text.push(cell.c);
+                    columns.push(col);
+                }
+            }
+        }
+        (text, columns)
+    }
+
     /// 화면 위로 밀려난 줄(스크롤백)의 글자. 오래된 줄이 먼저다.
     pub fn history_text(&self) -> Vec<String> {
         let term = self.term.lock();
@@ -306,6 +335,18 @@ mod tests {
         parser.advance(&mut *grid.term.lock(), b"one\r\ntwo\r\nthree\r\nfour");
         assert_eq!(grid.visible_text(), vec!["three".to_string(), "four".to_string()]);
         assert_eq!(grid.history_text(), vec!["one".to_string(), "two".to_string()]);
+    }
+
+    #[test]
+    fn test_row_cells_gives_the_start_column_of_each_character_and_skips_wide_char_spacers() {
+        let grid = Grid::new(10, 3, |_| {}, |_, _| {});
+        let mut parser: alacritty_terminal::vte::ansi::Processor = alacritty_terminal::vte::ansi::Processor::new();
+        parser.advance(&mut *grid.term.lock(), "한a b".as_bytes());
+        let (text, columns) = grid.row_cells(0);
+        assert!(text.starts_with("한a b"));
+        assert_eq!(&columns[..4], &[0, 2, 3, 4]);
+        assert_eq!(grid.row_cells(7), (String::new(), Vec::new()));
+        assert_eq!(grid.row_cells(-1), (String::new(), Vec::new()));
     }
 
     #[test]

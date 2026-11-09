@@ -87,6 +87,11 @@ const PaddockPreferenceSchema = {
             default: false,
             description: 'Tell Claude Code agents when memory is low. Adds one PreToolUse hook to Paddock\'s own Claude Code settings file, which Paddock passes to Claude with --settings in its account terminals and in terminals where claude starts through Paddock\'s launcher; your own settings.json files are never changed. While available memory is below the limit, the hook adds a short note to the agent\'s context after a Bash, Agent or Task tool call so it postpones heavy work. It never blocks or stops anything. Turning it off removes only that hook and quiets agents that are already running. Turning it on reaches agents started afterwards. Works for WSL, Linux and accounts that run in WSL; macOS and Windows-native Claude are not supported.',
         },
+        'paddock.agents.statusHook': {
+            type: 'boolean',
+            default: true,
+            description: 'Show what Claude Code is doing in Work: Working, Needs input, Idle, Error. Adds hooks to Paddock\'s own Claude Code settings file, which Paddock passes to Claude with --settings in its account terminals and in terminals where claude starts through Paddock\'s launcher. The hook script reads only the event name, never your prompt text, and writes one status line to the terminal; your own settings.json is not touched. Turn it off to remove the hooks and go back to estimating the state from terminal output.',
+        },
         'paddock.agents.memoryNoticeMinimumMb': {
             type: 'number',
             default: 4096,
@@ -130,6 +135,11 @@ const PaddockPreferenceSchema = {
             minimum: 6,
             maximum: 24,
             description: 'Indentation in pixels for each level of the Work and file lists in the sidebar.',
+        },
+        'paddock.pencilInOwnWindow': {
+            type: 'boolean',
+            default: true,
+            description: 'Open .pen design files in their own window so switching work groups does not disconnect the Pencil MCP.',
         },
     },
 };

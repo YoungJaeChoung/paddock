@@ -233,6 +233,27 @@ pub fn tab_columns(
         .collect()
 }
 
+/// 칸을 나눈 동안 위쪽 탭 줄에 그릴 탭만 남긴다: 다른 창으로 분리된 탭은 뺀다.
+///
+/// 나눈 줄에서 탭은 자기 칸 바로 위에 놓이는데, 분리된 탭은 이 창에 칸이 없다. 그대로 그리면 마지막 열 뒤에 붙어
+/// 다른 칸 위에 떠, 분리한 탭이 옛 칸에 남은 것처럼 보인다. 칸을 나누지 않은 줄(`is_split`이 거짓)에서는 줄 끝에 그대로 두어
+/// 우클릭 메뉴로 되돌릴 입구를 남긴다. 입력 순서는 지킨다.
+///
+/// Examples
+/// --------
+/// | ids          | is_split | 분리된 탭 | 결과         |
+/// |--------------|----------|-----------|--------------|
+/// | [1, 2, 9]    | true     | 9         | [1, 2]       |
+/// | [1, 2, 9]    | false    | 9         | [1, 2, 9]    |
+/// | [9]          | true     | 9         | []           |
+pub fn attached_tab_ids<T: Copy>(
+    ids: &[T],
+    is_split: bool,
+    is_detached: impl Fn(T) -> bool,
+) -> Vec<T> {
+    ids.iter().copied().filter(|id| !is_split || !is_detached(*id)).collect()
+}
+
 /// 탭 줄 넘김 단추를 한 번 눌렀을 때의 새 가로 스크롤 위치(0 이하). `step`만큼 움직이되 `[-max, 0]` 밖으로 나가지 않는다.
 ///
 /// Examples
@@ -360,6 +381,15 @@ mod tests {
         assert_eq!(order_tabs_by_pane(&["a", "b", "c"], place), vec!["b", "a", "c"]);
         assert_eq!(order_tabs_by_pane(&["d", "a", "b"], place), vec!["b", "a", "d"]);
         assert_eq!(order_tabs_by_pane(&["w", "a", "b"], place), vec!["b", "a", "w"]);
+    }
+
+    #[test]
+    fn test_pc07_while_split_tabs_moved_to_another_window_leave_the_strip_without_a_split_they_stay_as_the_way_back() {
+        let detached = |id: u32| id == 9;
+        assert_eq!(attached_tab_ids(&[1, 9, 2], true, detached), [1, 2]);
+        assert_eq!(attached_tab_ids(&[1, 9, 2], false, detached), [1, 9, 2]);
+        assert_eq!(attached_tab_ids(&[9], true, detached), Vec::<u32>::new());
+        assert_eq!(attached_tab_ids(&[], true, detached), Vec::<u32>::new());
     }
 
     #[test]

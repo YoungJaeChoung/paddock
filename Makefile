@@ -28,7 +28,7 @@ release:
 # 네이티브(GPUI) 앱. native-dev는 Linux에서 빌드·테스트하고, native-win은 WSL에서
 # Windows용 exe를 만든다(cargo-xwin, clang 18 필요). Windows 실행 전 셰이더 원본을
 # C: 쪽 같은 경로로 복사한다 — 크로스 빌드는 셰이더를 미리 컴파일하지 못한다.
-# 개발용 Windows 빌드에는 자동 점검 대본(automation 기능)을 켠다. release 빌드에는 넣지 않는다.
+# 개발용 Windows 빌드에는 자동 점검 대본(automation 기능)과 데몬의 시험 훅(test-hooks 기능)을 켠다. release 빌드에는 넣지 않는다.
 # 빌드 전에 상한(10GB)을 넘은 결과물 프로필 폴더를 비운다(native/scripts/trim-target.sh) — 설정을 바꿔 가며
 # 빌드하면 cargo가 옛 결과물을 지우지 않아 수십 GB까지 쌓인다.
 NATIVE_PATH := $(HOME)/.local/bin:/usr/lib/llvm-18/bin:$(PATH)
@@ -38,10 +38,10 @@ NATIVE_PATH := $(HOME)/.local/bin:/usr/lib/llvm-18/bin:$(PATH)
 # 사용자 홈에 쓰는 일을 한곳에서 잡는다. cargo·rustup 위치는 원래 홈의 것을 그대로 쓴다.
 native-dev:
 	native/scripts/trim-target.sh
-	cd native && cargo build --workspace --no-default-features \
+	cd native && cargo build --workspace --no-default-features --features paddock-daemon/test-hooks \
 		&& test_home=$$(mktemp -d) \
 		&& CARGO_HOME="$${CARGO_HOME:-$(HOME)/.cargo}" RUSTUP_HOME="$${RUSTUP_HOME:-$(HOME)/.rustup}" HOME="$$test_home" \
-			cargo test --workspace --no-default-features \
+			cargo test --workspace --no-default-features --features paddock-daemon/test-hooks \
 		&& if [ -e "$$test_home/.paddock" ]; then echo "임시 홈을 쥐지 않은 시험이 HOME에 썼다: $$(find $$test_home/.paddock | head -5)"; rm -rf "$$test_home"; exit 1; fi \
 		&& rm -rf "$$test_home"
 
@@ -49,13 +49,17 @@ native-win:
 	native/scripts/trim-target.sh
 	cd native && PATH="$(NATIVE_PATH)" XWIN_ACCEPT_LICENSE=1 \
 		cargo xwin build --profile dev-win --target x86_64-pc-windows-msvc --workspace \
-		--features paddock-app/automation
+		--features paddock-app/automation,paddock-daemon/test-hooks
 	native/scripts/copy-hlsl.sh
 
-# 검토자가 한 줄로 도는 정적 점검: 서식 + Linux clippy(창 부분 제외) + Windows 대상 clippy(창 부분·자동 점검 기능 포함, 전 작업 공간).
+# 검토자가 한 줄로 도는 정적 점검: 서식 + Linux clippy(창 부분 제외) + Windows 대상 clippy(창 부분·자동 점검 기능 포함, 전 작업 공간)
+# + 자동 점검을 끈 배포 꼴 clippy(자동 점검 전용 코드가 제품 코드를 조용히 지우는 `cfg` 실수를 경고로 잡는다).
+# 데몬의 시험 훅(`test-hooks`)은 개발 빌드·시험·앞의 clippy에서만 켜고, 배포 꼴 clippy에는 켜지 않는다 — 훅이 꺼진 데몬이 경고 없이 빌드되는지 본다.
 native-lint:
 	native/scripts/trim-target.sh
 	cd native && cargo fmt --check \
-		&& cargo clippy --workspace --no-default-features --all-targets -- -D warnings \
+		&& cargo clippy --workspace --no-default-features --features paddock-daemon/test-hooks --all-targets -- -D warnings \
 		&& PATH="$(NATIVE_PATH)" XWIN_ACCEPT_LICENSE=1 cargo xwin clippy --target x86_64-pc-windows-msvc --workspace \
-			--features paddock-app/automation --all-targets -- -D warnings
+			--features paddock-app/automation,paddock-daemon/test-hooks --all-targets -- -D warnings \
+		&& PATH="$(NATIVE_PATH)" XWIN_ACCEPT_LICENSE=1 cargo xwin clippy --target x86_64-pc-windows-msvc \
+			-p paddock-app -p paddock-daemon -- -D warnings

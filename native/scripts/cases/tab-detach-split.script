@@ -1,0 +1,49 @@
+# 칸을 나눈 줄에서의 분리(Electron에서 고친 결함): 분리한 탭은 옛 칸의 탭 줄에 남지 않고, 한 칸으로 합쳐진 줄에서는 흐린 탭으로 남는다.
+waittabs 1 @30000
+send echo S-ONE\r
+waitline S-ONE @20000
+key ctrl-shift-t
+waittabs 2 @20000
+key ctrl-shift-c
+waittabs 3 @20000
+wait 1500
+state before
+shot before
+waitstate strip col0 tabs=1,2 @5000
+waitstate strip col1 tabs=3 @5000
+act movetowindow 2
+waitstate detached=2 @10000
+waitstate strip col0 tabs=1 @5000
+waitnostate strip col0 tabs=1,2 @3000
+state split-detached
+shot split-detached
+act moveback 2
+waitstate detached=- @10000
+waitstate strip col0 tabs=1,2 @5000
+waitstate strip col1 tabs=3 @5000
+state split-back
+# 둘째 칸의 유일한 탭 3을 분리하면 칸이 하나로 합쳐지고 3은 흐린 탭으로 남는다
+act movetowindow 3
+waitstate detached=3 @10000
+waitstate strip col0 tabs=1,2,3:faded @5000
+waitnostate strip col1 @3000
+state merged-detached
+shot merged-detached
+act moveback 3
+waitstate detached=- @10000
+waitstate strip col0 tabs=1,2,3 @5000
+state merged-back
+# 파일 칸이 있는 줄도 칸을 나눈 줄처럼 분리한 탭을 빼고(흐린 탭을 남기지 않는다), 되돌리면 첫 칸 끝에 돌아온다
+act openpath C:/Windows/win.ini
+wait 2000
+act movetowindow 3
+waitstate detached=3 @10000
+waitstate strip col0 tabs=1,2 @5000
+waitnostate 3:faded @2000
+state file-pane-detached
+shot file-pane-detached
+act moveback 3
+waitstate detached=- @10000
+waitstate strip col0 tabs=1,2,3 @5000
+act quick quitstop
+wait 3000

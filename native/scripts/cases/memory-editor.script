@@ -1,0 +1,152 @@
+# 편집 탭 메모리(덩어리 25): 편집 모드 텍스트 탭 5개(1 MiB 1 + 200 KB 4, 모두 고쳐 저장하지 않은 상태·undo 기록 포함)를 연 채 20초 쉰 뒤 Private을 재고,
+# 저장하지 않고 모두 닫아 열기 전 수준으로 돌아오는지 본다. 3번 되풀이해 늘지 않는지(평평) 확인한다. 실행 이름이 memory-editor일 때 임시 홈 경로(C:/Temp/pdk-run/home-memory-editor)를 쓴다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+mem start
+send $p = "$env:USERPROFILE\\proj-mem"; mkdir $p, "$env:USERPROFILE\\bin" -Force | Out-Null; $line = "export const value = 'a long enough line of source text to fill the file quickly';`r`n"; $big = $line * [math]::Ceiling(1048576 / $line.Length); [IO.File]::WriteAllText("$p\\a-1mib.ts", $big.Substring(0, 1048576)); foreach ($n in "b","c","d","e") { [IO.File]::WriteAllText("$p\\$n-200k.ts", $big.Substring(0, 204800)) }; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo READY-MEM\r
+waitline READY-MEM @60000
+send claude.exe -n 900 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+wait 5000
+mem before-open-1
+act openpath C:/Temp/pdk-run/home-memory-editor/proj-mem/a-1mib.ts
+waitstate file-view kind=text state=text @20000
+text xyz
+waitstate unsaved=yes @5000
+act openpath C:/Temp/pdk-run/home-memory-editor/proj-mem/b-200k.ts
+waitstate file-view kind=text state=text @20000
+text xyz
+waitstate unsaved=yes @5000
+act openpath C:/Temp/pdk-run/home-memory-editor/proj-mem/c-200k.ts
+waitstate file-view kind=text state=text @20000
+text xyz
+waitstate unsaved=yes @5000
+act openpath C:/Temp/pdk-run/home-memory-editor/proj-mem/d-200k.ts
+waitstate file-view kind=text state=text @20000
+text xyz
+waitstate unsaved=yes @5000
+act openpath C:/Temp/pdk-run/home-memory-editor/proj-mem/e-200k.ts
+waitstate file-view kind=text state=text @20000
+text xyz
+waitstate unsaved=yes @5000
+wait 20000
+state editors-1
+mem editors-20s-1
+act closefile
+waitoverlay close-file @5000
+act savechoice dont
+waitoverlay none @5000
+act closefile
+waitoverlay close-file @5000
+act savechoice dont
+waitoverlay none @5000
+act closefile
+waitoverlay close-file @5000
+act savechoice dont
+waitoverlay none @5000
+act closefile
+waitoverlay close-file @5000
+act savechoice dont
+waitoverlay none @5000
+act closefile
+waitoverlay close-file @5000
+act savechoice dont
+waitoverlay none @5000
+wait 8000
+mem after-close-1
+mem before-open-2
+act openpath C:/Temp/pdk-run/home-memory-editor/proj-mem/a-1mib.ts
+waitstate file-view kind=text state=text @20000
+text xyz
+waitstate unsaved=yes @5000
+act openpath C:/Temp/pdk-run/home-memory-editor/proj-mem/b-200k.ts
+waitstate file-view kind=text state=text @20000
+text xyz
+waitstate unsaved=yes @5000
+act openpath C:/Temp/pdk-run/home-memory-editor/proj-mem/c-200k.ts
+waitstate file-view kind=text state=text @20000
+text xyz
+waitstate unsaved=yes @5000
+act openpath C:/Temp/pdk-run/home-memory-editor/proj-mem/d-200k.ts
+waitstate file-view kind=text state=text @20000
+text xyz
+waitstate unsaved=yes @5000
+act openpath C:/Temp/pdk-run/home-memory-editor/proj-mem/e-200k.ts
+waitstate file-view kind=text state=text @20000
+text xyz
+waitstate unsaved=yes @5000
+wait 20000
+state editors-2
+mem editors-20s-2
+act closefile
+waitoverlay close-file @5000
+act savechoice dont
+waitoverlay none @5000
+act closefile
+waitoverlay close-file @5000
+act savechoice dont
+waitoverlay none @5000
+act closefile
+waitoverlay close-file @5000
+act savechoice dont
+waitoverlay none @5000
+act closefile
+waitoverlay close-file @5000
+act savechoice dont
+waitoverlay none @5000
+act closefile
+waitoverlay close-file @5000
+act savechoice dont
+waitoverlay none @5000
+wait 8000
+mem after-close-2
+mem before-open-3
+act openpath C:/Temp/pdk-run/home-memory-editor/proj-mem/a-1mib.ts
+waitstate file-view kind=text state=text @20000
+text xyz
+waitstate unsaved=yes @5000
+act openpath C:/Temp/pdk-run/home-memory-editor/proj-mem/b-200k.ts
+waitstate file-view kind=text state=text @20000
+text xyz
+waitstate unsaved=yes @5000
+act openpath C:/Temp/pdk-run/home-memory-editor/proj-mem/c-200k.ts
+waitstate file-view kind=text state=text @20000
+text xyz
+waitstate unsaved=yes @5000
+act openpath C:/Temp/pdk-run/home-memory-editor/proj-mem/d-200k.ts
+waitstate file-view kind=text state=text @20000
+text xyz
+waitstate unsaved=yes @5000
+act openpath C:/Temp/pdk-run/home-memory-editor/proj-mem/e-200k.ts
+waitstate file-view kind=text state=text @20000
+text xyz
+waitstate unsaved=yes @5000
+wait 20000
+state editors-3
+mem editors-20s-3
+act closefile
+waitoverlay close-file @5000
+act savechoice dont
+waitoverlay none @5000
+act closefile
+waitoverlay close-file @5000
+act savechoice dont
+waitoverlay none @5000
+act closefile
+waitoverlay close-file @5000
+act savechoice dont
+waitoverlay none @5000
+act closefile
+waitoverlay close-file @5000
+act savechoice dont
+waitoverlay none @5000
+act closefile
+waitoverlay close-file @5000
+act savechoice dont
+waitoverlay none @5000
+wait 8000
+mem after-close-3
+quit

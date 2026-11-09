@@ -34,9 +34,15 @@ image.workspace = true
 hayro.workspace = true
 usvg.workspace = true
 resvg.workspace = true
+# 폴더 검색(ripgrep의 라이브러리 크레이트).
+grep-searcher.workspace = true
+grep-regex.workspace = true
+grep-matcher.workspace = true
+ignore.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true
+windows = { workspace = true, optional = true }
 raw-window-handle.workspace = true
 
 [target.'cfg(unix)'.dependencies]
@@ -49,4 +55,4 @@ tempfile.workspace = true
 default = ["gui"]
 gui = ["dep:gpui-kit", "dep:rodio"]
 # 자동 점검용 실행 대본(창 크기·키 주입·격자 덤프). release 빌드에서는 켜지 않는다.
-automation = []
+automation = ["dep:windows"]

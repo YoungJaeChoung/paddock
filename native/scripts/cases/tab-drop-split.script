@@ -1,0 +1,59 @@
+# 탭 끌기(덩어리 37): 칸 가장자리로 끌면 칸이 나뉘고, 칸 가운데는 그 칸 끝으로 옮기고, 탭 위는 앞·뒤에 끼운다. 같은 자리면 아무것도 바뀌지 않는다.
+# 마우스 대신 합성 좌표로 끈다(`act dragtab`): 칸 상자 → 놓을 자리 → 옮기기를 실제 끌기와 같은 길로 탄다.
+waittabs 1 @30000
+send echo D-ONE\r
+waitline D-ONE @20000
+key ctrl-shift-t
+waittabs 2 @20000
+key ctrl-shift-t
+waittabs 3 @20000
+wait 1500
+state before
+shot before
+waitstate strip col0 tabs=1,2,3 @5000
+waitstate dock-preview=none @3000
+waitstate drag=none @3000
+# 한 칸의 탭 2를 오른쪽 가장자리로 끈다: 칸이 둘, 비율 0.5, 2가 오른쪽 칸에서 선택된다
+act dragtab 2 pane 1 right
+waitstate strip col0 tabs=1,3 @5000
+waitstate strip col1 tabs=2 @5000
+waitstate selected: 2 @5000
+waitstate "sizes":[0.5,0.5] @5000
+state split-right
+shot split-right
+# 오른쪽 칸 가운데에 탭 3을 놓으면 그 칸의 끝에 붙는다
+act dragtab 3 pane 2 center
+waitstate strip col0 tabs=1 @5000
+waitstate strip col1 tabs=2,3 @5000
+waitstate selected: 3 @5000
+# 탭 2 앞에 3을 끼운다 → [3, 2]
+act dragtab 3 tab 2 before
+waitstate strip col1 tabs=3,2 @5000
+state inserted
+shot inserted
+# 같은 자리에 다시 끼우면 무변화(WD06)
+act dragtab 3 tab 2 before
+wait 800
+waitstate strip col1 tabs=3,2 @3000
+waitnostate strip col1 tabs=2,3 @1500
+# 이미 있는 칸의 가운데에 놓아도 무변화(WD03)
+act dragtab 2 pane 2 center
+wait 800
+waitstate strip col1 tabs=3,2 @3000
+waitstate strip col0 tabs=1 @3000
+# 왼쪽 칸 아래 가장자리로 2를 끌면 왼쪽 칸이 세로로 나뉜다. 가로 분할의 비율은 그대로다
+act dragtab 2 pane 1 bottom
+waitstate strip col0 tabs=1,2 @5000
+waitstate strip col1 tabs=3 @5000
+waitstate "orientation":"vertical" @5000
+waitstate "orientation":"horizontal" @3000
+waitstate selected: 2 @5000
+state bottom
+shot bottom
+# 탭 줄 빈 자리에 놓으면 그 열 맨 위 칸의 끝이다: 3을 왼쪽 열 탭 줄에 놓는다
+act dragtab 3 strip 0
+waitstate strip col0 tabs=1,3,2 @5000
+state strip
+shot strip
+act quick quitstop
+wait 3000

@@ -169,6 +169,15 @@ pub fn is_still_wanted(
     percent == current_percent && hold.contains(&page)
 }
 
+/// 그린 결과가 지금 열어 둔 문서의 것인지: 그리기를 시킬 때의 문서 세대와 결과가 도착한 지금의 세대가 같아야 한다.
+/// 파일이 바뀌어 문서를 바꾸면 세대가 오르므로, 옛 문서로 시작한 그리기 결과는 새 문서의 같은 쪽 번호 자리에 들어가지 못한다.
+pub fn is_current_document(
+    requested_in: u64,
+    current: u64,
+) -> bool {
+    requested_in == current
+}
+
 /// 상태 줄·툴바에 보이는 쪽 글자. 보이는 첫 쪽 번호(1부터)와 전체 쪽 수다.
 pub fn page_text(
     first_visible: usize,
@@ -267,7 +276,7 @@ mod tests {
     }
 
     #[test]
-    fn test_c_review_2_a_page_that_failed_is_not_requested_again_until_the_zoom_changes() {
+    fn test_a_page_that_failed_is_not_requested_again_until_the_zoom_changes() {
         let drawn = Some(PageSlot::Drawn { percent: 100 });
         let failed = Some(PageSlot::Failed { percent: 100 });
         assert!(should_request(None, 100, false));
@@ -280,9 +289,15 @@ mod tests {
     }
 
     #[test]
-    fn test_c_review_11_a_queued_render_is_skipped_once_the_page_scrolled_away_or_the_zoom_changed() {
+    fn test_a_queued_render_is_skipped_once_the_page_scrolled_away_or_the_zoom_changed() {
         assert!(is_still_wanted(4, 100, &[4, 3, 5], 100));
         assert!(!is_still_wanted(9, 100, &[4, 3, 5], 100));
         assert!(!is_still_wanted(4, 100, &[4, 3, 5], 125));
+    }
+
+    #[test]
+    fn test_c_pdf_a_render_started_for_the_old_document_is_not_current_after_a_replace() {
+        assert!(is_current_document(3, 3));
+        assert!(!is_current_document(3, 4), "a replace raised the generation while the page was drawing");
     }
 }

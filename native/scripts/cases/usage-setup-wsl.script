@@ -1,0 +1,31 @@
+# Paddock 전용 Claude 설정 쓰기(덩어리 32), WSL 쪽. 실행기는 PADDOCK_TEST_WSL_HOME=/tmp/paddock-test-usage-setup 으로 WSL 홈을 임시 폴더로 바꿔 띄운다
+# (자동 점검 빌드는 이 변수가 있을 때만 WSL 안에 쓴다). 설정 파일의 paddock.wsl.claudeLauncher는 off라 묻기 창은 없다.
+# 시작하면 WSL 임시 홈에 claude 실행 래퍼가 놓이고, 사용량 표시가 자동으로 켜지며 WSL 설정 파일에 그 쪽 node 경로의 상태 줄 명령이 들어간다.
+# 메모리 안내를 켜면 WSL 설정 파일에 훅 명령이 들어가고(기준 4096 → 4608), 끄면 훅이 빠지고 꺼짐 표시 파일이 생긴다.
+# Windows 이 컴퓨터에는 훅이 들어가지 않는다. 마지막에 .bashrc 줄을 넣고 → 다시 넣어도 한 줄 → 빼면 0줄이 된다.
+waittabs 1 @30000
+waitstate wrapper=yes script=yes hook-script=no hook-off=no bashrc-lines=0 @60000
+waitstate flag-status="/tmp/paddock-test-usage-setup/bin/node" "/tmp/paddock-test-usage-setup/.paddock/config/usage/claude-statusline.cjs" "/tmp/paddock-test-usage-setup/.paddock/config/usage/claude.json" flag-hook=- @30000
+state started
+act quick memorynotice on
+waitstate flag-hook=PADDOCK_MEMORY_MIN_MB=4096 sh '/tmp/paddock-test-usage-setup/.paddock/config/usage/memory-hook.sh' @30000
+waitstate hook-script=yes hook-off=no bashrc-lines=0 @5000
+act quick memorynoticemb +1
+waitstate flag-hook=PADDOCK_MEMORY_MIN_MB=4608 sh '/tmp/paddock-test-usage-setup/.paddock/config/usage/memory-hook.sh' @30000
+state memory-on
+act quick memorynotice off
+waitstate flag-hook=- wrapper=yes script=yes hook-script=yes hook-off=yes @30000
+state memory-off
+act quick choose wsllauncher on
+waitstate launcher=added @30000
+waitstate bashrc-lines=1 @5000
+act quick choose wsllauncher on
+waitstate launcher=present @30000
+waitstate bashrc-lines=1 @5000
+state launcher-on
+act quick choose wsllauncher off
+waitstate launcher=removed @30000
+waitstate bashrc-lines=0 @5000
+state launcher-off
+files setup-wsl-settings
+quit

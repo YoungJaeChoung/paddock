@@ -4,8 +4,12 @@ use std::time::Duration;
 
 use interprocess::local_socket::traits::Stream as _;
 use interprocess::local_socket::{RecvHalf, Stream};
+use paddock_core::account_session::SessionIdentity;
 use paddock_protocol::frame::Frame;
-use paddock_protocol::message::{Attach, Hello, HelloOk, Kill, List, New, PROTOCOL_VERSION, Resize, Status, kind};
+use paddock_protocol::message::{
+    Attach, CheckIdle, CheckIdleReply, Hello, HelloError, HelloOk, Kill, List, New, Resize, Status, StopAgent,
+    StopAgentReply, kind,
+};
 use paddock_protocol::peer::{PeerCredentials, PeerRole, UserId, require_same_user};
 
 use crate::log;
@@ -19,7 +23,15 @@ pub struct Context {
     pub fingerprint: String,
     pub own_user: UserId,
     pub endpoint: String,
+    /// 인사에서 앱에 알리고 앱의 버전과 비교하는 이 데몬의 프로토콜 버전.
+    pub protocol_version: u32,
+    /// 참이면 버전이 다른 인사에 `ERR`를 보내고 연결을 닫는다(버전이 다른 인사를 받아들이지 않던 옛 데몬의 동작).
+    /// 시험 전용 환경 변수로만 켜진다.
+    pub strict_hello: bool,
 }
+
+/// 인사만 받아들인 연결이 처리하는 요청. 앱이 버전이 다른 데몬의 상태를 보고 끝낼 수 있는 최소한이다.
+const HANDSHAKE_ONLY_KINDS: [u8; 3] = [kind::STATUS_REQUEST, kind::SHUTDOWN, kind::BYE];
 
 /// 접속자가 데몬과 같은 사용자일 때만 연결을 돌려준다. 다르거나 확인하지 못하면 한 바이트도 보내지 않고 연결을 버린다.
 pub fn admit<S: PeerCredentials>(
@@ -61,9 +73,11 @@ pub fn serve(
         let (mut recv, mut send) = stream.split();
         let (outbox, inbox) = outbox::channel();
         std::thread::spawn(move || inbox.run(|frame| frame.write_to(&mut send)));
-        if greet(&mut recv, &outbox, ctx, conn_id) {
+        let greeting = greet(&mut recv, &outbox, ctx, conn_id);
+        if greeting != Greeting::Dropped {
             let _connection = ctx.registry.connection_opened();
-            let mut session = Session { conn_id, outbox, attached: None };
+            let mut session =
+                Session { conn_id, outbox, attached: None, handshake_only: greeting == Greeting::HandshakeOnly };
             while let Ok(frame) = Frame::read_from(&mut recv) {
                 if session.dispatch(frame, ctx) == Flow::Close {
                     break;
@@ -75,31 +89,64 @@ pub fn serve(
     }
 }
 
-/// 첫 프레임이 토큰·버전이 맞는 `HELLO`인지 보고 답한다. 맞으면 `true`.
+/// 인사 결과: 연결을 어떻게 이어 갈지.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Greeting {
+    /// 인사가 틀렸거나 없다. 호출자가 연결을 닫는다.
+    Dropped,
+    /// 토큰과 버전이 맞다. 모든 요청을 처리한다.
+    Full,
+    /// 토큰은 맞지만 앱의 프로토콜 버전이 데몬과 다르다. `HANDSHAKE_ONLY_KINDS`만 처리한다.
+    HandshakeOnly,
+}
+
+/// 첫 프레임이 토큰이 맞는 `HELLO`인지 보고 답한다.
 ///
-/// 틀리면 오류 프레임을 한 번 보낸 뒤 호출자가 연결을 닫는다. `HELLO`가 아닌 첫 프레임은 답 없이 닫는다.
+/// 토큰이 맞으면 앱의 버전과 무관하게 데몬의 버전을 담은 `HELLO_OK`로 답한다 — 버전이 다른 앱도 이 데몬이 어떤 버전인지
+/// 알고 종료를 요청할 수 있어야 하기 때문이다. 버전이 다르면 그 연결은 인사만 받아들인 연결(`Greeting::HandshakeOnly`)이다.
+/// 토큰이 틀리면 오류 프레임을 한 번 보낸 뒤 호출자가 연결을 닫는다. `HELLO`가 아닌 첫 프레임은 답 없이 닫는다.
 fn greet(
     recv: &mut RecvHalf,
     outbox: &Outbox,
     ctx: &Context,
     conn_id: u64,
-) -> bool {
+) -> Greeting {
     let first = Frame::read_from(recv).ok().filter(|frame| frame.kind == kind::HELLO);
     let hello = first.as_ref().and_then(|frame| frame.parse_json::<Hello>().ok());
-    let mut accepted = false;
-    match hello.map(|hello| hello.check(&ctx.token, PROTOCOL_VERSION)) {
+    let mut greeting = Greeting::Dropped;
+    match hello.map(|hello| (hello.check_token(&ctx.token), hello.protocol_version)) {
         None => log::event(&format!("connection {conn_id}: no hello, dropped")),
-        Some(Err(error)) => {
+        Some((Err(error), _)) => {
             log::event(&format!("connection {conn_id}: {error}, dropped"));
             outbox.send(Frame::text(kind::ERR, &error.to_string()));
         }
-        Some(Ok(())) => {
-            let ok = HelloOk { pid: std::process::id(), fingerprint: ctx.fingerprint.clone() };
+        Some((Ok(()), app_version)) if app_version != ctx.protocol_version && ctx.strict_hello => {
+            let error = HelloError::UnsupportedVersion;
+            log::event(&format!(
+                "connection {conn_id}: protocol v{app_version} (daemon v{}), dropped",
+                ctx.protocol_version
+            ));
+            outbox.send(Frame::text(kind::ERR, &error.to_string()));
+        }
+        Some((Ok(()), app_version)) => {
+            let ok = HelloOk {
+                pid: std::process::id(),
+                fingerprint: ctx.fingerprint.clone(),
+                protocol_version: ctx.protocol_version,
+            };
             outbox.send(Frame::json(kind::HELLO_OK, &ok));
-            accepted = true;
+            greeting = if app_version == ctx.protocol_version {
+                Greeting::Full
+            } else {
+                log::event(&format!(
+                    "connection {conn_id}: protocol v{app_version} (daemon v{}), handshake only",
+                    ctx.protocol_version
+                ));
+                Greeting::HandshakeOnly
+            };
         }
     }
-    accepted
+    greeting
 }
 
 /// 요청 하나를 처리한 뒤 연결을 어떻게 할지.
@@ -116,6 +163,8 @@ struct Session {
     conn_id: u64,
     outbox: Outbox,
     attached: Option<Arc<Terminal>>,
+    /// 참이면 `HANDSHAKE_ONLY_KINDS` 밖의 요청은 `ERR`로 답한다(연결은 유지).
+    handshake_only: bool,
 }
 
 impl Session {
@@ -126,6 +175,9 @@ impl Session {
     ) -> Flow {
         let mut flow = Flow::Continue;
         match frame.kind {
+            other if self.handshake_only && !HANDSHAKE_ONLY_KINDS.contains(&other) => {
+                self.reply_error(&HelloError::UnsupportedVersion.to_string());
+            }
             kind::NEW => self.on_new(&frame, ctx),
             kind::ATTACH => self.on_attach(&frame, ctx),
             kind::INPUT => {
@@ -144,6 +196,49 @@ impl Session {
             kind::STATUS_REQUEST => {
                 let status = Status { pid: std::process::id(), n_terminals: ctx.registry.len() as u32 };
                 self.outbox.send(Frame::json(kind::STATUS, &status));
+            }
+            kind::MEMORY_REQUEST => {
+                // WSL을 읽는 데 몇 초 걸릴 수 있어, 이 연결의 다른 요청(입력 등)을 막지 않도록 따로 읽어 답한다.
+                let (outbox, registry) = (self.outbox.clone(), ctx.registry.clone());
+                std::thread::spawn(move || {
+                    outbox.send(Frame::json(kind::MEMORY_REPORT, &crate::memory::report(&registry)))
+                });
+            }
+            kind::STOP_AGENT => {
+                // 끝나기를 기다리는 데 최대 10초 걸려, 이 연결의 다른 요청을 막지 않도록 따로 기다려 답한다.
+                if let (Ok(request), outbox, registry) =
+                    (frame.parse_json::<StopAgent>(), self.outbox.clone(), ctx.registry.clone())
+                {
+                    std::thread::spawn(move || {
+                        let reply = match registry.get(request.id) {
+                            Some(terminal) => terminal.stop_agent(&request),
+                            None => StopAgentReply {
+                                id: request.id,
+                                stopped: false,
+                                message: crate::stop::CHANGED.to_string(),
+                            },
+                        };
+                        outbox.send(Frame::json(kind::STOP_AGENT_REPLY, &reply));
+                    });
+                }
+            }
+            kind::CHECK_IDLE => {
+                // 앞쪽을 읽는 데(WSL이면 몇 초까지) 걸려, 이 연결의 다른 요청을 막지 않도록 따로 읽어 답한다.
+                if let (Ok(request), outbox, registry) =
+                    (frame.parse_json::<CheckIdle>(), self.outbox.clone(), ctx.registry.clone())
+                {
+                    std::thread::spawn(move || {
+                        let reply = match registry.get(request.id) {
+                            Some(terminal) => terminal.check_idle(),
+                            None => CheckIdleReply {
+                                id: request.id,
+                                idle: false,
+                                message: SessionIdentity::NOT_CHECKED.to_string(),
+                            },
+                        };
+                        outbox.send(Frame::json(kind::CHECK_IDLE_REPLY, &reply));
+                    });
+                }
             }
             kind::SHUTDOWN => self.on_shutdown(ctx),
             _ => {}

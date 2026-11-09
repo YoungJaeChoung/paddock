@@ -2,10 +2,13 @@
 //! 터미널 격자 자체의 색은 `terminal::palette`가 정한다.
 //!
 //! 1px 선(`border_*_1`)은 확대 배율을 곱하지 않고 GPUI가 장치 픽셀에 맞춰 얇게 그린다. 선 굵기 값을 따로 두지 않는 근거다.
-use gpui_kit::{Div, FontWeight, InteractiveElement, ParentElement, Pixels, Styled, div, px};
-use paddock_core::agent_model::ActivityState;
+use gpui_kit::{
+    Div, FontWeight, InteractiveElement, IntoElement, ParentElement, Pixels, StatefulInteractiveElement, Styled, div,
+    px,
+};
 use paddock_core::theme::{agent_row, dialog as dialog_size, text};
 
+use crate::agent_view::{Status, Tone};
 use crate::look::{colors, scaled};
 use crate::terminal::paint::hsla;
 
@@ -138,18 +141,21 @@ pub fn unseen_dot() -> Div {
         .bg(hsla(colors().accent))
 }
 
-/// 에이전트 상태 칸: 같은 색의 점과 글자(`Sent`·`Output`·`Quiet`). 폭이 고정이라 글자가 바뀌어도 오른쪽 열이 흔들리지 않는다.
+/// 에이전트 상태 칸: 같은 색의 점과 글자(`Working`·`Needs input`·`Idle`·`Error` 또는 추정 `Sent`·`Output`·`Quiet`). 폭이 고정이라 글자가
+/// 바뀌어도 오른쪽 열이 흔들리지 않는다. 마우스를 올리면 그 뜻과 알린 것인지 추정인지를 말한다. `key`는 행을 구별하는 번호다.
 pub fn agent_status(
-    label: &'static str,
-    activity: ActivityState,
-) -> Div {
+    status: &Status,
+    key: u32,
+) -> impl IntoElement {
     let palette = colors();
-    let color = match activity {
-        ActivityState::Working => palette.accent,
-        ActivityState::Waiting => palette.warning,
-        ActivityState::Quiet | ActivityState::Unknown => palette.fg_muted,
+    let color = match status.tone {
+        Tone::Working => palette.accent,
+        Tone::Attention => palette.warning,
+        Tone::Error => palette.danger,
+        Tone::Quiet => palette.fg_muted,
     };
     div()
+        .id(("agent-status", key as usize))
         .flex_none()
         .w(zpx(agent_row::STATUS_WIDTH))
         .ml(zpx(agent_row::STATUS_MARGIN_LEFT))
@@ -159,6 +165,7 @@ pub fn agent_status(
         .gap(zpx(agent_row::STATUS_GAP))
         .text_size(zpx(text::SMALL))
         .text_color(hsla(color))
+        .tooltip(crate::usage::bar::tooltip(status.tooltip.clone()))
         .child(
             div()
                 .flex_none()
@@ -167,7 +174,7 @@ pub fn agent_status(
                 .rounded(zpx(agent_row::STATUS_DOT_SIZE / 2.0))
                 .bg(hsla(color)),
         )
-        .child(label)
+        .child(status.label)
 }
 
 /// 창 틀 전체의 글꼴 이름(빠른 설정에서 바꿀 수 있다).
@@ -197,5 +204,8 @@ pub fn sync_component_theme(cx: &mut gpui_kit::App) {
         theme.mono_font_family = crate::look::terminal_family().into();
         theme.mono_font_size = px(crate::look::scaled(crate::look::terminal_font_size()));
         theme.colors.foreground = hsla(palette.terminal_fg);
+        // 편집기 캐럿과 글자 선택 바탕(고칠 수 있는 파일의 편집기가 쓴다).
+        theme.colors.caret = hsla(palette.fg_strong);
+        theme.colors.selection = hsla(palette.selected_bg);
     });
 }

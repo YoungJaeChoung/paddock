@@ -1,9 +1,10 @@
 const { OS } = require('@theia/core/lib/common/os');
 const { Saveable } = require('@theia/core/lib/browser/saveable');
 const { ShellTerminalProfile } = require('@theia/terminal/lib/browser/shell-terminal-profile');
+const agent = require('../agent-model');
 const model = require('../work-model');
 const tabOverflow = require('../tab-overflow');
-const { paneColumns, groupTabsByColumn, columnSpans, orderTabsByPane } = require('../pane-columns');
+const { paneColumns, groupTabsByColumn, columnSpans, orderTabsByPane, attachedTabIds } = require('../pane-columns');
 const { tabDropTarget, tabDockRef, tabRowInsert, isSameTabPlace, tabMoveIndex } = require('../tab-drop');
 const wsl = require('../wsl-terminals');
 const { distributionOf, withDistribution, environmentLabel } = require('../terminal-environment');
@@ -198,7 +199,8 @@ class FolderTabs {
         const tabsById = new Map(tabs.map(tab => [tab.querySelector('[role="tab"]').dataset.widgetId, tab]));
         // 위아래로 쌓인 열의 둘째 칸부터는 위쪽 줄에 탭을 두지 않는다. 그 칸이 자기 탭 줄을 칸 바로 위에 보인다(path-bar.js).
         const lowerPanes = new Set(columns.flatMap(column => column.keys.slice(1)));
-        const ids = orderTabsByPane([...tabsById.keys()], id => {
+        // 나눈 동안 다른 창으로 분리된 탭은 줄에서 뺀다. 이 창에 칸이 없어 어느 열에도 놓을 수 없다(attachedTabIds).
+        const ids = orderTabsByPane(attachedTabIds([...tabsById.keys()], isSplit, id => Boolean(shell.getWidgetById(id)?.secondaryWindow)), id => {
             const pane = paneOf(id);
             const at = pane ? panes.indexOf(pane) : -1;
             return at >= 0 ? { pane: at, index: pane.titles.findIndex(title => title.owner.id === id) } : null;
@@ -338,7 +340,10 @@ class FolderTabs {
                 select.setAttribute('role', 'tab');
                 select.setAttribute('aria-selected', String(isActive));
                 select.dataset.widgetId = row.id;
-                select.title = terminal?.secondaryWindow ? `${label} · Open in another window` : terminal ? `${label} · ${this.workspace.programOf(terminal)}${isShown ? ' · Visible in another pane' : ''}` : label;
+                // 에이전트가 알린 상태만 탭 도움말에 보인다. 추정(Sent·Output·Quiet)은 목록 행에서만 보인다.
+                const { state, reported } = this.workspace.agentActivity.stateOf(row.id);
+                const reportedText = reported ? agent.stateText(state, true)?.[0] : null;
+                select.title = terminal?.secondaryWindow ? `${label} · Open in another window` : terminal ? `${label} · ${this.workspace.programOf(terminal)}${reportedText ? ` · ${reportedText}` : ''}${isShown ? ' · Visible in another pane' : ''}` : label;
                 select.addEventListener('dblclick', () => this.workspace.run(() => this.workspace.renameTerminal(row.id)));
                 const close = button([codicon('close')], 'tab-close', () => this.workspace.run(() => this.workspace.closeWidget(terminal)));
                 close.setAttribute('aria-label', `Close ${label}`);
@@ -363,7 +368,9 @@ class FolderTabs {
                         select.setAttribute('role', 'tab');
                         select.setAttribute('aria-selected', String(terminal === this.workspace.currentWidget()));
                         select.dataset.widgetId = id;
-                        select.title = `${label}${this.workspace.doneIds.has(id) ? ' · Unseen activity' : ''}`;
+                        const { state, reported } = this.workspace.agentActivity.stateOf(id);
+                        const reportedText = reported ? agent.stateText(state, true)?.[0] : null;
+                        select.title = `${label}${reportedText ? ` · ${reportedText}` : ''}${this.workspace.doneIds.has(id) ? ' · Unseen activity' : ''}`;
                         select.addEventListener('dblclick', () => this.workspace.run(() => this.workspace.renameTerminal(id)));
                         const close = button([codicon('close')], 'tab-close', () => this.workspace.run(() => this.workspace.closeWidget(terminal)));
                         close.setAttribute('aria-label', `Close ${label}`);

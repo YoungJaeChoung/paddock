@@ -8,17 +8,20 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use gpui_kit::base::{TextView, TextViewState, TextViewStyle};
+use gpui_kit::component::input::EditorState;
 use gpui_kit::{
-    AppContext, ClickEvent, Context, Entity, FontWeight, HighlightStyle, ImageSource, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, RenderImage, ScrollHandle, SharedString, SharedUri, StatefulInteractiveElement,
-    StyleRefinement, Styled, Window, canvas, div, px, rems,
+    AnyElement, AppContext, ClickEvent, Context, Entity, FontWeight, HighlightStyle, ImageSource, InteractiveElement,
+    IntoElement, MouseButton, ParentElement, RenderImage, ScrollHandle, SharedString, SharedUri,
+    StatefulInteractiveElement, StyleRefinement, Styled, Window, canvas, div, px, rems,
 };
 use paddock_core::markdown_view::{Segment, View, external_link, resolve_image_path, split_blockquotes};
+use paddock_core::paths::parent_of;
+use paddock_core::text_file::Encoded;
 use paddock_core::theme::{Mode, markdown as size};
 
 use super::image_load::{RasterLoad, load_document_image};
 use super::images::{Graveyard, render_image};
-use super::text_view::{TextBody, build_text, text_view};
+use super::text_view::{TextBody, TextFile, build_text, text_view_of};
 use crate::app_log;
 use crate::chrome::zpx;
 use crate::look::{colors, mode, scaled};
@@ -44,7 +47,7 @@ pub struct DocumentImages {
 }
 
 impl DocumentImages {
-    fn new(
+    pub fn new(
         graveyard: Graveyard,
         root_dir: String,
     ) -> Arc<Self> {
@@ -131,6 +134,7 @@ impl Drop for DocumentImages {
 }
 
 /// 미리보기 조각 하나: 렌더러 상태와 인용 블록 여부.
+#[derive(Clone)]
 struct PreviewPart {
     state: Entity<TextViewState>,
     quote: bool,
@@ -153,6 +157,9 @@ pub struct MarkdownBody {
     pub source: Option<TextBody>,
     /// 원문 보기를 아직 만들지 않았을 때의 원문 글자.
     pending_text: Option<String>,
+    /// 읽을 때 기억한 BOM·줄바꿈 종류와 원문을 고칠 수 있는지. 원문 보기를 늦게 만들 때 쓴다.
+    encoded: Encoded,
+    editable: bool,
     /// 파일 경로와 크기. 원문 보기를 늦게 만들 때 쓴다.
     path: String,
     file_size: u64,
@@ -167,21 +174,49 @@ pub struct MarkdownBody {
     preview_width: Rc<Cell<f32>>,
 }
 
+/// Markdown 탭을 그리는 데 필요한 것만 담은 사본(핸들·공유 값의 복제). 본 창이 쥔 `MarkdownBody`를 빌리지 않고 그릴 수 있어서,
+/// 본 창을 그리지 않는 창(파일 분리 창)이 그릴 때 쓴다.
+#[derive(Clone)]
+pub struct MarkdownModel {
+    view: View,
+    /// 원문 보기(편집기)와 고칠 수 있는지. 아직 만들지 않았으면 없다.
+    source: Option<(Entity<EditorState>, bool)>,
+    parts: Vec<PreviewPart>,
+    column_scroll: ScrollHandle,
+    base_dir: String,
+    images: Arc<DocumentImages>,
+    preview_width: Rc<Cell<f32>>,
+}
+
 impl MarkdownBody {
+    /// 그리기에 필요한 것의 사본.
+    pub fn model(&self) -> MarkdownModel {
+        MarkdownModel {
+            view: self.view,
+            source: self.source.as_ref().map(|source| (source.editor.clone(), source.editable)),
+            parts: self.parts.clone(),
+            column_scroll: self.column_scroll.clone(),
+            base_dir: self.base_dir.clone(),
+            images: self.images.clone(),
+            preview_width: self.preview_width.clone(),
+        }
+    }
+
     /// 디스크의 파일이 바뀌어 다시 읽은 글자로 바꾼다. 미리보기·원문의 스크롤 위치는 그대로 두고, 본문 속 이미지는 다시 읽는다.
     pub fn replace(
         &mut self,
-        text: String,
-        size: u64,
+        file: TextFile,
         window: &mut Window,
         cx: &mut Context<WorkWindow>,
     ) {
-        self.file_size = size;
-        self.set_preview_text(&text, cx);
+        self.file_size = file.size;
+        self.encoded = file.encoded;
+        self.editable = file.editable;
+        self.set_preview_text(&file.text, cx);
         self.images.clear();
         match self.source.as_mut() {
-            Some(source) => source.replace(text, size, window, cx),
-            None => self.pending_text = Some(text),
+            Some(source) => source.replace(file, window, cx),
+            None => self.pending_text = Some(file.text),
         }
     }
 
@@ -215,20 +250,30 @@ impl MarkdownBody {
         if self.source.is_none()
             && let Some(text) = self.pending_text.take()
         {
-            self.source = Some(build_text(text, self.file_size, &self.path, window, cx));
+            let file = TextFile { text, size: self.file_size, encoded: self.encoded, editable: self.editable };
+            self.source = Some(build_text(file, &self.path, window, cx));
         }
     }
 
-    /// 원문의 줄 수·글자 해시(자동 점검용). 편집기가 있으면 편집기 안의 글자를, 없으면 읽어 둔 글자를 본다.
+    /// 원문의 줄 수와 글자(자동 점검용). 편집기가 있으면 편집기 안의 글자를, 없으면 읽어 둔 글자를 본다.
+    /// 글자 복사는 비싸므로 `with_text`일 때만 하고, 아니면 글자는 빈 값이다.
     pub fn source_summary(
         &self,
+        with_text: bool,
         cx: &gpui_kit::App,
     ) -> (usize, String) {
         match (&self.source, &self.pending_text) {
-            (Some(source), _) => (source.n_lines, source.editor.read(cx).value().to_string()),
-            (None, Some(text)) => (text.lines().count().max(1), text.clone()),
+            (Some(source), _) => {
+                (source.n_lines, if with_text { source.editor.read(cx).value().to_string() } else { String::new() })
+            }
+            (None, Some(text)) => (text.lines().count().max(1), if with_text { text.clone() } else { String::new() }),
             (None, None) => (0, String::new()),
         }
+    }
+
+    /// 원문을 고칠 수 있는가(읽을 때 정해진다).
+    pub fn is_editable(&self) -> bool {
+        self.editable
     }
 
     pub fn file_size(&self) -> u64 {
@@ -248,6 +293,15 @@ impl MarkdownBody {
         self.preview_width.get()
     }
 
+    /// 저장한 원문으로 미리보기를 바꾼다(미리보기는 고치는 중인 글자가 아니라 저장본을 보인다).
+    pub fn show_saved(
+        &mut self,
+        text: &str,
+        cx: &mut Context<WorkWindow>,
+    ) {
+        self.set_preview_text(text, cx);
+    }
+
     /// 읽어 낸 문서 속 이미지 수와 전체 수.
     pub fn image_counts(&self) -> (usize, usize) {
         self.images.counts()
@@ -265,24 +319,16 @@ impl MarkdownBody {
     }
 }
 
-/// Markdown 파일이 어디에 있는지: 파일 경로와 본문 속 이미지를 읽을 수 있는 작업 폴더.
-#[derive(Clone, Copy)]
-pub struct Origin<'a> {
-    pub path: &'a str,
-    pub root_dir: &'a str,
-}
-
-/// 읽은 Markdown 글자로 원문 보기와 미리보기를 만든다.
+/// 읽은 Markdown 글자로 원문 보기와 미리보기를 만든다. `path`는 파일 경로이고, `images`는 본문 속 이미지를 읽을 곳(허용 폴더 포함)이다.
 pub fn build_markdown(
-    text: String,
-    size: u64,
-    origin: Origin<'_>,
+    file: TextFile,
+    path: &str,
+    images: Arc<DocumentImages>,
     view: View,
-    graveyard: Graveyard,
     window: &mut Window,
     cx: &mut Context<WorkWindow>,
 ) -> MarkdownBody {
-    let Origin { path, root_dir } = origin;
+    let TextFile { text, size, encoded, editable } = file;
     let parts: Vec<PreviewPart> = part_texts(&text)
         .into_iter()
         .map(|(text, quote)| PreviewPart { state: cx.new(|cx| TextViewState::markdown(&text, cx)), quote })
@@ -290,18 +336,22 @@ pub fn build_markdown(
     // 처음부터 원문을 보이는 방식이면 편집기를 바로 만들고, 미리보기만 보면 글자만 쥐어 둔다.
     let (source, pending_text) = match view {
         View::Preview => (None, Some(text)),
-        View::Source | View::Both => (Some(build_text(text, size, path, window, cx)), None),
+        View::Source | View::Both => {
+            (Some(build_text(TextFile { text, size, encoded, editable }, path, window, cx)), None)
+        }
     };
-    let base_dir = path.rsplit_once(['/', '\\']).map_or(String::new(), |(dir, _)| dir.to_string());
+    let base_dir = parent_of(path);
     MarkdownBody {
         source,
         pending_text,
+        encoded,
+        editable,
         path: path.to_string(),
         file_size: size,
         parts,
         column_scroll: ScrollHandle::new(),
         base_dir,
-        images: DocumentImages::new(graveyard, root_dir.to_string()),
+        images,
         view,
         preview_width: Rc::new(Cell::new(0.0)),
     }
@@ -336,7 +386,7 @@ fn preview_style() -> TextViewStyle {
 }
 
 /// 미리보기 쪽 그리기: 본문은 읽을 수 있는 폭(`CONTENT_MAX_WIDTH`)으로 가운데에 놓인다.
-fn preview_column(body: &MarkdownBody) -> impl IntoElement {
+fn preview_column(body: &MarkdownModel) -> impl IntoElement {
     let palette = colors();
     let measured = body.preview_width.clone();
     let make_view = |part: &PreviewPart| {
@@ -414,15 +464,20 @@ fn preview_column(body: &MarkdownBody) -> impl IntoElement {
 }
 
 /// Markdown 탭 그리기. `Both`는 왼쪽 원문, 오른쪽 미리보기 두 열이다.
-pub fn markdown_view(body: &MarkdownBody) -> impl IntoElement {
+pub fn markdown_view(body: &MarkdownBody) -> AnyElement {
+    markdown_model_view(&body.model())
+}
+
+/// `markdown_view`와 같되 `MarkdownBody`가 아니라 그 사본으로 그린다.
+pub fn markdown_model_view(body: &MarkdownModel) -> AnyElement {
     let palette = colors();
     match (body.view, &body.source) {
-        (View::Source, Some(source)) => text_view(source).into_any_element(),
-        (View::Both, Some(source)) => div()
+        (View::Source, Some((editor, editable))) => text_view_of(editor, *editable).into_any_element(),
+        (View::Both, Some((editor, editable))) => div()
             .size_full()
             .flex()
             .flex_row()
-            .child(div().flex_1().min_w_0().h_full().child(text_view(source)))
+            .child(div().flex_1().min_w_0().h_full().child(text_view_of(editor, *editable)))
             .child(div().flex_none().w(zpx(1.0)).h_full().bg(hsla(palette.border)))
             .child(div().flex_1().min_w_0().h_full().child(preview_column(body)))
             .into_any_element(),

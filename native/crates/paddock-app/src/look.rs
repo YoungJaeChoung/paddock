@@ -42,6 +42,16 @@ pub fn scaled(size: f32) -> f32 {
     size * zoom()
 }
 
+/// Work 목록과 파일 목록의 한 단계 들여쓰기(100% 배율의 px). 설정 `paddock.sidebarIndent`이고 기본 12다.
+pub fn sidebar_indent() -> f32 {
+    read(|appearance| appearance.sidebar_indent as f32)
+}
+
+/// 터미널에서 고른 글자를 바로 복사하는 설정이 켜져 있는지.
+pub fn copy_on_selection() -> bool {
+    read(|appearance| appearance.copy_on_selection)
+}
+
 /// 터미널 글꼴 크기(100% 배율의 px).
 pub fn terminal_font_size() -> f32 {
     read(|appearance| appearance.terminal_font_size as f32)

@@ -39,8 +39,9 @@ const RUNTIMES: [&str; 8] = ["node", "bun", "deno", "python", "python3", "bash",
 const SHELL_NAMES: [&str; 12] =
     ["bash", "sh", "zsh", "fish", "dash", "ksh", "tcsh", "csh", "nu", "pwsh", "powershell", "cmd"];
 
-/// 에이전트가 직접 알린 상태.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// 에이전트가 직접 알린 상태. 앱·데몬 사이에서는 소문자 이름(`working`·`blocked`·…)으로 오간다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum StatusState {
     Working,
     Blocked,
@@ -202,16 +203,47 @@ pub fn is_shell(name: Option<&str>) -> bool {
     name.is_some_and(|name| SHELL_NAMES.contains(&name))
 }
 
+/// 중단 키(Esc·Ctrl+C) 한 바이트. 에이전트는 사용자가 중단하면 끝남 신호를 보내지 않으므로 이 입력으로 대신 판단한다.
+const INTERRUPT_KEYS: [&[u8]; 2] = [b"\x1b", b"\x03"];
+
 /// 사용자 입력. Enter(`\r`)가 들어오면 그 뒤의 출력을 "일"로 센다.
 ///
 /// 에이전트가 알려 온 상태(signal)는 입력으로 지우지 않는다. 이 터미널이 신호를 보낸다는 사실이 이어져야 한다.
+/// 다만 일하는 중(working)이나 사용자를 기다린다(blocked)고 알린 터미널에 중단 키가 정확히 한 바이트로 오면 신호를 idle로 바꾼다(알림 없음).
+/// 기다리는 중의 Esc·Ctrl+C는 권한·질문 대화창을 닫는 것이고, 이때도 에이전트가 끝남·유휴 신호를 보내지 않아 blocked가 남기 때문이다.
+/// 화살표 키(`\x1b[A`)·붙여넣기처럼 여러 바이트 입력은 중단이 아니다. 일한 시작 시각(`working_since`)은 남겨, 폴백이 틀려 일이 이어졌다가
+/// 진짜 done이 오면 그 일한 시간으로 알린다. 이후 오는 신호가 다시 우선한다.
+///
+/// Examples
+/// --------
+/// | 신호      | 입력        | 결과                         |
+/// |-----------|-------------|------------------------------|
+/// | working   | `\x1b`·`\x03` | idle(알림 없음)            |
+/// | blocked   | `\x1b`      | idle(알림 없음)              |
+/// | working   | `\x1b[A`    | 그대로                       |
+/// | 어느 상태 | `\r` 포함   | 신호 유지, 출력 세기 다시 시작 |
 pub fn note_input(
     activity: &Activity,
     data: &[u8],
     now: u64,
 ) -> Activity {
+    let interruptible = activity
+        .signal
+        .as_ref()
+        .filter(|signal| matches!(signal.state, StatusState::Working | StatusState::Blocked))
+        .filter(|_| INTERRUPT_KEYS.contains(&data));
     if data.contains(&b'\r') {
         Activity { armed_at: Some(now), signal: activity.signal.clone(), ..Activity::idle() }
+    } else if let Some(signal) = interruptible {
+        Activity {
+            signal: Some(Signal {
+                state: StatusState::Idle,
+                kind: None,
+                working_since: signal.working_since,
+                alert: false,
+            }),
+            ..activity.clone()
+        }
     } else {
         activity.clone()
     }
@@ -287,16 +319,23 @@ pub fn note_status(
             let previous = activity.signal.as_ref();
             let is_working = previous.is_some_and(|previous| previous.state == StatusState::Working);
             let previous_since = previous.and_then(|previous| previous.working_since);
-            let working_since = if *state == StatusState::Working && !is_working { Some(now) } else { previous_since };
+            // 일을 시작한 시각은 끝남·유휴·오류로 일이 마무리되면 비운다. 중단 폴백이 만든 idle만 이 시각을 남겨,
+            // 폴백이 틀려 일이 이어졌다가 진짜 done이 오면 그 일한 시간으로 알린다.
+            let is_finishing = matches!(state, StatusState::Done | StatusState::Idle | StatusState::Error);
+            let working_since = match state {
+                StatusState::Working if is_working => previous_since,
+                StatusState::Working => Some(now),
+                _ if is_finishing => None,
+                _ => previous_since,
+            };
             let mut alert = previous.is_some_and(|previous| previous.alert);
             match state {
                 StatusState::Blocked | StatusState::Error => {
                     alert = alert || previous.map(|previous| previous.state) != Some(*state);
                 }
                 StatusState::Done => {
-                    alert = alert
-                        || (is_working
-                            && previous_since.is_some_and(|since| now.saturating_sub(since) >= limit::MIN_BUSY_MS));
+                    alert =
+                        alert || previous_since.is_some_and(|since| now.saturating_sub(since) >= limit::MIN_BUSY_MS);
                 }
                 _ => {}
             }
@@ -306,6 +345,39 @@ pub fn note_status(
             }
         }
     }
+}
+
+/// 앞쪽 프로그램이 한 에이전트에서 다른 에이전트로 바뀌면 이전 에이전트가 알린 상태를 지운다.
+/// 새 에이전트가 신호를 보내지 않으면(예: claude 뒤 codex) 낡은 상태가 그대로 남기 때문이다.
+/// 셸로 돌아온 경우와 처음 알아본 경우는 건드리지 않는다. 셸 복귀는 `settle`이 알림을 정리한다.
+///
+/// Examples
+/// --------
+/// | 이전     | 지금     | 결과        |
+/// |----------|----------|-------------|
+/// | `claude` | `codex`  | 신호를 지운다 |
+/// | `claude` | `claude` | 그대로      |
+/// | `claude` | `bash`   | 그대로      |
+/// | 모름     | `claude` | 그대로      |
+pub fn note_program(
+    activity: &Activity,
+    previous: Option<&str>,
+    current: Option<&str>,
+) -> Activity {
+    let is_switched = match (previous, current) {
+        (Some(previous), Some(current)) => is_agent(previous) && is_agent(current) && previous != current,
+        _ => false,
+    };
+    if is_switched { Activity { signal: None, ..activity.clone() } } else { activity.clone() }
+}
+
+/// 에이전트가 직접 알린 상태. 알린 적이 없거나 에이전트가 아니면(모르는 경우 포함) None이다.
+/// 화면은 이 값이 있으면 「에이전트가 알린 상태」로, 없으면 「관찰로 추정한 상태」(`activity_state`)로 구분해 보인다.
+pub fn signal_of(
+    activity: &Activity,
+    agent_now: Option<bool>,
+) -> Option<StatusState> {
+    activity.signal.as_ref().filter(|_| agent_now == Some(true)).map(|signal| signal.state)
 }
 
 /// 완료 소리를 낼지. 마지막 소리 뒤 `SOUND_COOLDOWN_MS`가 지났거나 아직 낸 적이 없을 때만 낸다.
@@ -662,6 +734,100 @@ mod tests {
         assert!(!settle(&activity, 60000, Some(false)).finished);
         let unknown = settle(&note_status(&Activity::idle(), &working(), 0), 1000, None);
         assert!(!unknown.finished, "an unknown program defers the decision");
+    }
+
+    fn noted(state: StatusState) -> Activity {
+        note_status(&Activity::idle(), &report(state), 0)
+    }
+
+    #[test]
+    fn test_c_agent_a5_1_a_reported_state_is_exposed_only_for_an_agent_and_clear_withdraws_it() {
+        for state in
+            [StatusState::Working, StatusState::Blocked, StatusState::Done, StatusState::Idle, StatusState::Error]
+        {
+            assert_eq!(signal_of(&noted(state), Some(true)), Some(state));
+        }
+        // 출력·입력이 있었어도 알린 상태는 그대로다.
+        assert_eq!(signal_of(&note_output(&noted(StatusState::Idle), 9900), Some(true)), Some(StatusState::Idle));
+        assert_eq!(
+            signal_of(&note_input(&noted(StatusState::Blocked), b"y\r", 9900), Some(true)),
+            Some(StatusState::Blocked)
+        );
+        // 신호가 없으면 None이다(추정은 activity_state가 맡는다).
+        assert_eq!(signal_of(&note_output(&Activity::idle(), 100), Some(true)), None);
+        assert_eq!(
+            signal_of(&note_status(&noted(StatusState::Done), &report(StatusState::Clear), 5), Some(true)),
+            None
+        );
+        // 에이전트가 아니거나 모르면 신호가 있어도 내지 않는다.
+        assert_eq!(signal_of(&noted(StatusState::Blocked), Some(false)), None);
+        assert_eq!(signal_of(&noted(StatusState::Blocked), None), None);
+    }
+
+    #[test]
+    fn test_c_agent_a5_2_esc_or_ctrl_c_alone_turns_working_or_blocked_into_idle_without_an_alert() {
+        let working = noted(StatusState::Working);
+        for key in [b"\x1b", b"\x03"] {
+            let interrupted = note_input(&working, key, 9000);
+            let signal = interrupted.signal.as_ref().expect("signal stays");
+            assert_eq!(signal.state, StatusState::Idle);
+            assert!(!signal.alert);
+            assert!(!settle(&interrupted, 20000, Some(true)).finished);
+        }
+        // 이후 오는 신호가 우선한다.
+        let resumed = note_status(&note_input(&working, b"\x1b", 9000), &self::working(), 9500);
+        assert_eq!(resumed.signal.as_ref().map(|signal| signal.state), Some(StatusState::Working));
+        // 화살표 키 시퀀스·붙여넣기·다른 키는 중단이 아니다.
+        for data in [&b"\x1b[A"[..], b"\x1b[1;5C", b"a", b"\x1b\x1b", b"text\x03", b"\x03\x03"] {
+            assert_eq!(note_input(&working, data, 9000).signal.as_ref().map(|s| s.state), Some(StatusState::Working));
+        }
+        // 권한·질문 대화창의 Esc·Ctrl+C도 중단이다(에이전트가 이때 끝남·유휴를 보내지 않는다).
+        let blocked = note_status(
+            &Activity::idle(),
+            &ProgramStatus::Report { state: StatusState::Blocked, kind: Some("permission".to_string()) },
+            0,
+        );
+        assert_eq!(note_input(&blocked, b"\x1b", 9000).signal.as_ref().map(|s| s.state), Some(StatusState::Idle));
+        // 쉬는 중·끝남·오류와 신호 없는 터미널은 그대로다.
+        for state in [StatusState::Idle, StatusState::Done, StatusState::Error] {
+            assert_eq!(note_input(&noted(state), b"\x1b", 9000).signal.as_ref().map(|s| s.state), Some(state));
+        }
+        assert!(note_input(&Activity::idle(), b"\x1b", 9000).signal.is_none());
+    }
+
+    #[test]
+    fn test_c_agent_a5_4_a_wrong_interrupt_guess_still_announces_the_real_done_by_the_working_time() {
+        let mut a = noted(StatusState::Working);
+        a = note_input(&a, b"\x1b", MIN_BUSY_MS + 1000);
+        assert_eq!(a.signal.as_ref().map(|signal| signal.state), Some(StatusState::Idle));
+        // 에이전트가 실제로는 중단하지 않고 계속 일하다 끝났다.
+        a = note_status(&a, &report(StatusState::Done), MIN_BUSY_MS + 2000);
+        assert!(settle(&a, MIN_BUSY_MS + 2500, Some(true)).finished);
+        // 짧게 일하다 중단한 뒤의 done은 알리지 않는다.
+        let mut b = noted(StatusState::Working);
+        b = note_input(&b, b"\x03", 1000);
+        b = note_status(&b, &report(StatusState::Done), 2000);
+        assert!(!settle(&b, 2500, Some(true)).finished);
+        // 끝난 뒤 다시 오는 done·idle은 낡은 일한 시간으로 또 알리지 않는다.
+        let mut c = note_status(&noted(StatusState::Working), &report(StatusState::Done), MIN_BUSY_MS + 1000);
+        c = settle(&c, MIN_BUSY_MS + 1100, Some(true)).activity;
+        c = note_status(
+            &note_status(&c, &report(StatusState::Idle), MIN_BUSY_MS + 2000),
+            &report(StatusState::Done),
+            MIN_BUSY_MS + 3000,
+        );
+        assert!(!settle(&c, MIN_BUSY_MS + 3100, Some(true)).finished);
+    }
+
+    #[test]
+    fn test_c_agent_a5_5_switching_to_another_agent_drops_the_old_signal_and_nothing_else_does() {
+        let signalled = noted(StatusState::Blocked);
+        let kept = |previous, current| note_program(&signalled, previous, current).signal.is_some();
+        assert!(!kept(Some("claude"), Some("codex")));
+        assert!(kept(Some("claude"), Some("claude")));
+        assert!(kept(Some("claude"), Some("bash")), "back to the shell is settled by `settle`");
+        assert!(kept(None, Some("claude")));
+        assert!(kept(Some("bash"), Some("codex")));
     }
 
     #[test]

@@ -1,4 +1,5 @@
 //! 창이 쥐는 Git 상태: 보이는 폴더의 저장소 읽기 결과, 파일 목록 표시 조회표, 실행 시점 판정(`Gate`), 작업 스레드 창구.
+use std::sync::mpsc::TryRecvError;
 use std::time::Instant;
 
 use paddock_core::file_marks::FileMarks;
@@ -9,7 +10,7 @@ use paddock_core::git_status::{Change, Section};
 use paddock_core::work_model::{folder_identity, folder_key, is_inside};
 
 use super::gate::{Gate, Trigger};
-use super::service::{Event, GitService, Job, WriteKind};
+use super::service::{Event, FailedJob, GitService, Job, STOPPED_NOTICE, WriteKind};
 use super::status::{RepoError, RepoStatus};
 use crate::settings::Settings;
 
@@ -44,7 +45,8 @@ pub struct GitState {
     generation: u64,
     /// 이 폴더를 본 뒤 status를 띄운 횟수(자동 점검 진단).
     n_status_runs: usize,
-    n_writes_in_flight: usize,
+    /// 작업 스레드에 보내고 결과를 기다리는 쓰기 일(보낸 차례). 작업 스레드가 오류로 멈추면 이 일들을 실패로 돌려준다.
+    writes_in_flight: Vec<WriteKind>,
     /// 커밋이 진행 중이다(훅·서명을 기다리는 동안 단추에 진행 표시를 하고 다시 누르지 못하게 한다).
     committing: bool,
     /// 변경을 감시하는 폴더. 저장소를 알면 그 루트이고, 아직 저장소가 아니면 보이는 폴더 자신이다(나중에 `git init`이 되면 `.git/HEAD` 사건으로 알아챈다).
@@ -63,7 +65,7 @@ impl Default for GitState {
             marks: FileMarks::default(),
             generation: 0,
             n_status_runs: 0,
-            n_writes_in_flight: 0,
+            writes_in_flight: Vec::new(),
             committing: false,
             watching: None,
             written: Vec::new(),
@@ -176,8 +178,18 @@ impl GitState {
         now: Instant,
     ) -> bool {
         let mut changed = false;
-        while let Some(event) = self.service.as_ref().and_then(GitService::try_recv) {
-            changed |= self.apply(event, now);
+        let mut drained = false;
+        while !drained && let Some(service) = self.service.as_ref() {
+            match service.try_recv() {
+                Ok(event) => changed |= self.apply(event, now),
+                Err(TryRecvError::Empty) => drained = true,
+                // 작업 스레드가 사라졌다(오류로 멈췄거나 만들지 못함): 기다리던 일을 모두 실패로 돌려주고 다음 일에서 새로 시작한다.
+                Err(TryRecvError::Disconnected) => {
+                    self.service = None;
+                    changed |= self.fail_all(now);
+                    drained = true;
+                }
+            }
         }
         if let Some(folder) = self.folder.clone()
             && self.gate.is_due(now)
@@ -227,7 +239,9 @@ impl GitState {
             Event::Status { .. } => {}
             Event::FsChanged => self.gate.request(Trigger::Change, now),
             Event::Written { kind, result } => {
-                self.n_writes_in_flight = self.n_writes_in_flight.saturating_sub(1);
+                if let Some(at) = self.writes_in_flight.iter().position(|pending| *pending == kind) {
+                    self.writes_in_flight.remove(at);
+                }
                 if kind == WriteKind::Commit {
                     self.committing = false;
                 }
@@ -239,6 +253,42 @@ impl GitState {
                 self.diffs.push((key, result));
                 changed = true;
             }
+            // 오류로 멈춘 일은 같은 일의 실패 결과로 바꿔 반영한다: 읽기 게이트·진행 중 쓰기·커밋 진행 표시가 풀린다.
+            Event::Failed(FailedJob::Status { folder }) => {
+                let result = Err(RepoError::Failed(STOPPED_NOTICE.to_string()));
+                changed = self.apply(Event::Status { folder, result }, now);
+            }
+            Event::Failed(FailedJob::Write { kind }) => {
+                let result = Err(STOPPED_NOTICE.to_string());
+                changed = self.apply(Event::Written { kind, result }, now);
+            }
+            Event::Failed(FailedJob::Diff { key }) => {
+                let result = Err(STOPPED_NOTICE.to_string());
+                changed = self.apply(Event::Diff { key, result }, now);
+            }
+            Event::Failed(FailedJob::Watch) => {
+                // 다음 읽기 끝에 감시를 다시 건다.
+                crate::app_log::event("git: watching the repository stopped unexpectedly");
+                self.watching = None;
+            }
+        }
+        changed
+    }
+
+    /// 작업 스레드가 사라졌을 때 기다리던 일을 실패로 돌려준다: 읽기는 `Unavailable`, 진행 중 쓰기는 실패 결과가 된다. 바뀐 것이 있으면 true다.
+    fn fail_all(
+        &mut self,
+        now: Instant,
+    ) -> bool {
+        let mut changed = false;
+        crate::app_log::event("git: the worker stopped unexpectedly");
+        self.watching = None;
+        if let Some(folder) = self.folder.clone() {
+            changed |= self.apply(Event::Failed(FailedJob::Status { folder }), now);
+        }
+        for kind in std::mem::take(&mut self.writes_in_flight) {
+            let result = Err(STOPPED_NOTICE.to_string());
+            changed |= self.apply(Event::Written { kind, result }, now);
         }
         changed
     }
@@ -250,7 +300,8 @@ impl GitState {
             Repo::NoRepository | Repo::Unavailable(_) => self.folder.clone(),
             Repo::Reading => None,
         };
-        if !self.is_wsl() && target.is_some() && target != self.watching {
+        // 작업 스레드가 사라진 동안(service가 None)은 감시를 걸지 않는다: 감시 일을 보내면 스레드가 곧바로 새로 시작된다. 다음 읽기가 시작하고 그 끝에서 건다.
+        if self.service.is_some() && !self.is_wsl() && target.is_some() && target != self.watching {
             let hidden = hidden_names(Settings::load().values());
             self.watching = target.clone();
             self.send(Job::Watch { root: target, hidden });
@@ -269,7 +320,7 @@ impl GitState {
 
     /// 쓰기가 진행 중이다(단추를 겹쳐 누르지 못하게 한다).
     pub fn is_writing(&self) -> bool {
-        self.n_writes_in_flight > 0
+        !self.writes_in_flight.is_empty()
     }
 
     /// 끝난 diff 읽기 하나를 꺼낸다.
@@ -283,7 +334,7 @@ impl GitState {
         args: Vec<String>,
     ) {
         if let Some(root) = self.ready().map(|repo| repo.root.clone()) {
-            self.n_writes_in_flight += 1;
+            self.writes_in_flight.push(kind);
             self.send(Job::Write { kind, root, args });
         }
     }
@@ -464,7 +515,7 @@ mod tests {
     }
 
     #[test]
-    fn test_c_review_4_moving_between_folders_of_the_same_repository_keeps_the_root_the_marks_and_the_gate() {
+    fn test_moving_between_folders_of_the_same_repository_keeps_the_root_the_marks_and_the_gate() {
         let _home = TempHome::new();
         let repo = TestRepo::new();
         repo.write("sub/a.txt", "1\n");
@@ -547,5 +598,53 @@ mod tests {
         let result = state.take_written().expect("a write result");
         assert_eq!((result.kind, result.result), (WriteKind::Stage, Ok(())));
         assert!(!state.is_writing());
+    }
+
+    #[test]
+    fn test_a_git_thread_that_died_makes_the_window_show_unavailable() {
+        let _home = TempHome::new();
+        let mut state = GitState::default();
+        let now = Instant::now();
+        state.show(Some("/not/read/yet"), now);
+        // 읽는 중에 작업 스레드가 사라진 상태. 대기 중인 읽기 요청을 비워, 실패 뒤의 tick이 새 읽기(실제 스레드)를 띄우지 않게 한다.
+        state.service = Some(GitService::stopped());
+        state.gate = Gate::new(false);
+        assert_eq!(*state.repo(), Repo::Reading);
+        assert!(state.tick(now), "the loss is a visible change");
+        assert!(matches!(state.repo(), Repo::Unavailable(message) if message == STOPPED_NOTICE), "{:?}", state.repo());
+    }
+
+    #[test]
+    fn test_a_git_thread_that_died_frees_the_waiting_writes_and_the_commit_marker() {
+        let _home = TempHome::new();
+        let mut state = GitState::default();
+        let now = Instant::now();
+        // 폴더가 없으면 실패 뒤의 tick이 새 읽기(실제 스레드)를 띄우지 않는다.
+        state.service = Some(GitService::stopped());
+        state.writes_in_flight.push(WriteKind::Commit);
+        state.committing = true;
+        assert!(state.is_writing() && state.is_committing());
+        assert!(state.tick(now), "the loss is a visible change");
+        assert!(!state.is_writing() && !state.is_committing());
+        let written = state.take_written().expect("the commit is reported as failed");
+        assert_eq!((written.kind, written.result), (WriteKind::Commit, Err(STOPPED_NOTICE.to_string())));
+    }
+
+    #[test]
+    fn test_a_failed_git_job_frees_the_gate_and_the_write_marker_like_a_result_would() {
+        let _home = TempHome::new();
+        let mut state = GitState::default();
+        let now = Instant::now();
+        state.show(Some("/p"), now);
+        // 일을 받지 않는 서비스: 읽기 실패 뒤의 감시 걸기가 실제 스레드를 깨우지 않는다.
+        state.service = Some(GitService::stopped());
+        state.writes_in_flight.push(WriteKind::Stage);
+        let changed = state.apply(Event::Failed(FailedJob::Write { kind: WriteKind::Stage }), now);
+        assert!(changed && !state.is_writing());
+        let changed = state.apply(Event::Failed(FailedJob::Status { folder: "/p".to_string() }), now);
+        assert!(changed);
+        assert!(matches!(state.repo(), Repo::Unavailable(_)));
+        state.apply(Event::Failed(FailedJob::Diff { key: "k".to_string() }), now);
+        assert_eq!(state.take_diff(), Some(("k".to_string(), Err(STOPPED_NOTICE.to_string()))));
     }
 }

@@ -7,7 +7,7 @@ waitstate cwd=C: @30000
 send $p = "$env:USERPROFILE\\proj-md"; mkdir "$env:USERPROFILE\\bin" -Force | Out-Null; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
 send echo READY-MD\r
 waitline READY-MD @20000
-send claude -n 300 127.0.0.1\r
+send claude.exe -n 300 127.0.0.1\r
 waitstate program=claude @20000
 waitstate row folder @20000
 waitstate files-loaded=true @10000

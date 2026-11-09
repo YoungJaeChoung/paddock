@@ -1,0 +1,25 @@
+# Fixed greeting and shutdown frames. They never change in any protocol version (see the comment on PROTOCOL_VERSION).
+# A daemon of any version must accept this hello and answer it, so an app can always greet it and stop it.
+[handshake kinds]
+HELLO 1
+HELLO_OK 101
+ERR 102
+STATUS_REQUEST 9
+STATUS 109
+SHUTDOWN 8
+BYE 10
+ERR carries plain text
+[handshake messages]
+Hello {
+  "token": "token",
+  "protocol_version": 1
+}
+HelloOk {
+  "pid": 1,
+  "fingerprint": "ff",
+  "protocol_version": 1
+}
+Status {
+  "pid": 1,
+  "n_terminals": 1
+}

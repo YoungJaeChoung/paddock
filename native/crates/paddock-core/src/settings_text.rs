@@ -31,6 +31,22 @@ pub mod key {
     pub const DEFAULT_PROFILE_MACOS: &str = "terminal.integrated.defaultProfile.osx";
     /// 파일 목록에서 숨길 이름 패턴(패턴 → 켬/끔).
     pub const FILES_EXCLUDE: &str = "files.exclude";
+    /// Work 목록과 파일 목록이 한 단계 안쪽마다 들여쓰는 폭(px, 100% 배율 기준).
+    pub const SIDEBAR_INDENT: &str = "paddock.sidebarIndent";
+    /// 터미널에서 마우스로 글자를 고르면 바로 클립보드에 복사할지(기본 끔).
+    pub const COPY_ON_SELECTION: &str = "terminal.integrated.copyOnSelection";
+    /// 상태 줄에 Claude 사용량 묶음을 보일지(기본 켬). 끄면 묶음만 숨긴다.
+    pub const STATUS_BAR_CLAUDE: &str = "paddock.statusBar.claude";
+    /// 상태 줄에 Codex 사용량 묶음을 보일지(기본 켬).
+    pub const STATUS_BAR_CODEX: &str = "paddock.statusBar.codex";
+    /// 상태 줄에 Memory 묶음을 보일지(기본 켬).
+    pub const STATUS_BAR_MEMORY: &str = "paddock.statusBar.memory";
+    /// 메모리가 부족할 때 Claude Code 에이전트에게 알리는 훅을 Paddock 전용 Claude 설정에 넣을지(기본 끔).
+    pub const MEMORY_NOTICE: &str = "paddock.agents.memoryNotice";
+    /// 메모리 안내를 붙이는 가용 메모리 기준(MB, 기본 4096). 0이면 늘 조용하다.
+    pub const MEMORY_NOTICE_MINIMUM_MB: &str = "paddock.agents.memoryNoticeMinimumMb";
+    /// WSL 일반 터미널의 `claude`가 Paddock 실행 래퍼를 거치게 `~/.bashrc`에 줄을 넣을지(`ask`·`on`·`off`, 기본 `ask`).
+    pub const WSL_CLAUDE_LAUNCHER: &str = "paddock.wsl.claudeLauncher";
 }
 
 /// 빠른 설정이 받아들이는 값의 범위.
@@ -41,6 +57,14 @@ pub mod limit {
     pub const FONT_SIZE_DEFAULT: u32 = 14;
     pub const ZOOM_MIN: f64 = -3.0;
     pub const ZOOM_MAX: f64 = 4.0;
+    pub const SIDEBAR_INDENT_MIN: u32 = 6;
+    pub const SIDEBAR_INDENT_MAX: u32 = 24;
+    /// 사이드바 들여쓰기 기본값(설정이 없거나 숫자가 아닐 때).
+    pub const SIDEBAR_INDENT_DEFAULT: u32 = 12;
+    /// 메모리 안내 기준(MB)의 기본값·한 칸·상한(빠른 설정 ± 단추).
+    pub const MEMORY_NOTICE_MB_DEFAULT: u32 = 4096;
+    pub const MEMORY_NOTICE_MB_STEP: u32 = 512;
+    pub const MEMORY_NOTICE_MB_MAX: u32 = 65536;
 }
 
 /// `files.exclude` 설정이 없을 때 숨기는 패턴. 기존 앱 번들 설정의 기본값과 같다.
@@ -165,6 +189,32 @@ pub fn step_font_size(
     size.saturating_add_signed(delta).clamp(limit::FONT_SIZE_MIN, limit::FONT_SIZE_MAX)
 }
 
+/// 사이드바 들여쓰기를 `delta`만큼 바꾼 값. 범위 밖으로 나가지 않는다.
+pub fn step_sidebar_indent(
+    indent: u32,
+    delta: i32,
+) -> u32 {
+    indent.saturating_add_signed(delta).clamp(limit::SIDEBAR_INDENT_MIN, limit::SIDEBAR_INDENT_MAX)
+}
+
+/// 메모리 안내 기준(MB)을 `delta`칸(한 칸 512 MB)만큼 바꾼 값. 0~65536 밖으로 나가지 않는다.
+///
+/// Examples
+/// --------
+/// | 현재  | delta | 결과  |
+/// |-------|-------|-------|
+/// | 4096  | 1     | 4608  |
+/// | 4096  | -1    | 3584  |
+/// | 0     | -1    | 0     |
+/// | 65536 | 1     | 65536 |
+pub fn step_memory_notice_mb(
+    minimum_mb: u32,
+    delta: i32,
+) -> u32 {
+    let step = i64::from(limit::MEMORY_NOTICE_MB_STEP);
+    (i64::from(minimum_mb) + i64::from(delta) * step).clamp(0, i64::from(limit::MEMORY_NOTICE_MB_MAX)) as u32
+}
+
 /// 화면 배율 단계를 `delta`만큼 바꾼 값. 소수 단계는 먼저 반올림하고 범위 밖으로 나가지 않는다.
 pub fn step_zoom_level(
     level: f64,
@@ -183,6 +233,10 @@ pub struct Appearance {
     pub terminal_font_family: Option<String>,
     /// 창 틀 글꼴. 없으면 플랫폼 기본이다.
     pub interface_font_family: Option<String>,
+    /// Work 목록과 파일 목록의 한 단계 들여쓰기(px, 100% 배율 기준).
+    pub sidebar_indent: u32,
+    /// 터미널에서 고른 글자를 바로 복사한다.
+    pub copy_on_selection: bool,
 }
 
 /// 다시 열 때 지난 터미널을 되살릴지.
@@ -291,6 +345,25 @@ pub fn try_parse_settings(text: &str) -> Option<Map<String, Value>> {
     }
 }
 
+/// WSL 일반 터미널의 `claude` 실행 래퍼 설정. `Ask`는 아직 묻지 않았다는 뜻이다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WslClaudeLauncherSetting {
+    Ask,
+    On,
+    Off,
+}
+
+impl WslClaudeLauncherSetting {
+    /// 설정 파일에 쓰는 글자.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ask => "ask",
+            Self::On => "on",
+            Self::Off => "off",
+        }
+    }
+}
+
 /// 두 설정 파일의 내용.
 #[derive(Debug, Default)]
 pub struct SettingValues {
@@ -338,6 +411,76 @@ impl SettingValues {
             .clamp(limit::FONT_SIZE_MIN, limit::FONT_SIZE_MAX)
     }
 
+    /// 사이드바 들여쓰기(px). 범위(6~24) 밖은 가까운 끝으로 맞추고, 설정이 없거나 숫자가 아니거나 0이면 12다.
+    ///
+    /// Examples
+    /// --------
+    /// | 설정 값 | 결과 |
+    /// |---------|------|
+    /// | (없음)  | 12   |
+    /// | 20      | 20   |
+    /// | 3 · 99  | 6 · 24 |
+    /// | 0 · `"wide"` | 12 |
+    pub fn sidebar_indent(&self) -> u32 {
+        self.get(key::SIDEBAR_INDENT)
+            .and_then(Value::as_f64)
+            .filter(|indent| indent.is_finite() && *indent != 0.0)
+            .map_or(limit::SIDEBAR_INDENT_DEFAULT, |indent| indent.round() as u32)
+            .clamp(limit::SIDEBAR_INDENT_MIN, limit::SIDEBAR_INDENT_MAX)
+    }
+
+    /// 터미널에서 고른 글자를 바로 복사할지. 설정이 없거나 불리언이 아니면 끈다.
+    pub fn copy_on_selection(&self) -> bool {
+        self.get(key::COPY_ON_SELECTION).and_then(Value::as_bool).unwrap_or(false)
+    }
+
+    /// 상태 줄 항목(`key::STATUS_BAR_*`)을 보일지. 설정이 없거나 불리언이 아니면 켠다.
+    ///
+    /// Examples
+    /// --------
+    /// | 설정 값            | 결과  |
+    /// |--------------------|-------|
+    /// | (없음)             | true  |
+    /// | `false`            | false |
+    /// | `"no"`             | true  |
+    pub fn status_item(
+        &self,
+        item_key: &str,
+    ) -> bool {
+        self.get(item_key).and_then(Value::as_bool).unwrap_or(true)
+    }
+
+    /// 메모리 안내를 켰는지. 설정이 없거나 불리언이 아니면 끈다.
+    pub fn memory_notice(&self) -> bool {
+        self.get(key::MEMORY_NOTICE).and_then(Value::as_bool).unwrap_or(false)
+    }
+
+    /// 메모리 안내의 가용 메모리 기준(MB). 숫자가 아니거나 음수이면 기본 4096이고, 소수는 내린다.
+    ///
+    /// Examples
+    /// --------
+    /// | 설정 값   | 결과 |
+    /// |-----------|------|
+    /// | (없음)    | 4096 |
+    /// | `2048`    | 2048 |
+    /// | `1.9`     | 1    |
+    /// | `-5`·`"x"`| 4096 |
+    pub fn memory_notice_minimum_mb(&self) -> u32 {
+        self.get(key::MEMORY_NOTICE_MINIMUM_MB)
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite() && *value >= 0.0)
+            .map_or(limit::MEMORY_NOTICE_MB_DEFAULT, |value| value.floor().min(u32::MAX as f64) as u32)
+    }
+
+    /// WSL `claude` 실행 래퍼 설정(`ask`·`on`·`off`). 없거나 모르는 값이면 `ask`다.
+    pub fn wsl_claude_launcher(&self) -> WslClaudeLauncherSetting {
+        match self.get(key::WSL_CLAUDE_LAUNCHER).and_then(Value::as_str) {
+            Some("on") => WslClaudeLauncherSetting::On,
+            Some("off") => WslClaudeLauncherSetting::Off,
+            _ => WslClaudeLauncherSetting::Ask,
+        }
+    }
+
     /// 이 운영체제의 기본 셸 프로필 이름. 없거나 문자열이 아니면 None이다.
     pub fn default_profile(&self) -> Option<&str> {
         self.get(default_profile_key()).and_then(Value::as_str)
@@ -375,6 +518,8 @@ impl SettingValues {
                 .map(str::trim)
                 .filter(|name| !name.is_empty())
                 .map(str::to_string),
+            sidebar_indent: self.sidebar_indent(),
+            copy_on_selection: self.copy_on_selection(),
         }
     }
 
@@ -436,6 +581,56 @@ mod tests {
         assert_eq!(SettingValues::from_texts(always, never).restore_on_restart(), RestoreOnRestart::Always);
         assert_eq!(SettingValues::from_texts(never, always).restore_on_restart(), RestoreOnRestart::Never);
     }
+    #[test]
+    fn test_c_d79_the_memory_notice_limit_steps_by_512_inside_zero_and_65536() {
+        assert_eq!(step_memory_notice_mb(4096, 1), 4608);
+        assert_eq!(step_memory_notice_mb(4096, -1), 3584);
+        assert_eq!(step_memory_notice_mb(0, -1), 0);
+        assert_eq!(step_memory_notice_mb(65536, 1), 65536);
+        assert_eq!(step_memory_notice_mb(300, -1), 0);
+    }
+
+    #[test]
+    fn test_c_d79_the_memory_notice_settings_default_to_off_4096_and_ask() {
+        let read = |native: &str| SettingValues::from_texts(native, "");
+        assert!(!read("").memory_notice());
+        assert!(read(r#"{"paddock.agents.memoryNotice": true}"#).memory_notice());
+        assert!(!read(r#"{"paddock.agents.memoryNotice": "yes"}"#).memory_notice());
+        assert_eq!(read("").memory_notice_minimum_mb(), 4096);
+        assert_eq!(read(r#"{"paddock.agents.memoryNoticeMinimumMb": 2048}"#).memory_notice_minimum_mb(), 2048);
+        assert_eq!(read(r#"{"paddock.agents.memoryNoticeMinimumMb": 1.9}"#).memory_notice_minimum_mb(), 1);
+        assert_eq!(read(r#"{"paddock.agents.memoryNoticeMinimumMb": -5}"#).memory_notice_minimum_mb(), 4096);
+        assert_eq!(read(r#"{"paddock.agents.memoryNoticeMinimumMb": "x"}"#).memory_notice_minimum_mb(), 4096);
+        assert_eq!(read(r#"{"paddock.agents.memoryNoticeMinimumMb": 0}"#).memory_notice_minimum_mb(), 0);
+        assert_eq!(read("").wsl_claude_launcher(), WslClaudeLauncherSetting::Ask);
+        assert_eq!(read(r#"{"paddock.wsl.claudeLauncher": "on"}"#).wsl_claude_launcher(), WslClaudeLauncherSetting::On);
+        assert_eq!(
+            read(r#"{"paddock.wsl.claudeLauncher": "off"}"#).wsl_claude_launcher(),
+            WslClaudeLauncherSetting::Off
+        );
+        assert_eq!(
+            read(r#"{"paddock.wsl.claudeLauncher": "maybe"}"#).wsl_claude_launcher(),
+            WslClaudeLauncherSetting::Ask
+        );
+    }
+
+    #[test]
+    fn test_c_d79_status_bar_items_are_on_unless_a_setting_turns_one_off() {
+        let read = |native: &str, legacy: &str, item: &str| SettingValues::from_texts(native, legacy).status_item(item);
+        assert!(read("", "", key::STATUS_BAR_CLAUDE));
+        assert!(!read("", r#"{"paddock.statusBar.codex": false}"#, key::STATUS_BAR_CODEX));
+        assert!(read(
+            r#"{"paddock.statusBar.codex": true}"#,
+            r#"{"paddock.statusBar.codex": false}"#,
+            key::STATUS_BAR_CODEX
+        ));
+        assert!(read(r#"{"paddock.statusBar.memory": "no"}"#, "", key::STATUS_BAR_MEMORY));
+        assert!(
+            read("", r#"{"paddock.statusBar.claude": false}"#, key::STATUS_BAR_MEMORY),
+            "one item does not turn off another"
+        );
+    }
+
     #[test]
     fn test_try_parse_settings_tells_broken_files_from_empty_ones() {
         assert_eq!(try_parse_settings("  \n"), Some(Map::new()));
@@ -549,5 +744,36 @@ mod tests {
         assert_eq!(step_zoom_level(2.6, 1), 4.0, "a fractional level rounds first");
         assert_eq!(step_zoom_level(limit::ZOOM_MAX, 1), limit::ZOOM_MAX);
         assert_eq!(step_zoom_level(limit::ZOOM_MIN, -1), limit::ZOOM_MIN);
+    }
+
+    #[test]
+    fn test_c_sync_6_sidebar_indent_defaults_to_12_and_is_kept_inside_6_to_24() {
+        let indent = |text: &str| SettingValues::from_texts(text, "").sidebar_indent();
+        assert_eq!(indent(""), 12);
+        assert_eq!(indent(r#"{"paddock.sidebarIndent": 20}"#), 20);
+        assert_eq!(indent(r#"{"paddock.sidebarIndent": 3}"#), 6);
+        assert_eq!(indent(r#"{"paddock.sidebarIndent": 99}"#), 24);
+        assert_eq!(indent(r#"{"paddock.sidebarIndent": 0}"#), 12);
+        assert_eq!(indent(r#"{"paddock.sidebarIndent": "wide"}"#), 12);
+        // 기존 앱 설정 파일의 값이 기본값이고 네이티브 값이 먼저다.
+        let old = r#"{"paddock.sidebarIndent": 16}"#;
+        assert_eq!(SettingValues::from_texts("", old).appearance().sidebar_indent, 16);
+        assert_eq!(SettingValues::from_texts(r#"{"paddock.sidebarIndent": 8}"#, old).sidebar_indent(), 8);
+        assert_eq!(step_sidebar_indent(12, 1), 13);
+        assert_eq!(step_sidebar_indent(limit::SIDEBAR_INDENT_MAX, 1), limit::SIDEBAR_INDENT_MAX);
+        assert_eq!(step_sidebar_indent(limit::SIDEBAR_INDENT_MIN, -1), limit::SIDEBAR_INDENT_MIN);
+    }
+
+    #[test]
+    fn test_c_sync_7_copy_on_selection_is_off_unless_the_setting_is_a_true_boolean() {
+        let on = |text: &str| SettingValues::from_texts(text, "").copy_on_selection();
+        assert!(!on(""));
+        assert!(on(r#"{"terminal.integrated.copyOnSelection": true}"#));
+        assert!(!on(r#"{"terminal.integrated.copyOnSelection": "yes"}"#));
+        assert!(
+            SettingValues::from_texts("", r#"{"terminal.integrated.copyOnSelection": true}"#)
+                .appearance()
+                .copy_on_selection
+        );
     }
 }

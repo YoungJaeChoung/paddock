@@ -56,6 +56,22 @@ test('C-wrapper.3: 플래그 파일이 없으면 인자를 붙이지 않고 그�
     assert.equal(result.stdout.trim(), 'REAL|--version');
 });
 
+test('C-wrapper.10: 첫 인자가 remote-control이면 플래그 파일이 있어도 --settings 없이 넘기고, 다른 자리의 remote-control에는 붙인다', { skip: process.platform === 'win32' }, context => {
+    const root = folder(context);
+    const bin = path.join(root, 'bin');
+    const real = path.join(root, 'real');
+    fakeClaude(real);
+    const flagFile = path.join(root, 'flag.json');
+    fs.writeFileSync(flagFile, '{}');
+    installClaudeWrapper({ directory: bin, kind: 'sh', flagFile });
+    const environment = { PATH: `${bin}:${real}:/usr/bin:/bin` };
+    const server = spawnSync('claude', ['remote-control', '--name', 'my pc'], { encoding: 'utf8', env: environment, timeout: 10000 });
+    assert.equal(server.stdout.trim(), 'REAL|remote-control --name my pc');
+    // 대화 세션의 --remote-control 플래그와 프롬프트 속 단어는 하위 명령이 아니므로 --settings가 그대로 붙는다.
+    const session = spawnSync('claude', ['--remote-control', 'remote-control'], { encoding: 'utf8', env: environment, timeout: 10000 });
+    assert.equal(session.stdout.trim(), `REAL|--settings ${flagFile} --remote-control remote-control`);
+});
+
 test('C-wrapper.4: 진짜 claude가 PATH에 없으면 래퍼 자신이 아니라 not found로 끝난다', { skip: process.platform === 'win32' }, context => {
     const root = folder(context);
     const bin = path.join(root, 'bin');
@@ -87,6 +103,8 @@ test('C-wrapper.6: cmd 래퍼는 자기 폴더를 PATH에서 빼고 플래그 �
     assert.ok(script.includes('set "PATH=%PATH:C:\\Users\\me\\.paddock\\config\\bin;=%"'));
     assert.ok(script.includes('set "PATH=%PATH:;C:\\Users\\me\\.paddock\\config\\bin=%"'));
     assert.ok(script.includes('if not exist "C:\\Users\\me\\.paddock\\config\\claude\\flag-settings.json" goto plain'));
+    // claude remote-control is passed through without --settings, checked before the flag file.
+    assert.ok(script.includes('\r\nif /i "%~1"=="remote-control" goto plain\r\nif not exist '));
     assert.ok(script.includes('"%real%" --settings "C:\\Users\\me\\.paddock\\config\\claude\\flag-settings.json" %*'));
     assert.ok(script.includes('\r\n"%real%" %*\r\n'));
     // A claude that turns out to be this file is skipped, and finding nothing else stops with a message instead of looping.

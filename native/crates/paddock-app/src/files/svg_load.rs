@@ -95,7 +95,7 @@ mod tests {
     }
 
     #[test]
-    fn test_c_review_1_an_svg_draws_and_reports_its_natural_size() {
+    fn test_an_svg_draws_and_reports_its_natural_size() {
         let (pixels, original) = rasterize(red_square_with("").as_bytes()).unwrap();
         assert_eq!(original, (20, 10));
         assert_eq!((pixels.width, pixels.height), (40, 20));
@@ -103,7 +103,7 @@ mod tests {
     }
 
     #[test]
-    fn test_c_review_1_image_hrefs_that_name_files_or_shares_are_refused_never_read() {
+    fn test_image_hrefs_that_name_files_or_shares_are_refused_never_read() {
         let refused = Arc::new(Mutex::new(Vec::new()));
         let hrefs = [
             r"\\attacker\share\x.png",
@@ -126,7 +126,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn test_c_review_1_an_href_naming_a_fifo_does_not_hang_the_drawing() {
+    fn test_an_href_naming_a_fifo_does_not_hang_the_drawing() {
         let dir = tempfile::tempdir().unwrap();
         let fifo = dir.path().join("pipe.png");
         let path = std::ffi::CString::new(fifo.to_string_lossy().as_bytes()).unwrap();
@@ -139,7 +139,7 @@ mod tests {
     }
 
     #[test]
-    fn test_c_review_1_a_data_url_image_is_not_sent_to_the_string_resolver() {
+    fn test_a_data_url_image_is_not_sent_to_the_string_resolver() {
         // 1×1 투명 PNG.
         let png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
         let refused = Arc::new(Mutex::new(Vec::new()));

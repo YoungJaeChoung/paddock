@@ -11,8 +11,8 @@ use gpui_kit::{
     ScrollWheelEvent, Size, StatefulInteractiveElement, Styled, StyledImage, Window, canvas, div, img, point, px,
 };
 use paddock_core::pdf_view::{
-    CACHE_PAGES, PAGE_GAP, PageSlot, fit_percent, is_still_wanted, page_pixels, page_text, pages_to_drop,
-    pages_to_hold, should_request, visible_pages, zoom_in, zoom_out,
+    CACHE_PAGES, PAGE_GAP, PageSlot, fit_percent, is_current_document, is_still_wanted, page_pixels, page_text,
+    pages_to_drop, pages_to_hold, should_request, visible_pages, zoom_in, zoom_out,
 };
 use paddock_core::theme::pdf_view as size;
 
@@ -57,6 +57,8 @@ pub struct PdfView {
     n_renders: usize,
     last_render_ms: u128,
     graveyard: Graveyard,
+    /// 열어 둔 문서의 세대. `replace`마다 오르며, 옛 문서로 시작한 그리기 결과를 가려내는 데 쓴다.
+    generation: u64,
 }
 
 impl PdfView {
@@ -81,6 +83,7 @@ impl PdfView {
             n_renders: 0,
             last_render_ms: 0,
             graveyard,
+            generation: 0,
         }
     }
 
@@ -168,15 +171,18 @@ impl PdfView {
         cx.notify();
     }
 
+    /// 보기 영역의 크기를 기억한다. 바뀌었으면 true다.
     fn set_pane(
         &mut self,
         pane: Size<Pixels>,
         cx: &mut Context<Self>,
-    ) {
-        if self.pane != pane {
+    ) -> bool {
+        let changed = self.pane != pane;
+        if changed {
             self.pane = pane;
             cx.notify();
         }
+        changed
     }
 
     /// 쪽마다 지금 배율에서 보이는 높이(`zoom` 배율을 곱하기 전, 논리 px).
@@ -202,7 +208,7 @@ impl PdfView {
         cx: &mut Context<Self>,
     ) {
         if self.pending.insert((page, drawing_percent)) {
-            let (document, wanted) = (self.document.clone(), self.wanted.clone());
+            let (document, wanted, generation) = (self.document.clone(), self.wanted.clone(), self.generation);
             cx.spawn_in(window, async move |this, cx| {
                 let started = Instant::now();
                 let outcome = cx
@@ -220,15 +226,32 @@ impl PdfView {
                     })
                     .await;
                 let elapsed = started.elapsed().as_millis();
-                let _ =
-                    this.update_in(cx, |this, _window, cx| this.finish(page, drawing_percent, outcome, elapsed, cx));
+                let _ = this.update_in(cx, |this, _window, cx| {
+                    this.finish(page, drawing_percent, generation, outcome, elapsed, cx)
+                });
             })
             .detach();
         }
     }
 
     /// 그려 낸 쪽을 캐시에 넣는다. 그리지 못했으면 실패로 기억하고, 건너뛴 쪽은 아무것도 남기지 않는다.
+    /// `generation`은 그리기를 시킬 때의 문서 세대다. 그사이 문서가 바뀌었으면 결과를 버린다(새 문서의 같은 쪽 번호에 들어가면 안 된다).
     fn finish(
+        &mut self,
+        page: usize,
+        drawing_percent: u32,
+        generation: u64,
+        outcome: Outcome,
+        elapsed_ms: u128,
+        cx: &mut Context<Self>,
+    ) {
+        if is_current_document(generation, self.generation) {
+            self.store(page, drawing_percent, outcome, elapsed_ms, cx);
+        }
+    }
+
+    /// 현재 문서의 그리기 결과를 반영한다(`finish`가 세대를 확인한 뒤 부른다).
+    fn store(
         &mut self,
         page: usize,
         drawing_percent: u32,
@@ -289,6 +312,7 @@ impl PdfView {
         }
         self.failed.clear();
         self.pending.clear();
+        self.generation += 1;
         self.document = document;
         self.file_size = file_size;
         cx.notify();
@@ -403,7 +427,13 @@ impl Render for PdfView {
                     .relative()
                     .child(
                         canvas(
-                            move |bounds, _window, cx| entity.update(cx, |view, cx| view.set_pane(bounds.size, cx)),
+                            move |bounds, window, cx| {
+                                // 칸 크기는 배치가 끝나야 알 수 있다. 그리는 도중의 알림만으로는 다음 프레임이 보장되지 않아
+                                // (놀고 있는 창은 다른 이유로 다시 그릴 때까지 빈 종이로 남는다) 바뀌었으면 다음 프레임에 다시 그리도록 맡긴다.
+                                if entity.update(cx, |view, cx| view.set_pane(bounds.size, cx)) {
+                                    window.on_next_frame(|window, _| window.refresh());
+                                }
+                            },
                             |_, _, _, _| {},
                         )
                         .absolute()

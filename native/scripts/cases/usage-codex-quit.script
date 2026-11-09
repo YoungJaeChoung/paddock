@@ -1,0 +1,6 @@
+# 앱이 끝날 때 아직 도는 Codex 조회의 자식 프로세스를 남기지 않는다(덩어리 29): 가짜 app-server가 답하지 않는 동안 앱을 끝낸다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+waitstate reading=yes @10000
+wait 2500
+quit

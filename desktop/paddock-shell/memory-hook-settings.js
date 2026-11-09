@@ -140,6 +140,7 @@ function setMemoryNotice(
 
 module.exports = {
     MemoryHook,
+    shellQuote,
     memoryHookCommand,
     isMemoryHookCommand,
     installMemoryHook,

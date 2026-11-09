@@ -1,0 +1,37 @@
+# 메모리(폴더 검색): 항목 1,000개 폴더에서 일치 2,500줄짜리 파일을 검색해 결과 2,000건(상한)이 보이는 채로 20초 쉰 뒤 Private 메모리와 그래픽 메모리를 잰다.
+# 검색 보기가 없는 기준 exe에도 같은 대본을 돌려(알 수 없는 `act`는 무시된다) 앱 증가분을 비교한다. 같은 실행 안의 열기 전·결과 보임·닫은 뒤를 본다.
+# 임시 홈에 prep-search-big.sh로 proj-big 폴더를 채우고 기본 셸을 PowerShell로 둔다. 실행 이름은 memory-search다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+mem start-1-terminal
+gpumem start-1-terminal
+send $p = "$env:USERPROFILE\\proj-big"; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo READY-BIG\r
+waitline READY-BIG @60000
+send claude.exe -n 60 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 5000
+mem before-search
+gpumem before-search
+key ctrl-shift-f
+wait 1000
+act search needle
+wait 20000
+state search-results
+mem results-20s
+gpumem results-20s
+shot memory-search
+wait 5000
+mem results-25s
+gpumem results-25s
+key ctrl-shift-f
+wait 500
+wait 600
+wait 600
+wait 8000
+mem after-close
+gpumem after-close
+quit

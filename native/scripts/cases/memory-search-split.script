@@ -1,0 +1,42 @@
+# 메모리(폴더 검색 단계별): 검색 보기를 연 것·결과 0건 검색·결과 2,000건·닫은 뒤를 나눠 재서 닫은 뒤 남는 Rust 쪽 보유(RustLiveMB)의 원인을 가른다.
+# 열기 전 → 연 뒤(질의 없음) → 0건 검색 → 닫은 뒤 → 다시 열고 2,000건 → 닫은 뒤를 gpumem으로 잰다. 임시 홈에 prep-search-big.sh로 proj-big을 채우고 기본 셸을 PowerShell로 둔다. 실행 이름은 memory-search-split이다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-big"; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo READY-BIG\r
+waitline READY-BIG @60000
+send claude.exe -n 60 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 5000
+gpumem s0-before
+key ctrl-shift-f
+wait 3000
+gpumem s1-opened
+act search zzznomatchzzz
+waitstate n_results=0 n_files=0 capped=n state=done @30000
+wait 3000
+gpumem s2-zero-results
+key ctrl-shift-f
+wait 4000
+gpumem s3-closed-after-zero
+key ctrl-shift-f
+wait 800
+act search needle
+waitstate n_results=2000 n_files=1 capped=y state=done @60000
+wait 4000
+gpumem s4-results-2000
+key ctrl-shift-f
+wait 4000
+gpumem s5-closed-after-results
+key ctrl-shift-f
+wait 800
+act search needle
+waitstate n_results=2000 n_files=1 capped=y state=done @60000
+wait 3000
+key ctrl-shift-f
+wait 4000
+gpumem s6-closed-second
+quit

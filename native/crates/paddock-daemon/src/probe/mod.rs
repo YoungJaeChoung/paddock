@@ -11,7 +11,7 @@ mod linux;
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-mod wsl;
+pub(crate) mod wsl;
 
 /// 조사할 터미널 하나.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -46,8 +46,11 @@ pub struct Reading {
     pub distribution: String,
     /// 앞쪽 프로세스 번호. 알 수 없으면 None.
     pub pid: Option<u32>,
-    /// 앞쪽 프로세스의 시작 시각(ms, 1970년 기준). 알 수 없으면 None.
+    /// 앞쪽 프로세스의 시작 시각(ms, 1970년 기준). 알 수 없으면 None. WSL은 시계가 어긋날 수 있어 알리지 않는다.
     pub started_at: Option<u64>,
+    /// 앞쪽 프로세스가 같은 프로세스인지 비교하는 표지. 같은 환경에서 읽은 값끼리만 비교한다:
+    /// Linux·Windows 네이티브는 `started_at`과 같고, WSL은 부팅 뒤 시작 tick이다. 알 수 없으면 None.
+    pub start_mark: Option<u64>,
     /// WSL 안에서 읽은 앞쪽 프로세스의 Claude sessions 기록 본문. 읽지 못했으면 None.
     pub session_record: Option<String>,
 }

@@ -1,0 +1,77 @@
+# 파일 편집·저장(덩어리 25): 고치면 탭에 점·상태 줄에 `Unsaved changes` + `Save`가 보이고, Ctrl+S로 저장하면 BOM·줄바꿈(CRLF/LF)이 그대로 되살아 디스크에 쓰인다.
+# 저장하는 동안 더 고친 글자는 저장하지 않은 채로 남는다. UTF-8이 아닌 파일·Markdown 미리보기만 보는 탭은 읽기 전용이다. 터미널이 활성일 때 Ctrl+S·Ctrl+G는 PTY로 간다.
+# 바이트 확인은 둘째 터미널에서 PowerShell로 읽어 `HEX-…` 줄로 찍는다. 이 대본은 실행 이름이 file-edit일 때 임시 홈 경로(C:/Temp/pdk-run/home-file-edit)를 쓴다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-edit"; mkdir $p, "$env:USERPROFILE\\bin" -Force | Out-Null; [IO.File]::WriteAllBytes("$p\\a-crlf.txt", [byte[]](0xEF,0xBB,0xBF) + [Text.Encoding]::UTF8.GetBytes("one`r`ntwo`r`n")); [IO.File]::WriteAllText("$p\\b-lf.txt", "one`ntwo`n"); [IO.File]::WriteAllText("$p\\c.md", "# Title`r`n`r`nbody`r`n"); [IO.File]::WriteAllBytes("$p\\d-latin1.txt", [byte[]](0x63,0x61,0x66,0xE9,0x0A)); Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo READY-EDIT\r
+waitline READY-EDIT @30000
+send claude.exe -n 900 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+# --- CRLF + BOM 파일: 끝에 `x`, Enter, `y`를 치면 저장 뒤 BOM + CRLF가 그대로이고 Enter가 CRLF가 된다.
+act openpath C:/Temp/pdk-run/home-file-edit/proj-edit/a-crlf.txt
+waitstate kind=text state=text @10000
+state opened-crlf
+key ctrl-end
+text x
+key enter
+text y
+waitstate unsaved=yes @3000
+waitstate status-save=unsaved @3000
+state edited-crlf
+shot edited
+key ctrl-s
+waitstate unsaved=no @5000
+waitstate status-save=saved @3000
+state saved-crlf
+shot saved
+send $x = [BitConverter]::ToString([IO.File]::ReadAllBytes("$env:USERPROFILE\\proj-edit\\a-crlf.txt")); if ($x -eq 'EF-BB-BF-6F-6E-65-0D-0A-74-77-6F-0D-0A-78-0D-0A-79') { Write-Host ("SA" + "ME-A") } else { Write-Host ("DI" + "FF-A " + $x) }\r
+waitline SAME-A @10000
+# `Saved`는 2초 뒤에 사라진다.
+waitstate status-save=- @5000
+state saved-gone
+# --- LF 파일: 저장해도 LF 그대로다.
+act openpath C:/Temp/pdk-run/home-file-edit/proj-edit/b-lf.txt
+waitstate file-view kind=text state=text lines=2 @10000
+key ctrl-end
+text z
+waitstate unsaved=yes @3000
+key ctrl-s
+waitstate unsaved=no @5000
+send $x = [BitConverter]::ToString([IO.File]::ReadAllBytes("$env:USERPROFILE\\proj-edit\\b-lf.txt")); if ($x -eq '6F-6E-65-0A-74-77-6F-0A-7A') { Write-Host ("SA" + "ME-B") } else { Write-Host ("DI" + "FF-B " + $x) }\r
+waitline SAME-B @10000
+# --- Ctrl+S는 고친 게 없으면 아무것도 쓰지 않는다(수정 시각이 그대로).
+key ctrl-s
+wait 500
+state clean-save
+# --- UTF-8이 아닌 파일은 읽기 전용: 글자를 쳐도 바뀌지 않고 점도 없다.
+act openpath C:/Temp/pdk-run/home-file-edit/proj-edit/d-latin1.txt
+waitstate file-view kind=text state=text @10000
+state latin1
+text zzz
+key ctrl-s
+wait 500
+state latin1-after
+send $x = [BitConverter]::ToString([IO.File]::ReadAllBytes("$env:USERPROFILE\\proj-edit\\d-latin1.txt")); if ($x -eq '63-61-66-E9-0A') { Write-Host ("SA" + "ME-D") } else { Write-Host ("DI" + "FF-D " + $x) }\r
+waitline SAME-D @10000
+# --- Markdown 원문 편집: 원문 보기에서 고치고 저장하면 CRLF가 그대로다.
+act openpath C:/Temp/pdk-run/home-file-edit/proj-edit/c.md
+waitstate state=markdown @10000
+act mdview file
+wait 800
+act focusfile
+key ctrl-end
+text !
+waitstate unsaved=yes @3000
+key ctrl-s
+waitstate unsaved=no @5000
+send $x = [BitConverter]::ToString([IO.File]::ReadAllBytes("$env:USERPROFILE\\proj-edit\\c.md")); if ($x -eq '23-20-54-69-74-6C-65-0D-0A-0D-0A-62-6F-64-79-0D-0A-21') { Write-Host ("SA" + "ME-M") } else { Write-Host ("DI" + "FF-M " + $x) }\r
+waitline SAME-M @10000
+state markdown-saved
+state final
+quit

@@ -7,6 +7,7 @@ use gpui_kit::{
     Context, Entity, FocusHandle, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement, Styled,
     Window, div,
 };
+use paddock_core::entry_name::{EntryNameCheck, validate_entry_name};
 use paddock_core::theme::{dialog as dialog_size, files_header, rename, text};
 
 use crate::chrome::{ButtonKind, button, dialog, zpx};
@@ -19,6 +20,7 @@ pub fn rename_title(target: &RenameTarget) -> &'static str {
     match target {
         RenameTarget::Terminal(_) => "Rename terminal",
         RenameTarget::Folder(_) => "Rename in list",
+        RenameTarget::Entry { is_dir, .. } => paddock_core::file_tree::rename_title(*is_dir),
     }
 }
 
@@ -29,7 +31,16 @@ pub fn rename_dialog(
     focus: &FocusHandle,
     cx: &mut Context<WorkWindow>,
 ) -> impl IntoElement {
-    name_dialog(rename_title(target), input, None, true, focus, WorkWindow::commit_rename, cx)
+    // 파일·폴더 이름은 새 이름 규칙을 따른다: 어긋나면 이유가 보이고 OK가 흐리다. 아직 비어 있으면 이유 없이 OK만 흐리다.
+    let (reason, enabled) = match target {
+        RenameTarget::Entry { .. } => match validate_entry_name(&input.read(cx).value()) {
+            EntryNameCheck::Valid => (None, true),
+            EntryNameCheck::Empty => (None, false),
+            EntryNameCheck::Invalid(reason) => (Some(reason), false),
+        },
+        RenameTarget::Terminal(_) | RenameTarget::Folder(_) => (None, true),
+    };
+    name_dialog(rename_title(target), input, reason, enabled, focus, WorkWindow::commit_rename, cx)
 }
 
 /// 입력칸 하나로 이름을 받는 창(이름 바꾸기·새 파일·새 폴더). `reason`이 있으면 입력칸 아래에 보인다. `confirm_enabled`가 거짓이면 OK 단추가 흐려져 눌리지 않는다.

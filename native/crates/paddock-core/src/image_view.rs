@@ -20,6 +20,9 @@ pub const INLINE_SOURCE_PIXELS: u64 = 16_000_000;
 /// 세로(가로)가 가로(세로)의 이 배수 이상이면 긴 그림이다: 칸에 통째로 맞추면 글자 수준으로 작아지므로 짧은 쪽에 맞추고 긴 쪽은 스크롤한다.
 pub const LONG_ASPECT: f32 = 3.0;
 
+/// 1:1로 볼 때 원본을 나누는 조각의 한 변(px). 보이는 조각만 그래픽 메모리에 올려, 큰 이미지를 통째로 한 번에 올리는 일을 피한다.
+pub const TILE_SIDE: u32 = 512;
+
 /// 이미지를 칸에서 보이는 방식.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Zoom {
@@ -143,6 +146,59 @@ pub fn display_size(
     (width * scale, height * scale)
 }
 
+/// 1:1 조각의 가로·세로 칸 수. 가로세로는 1 이상으로 본다.
+///
+/// Examples
+/// --------
+/// | 이미지        | 결과   |
+/// |---------------|--------|
+/// | 1920 × 1080   | (4, 3) |
+/// | 512 × 512     | (1, 1) |
+pub fn tile_counts(image: (u32, u32)) -> (u32, u32) {
+    (image.0.max(1).div_ceil(TILE_SIDE), image.1.max(1).div_ceil(TILE_SIDE))
+}
+
+/// 조각 (`col`, `row`)이 이미지에서 차지하는 영역 (x, y, 가로, 세로). 오른쪽·아래 끝 조각은 `TILE_SIDE`보다 짧다.
+///
+/// Examples
+/// --------
+/// | 이미지        | 칸     | 결과                |
+/// |---------------|--------|---------------------|
+/// | 1920 × 1080   | (0, 0) | (0, 0, 512, 512)    |
+/// | 1920 × 1080   | (3, 2) | (1536, 1024, 384, 56) |
+pub fn tile_rect(
+    image: (u32, u32),
+    col: u32,
+    row: u32,
+) -> (u32, u32, u32, u32) {
+    let (x, y) = (col * TILE_SIDE, row * TILE_SIDE);
+    (x, y, TILE_SIDE.min(image.0.max(1).saturating_sub(x)), TILE_SIDE.min(image.1.max(1).saturating_sub(y)))
+}
+
+/// 이미지 좌표의 창 `window`(x, y, 가로, 세로: 이미지 픽셀)와 겹치는 조각의 (가로 칸 범위, 세로 칸 범위). 닿기만 하는 조각은 뺀다.
+/// 창이 이미지를 벗어난 부분은 잘라 보고, 이미지와 전혀 겹치지 않으면 빈 범위다.
+///
+/// Examples
+/// --------
+/// | 이미지        | 창                    | 결과          |
+/// |---------------|-----------------------|---------------|
+/// | 3840 × 2160   | (0, 0, 1500, 900)     | (0..3, 0..2)  |
+/// | 3840 × 2160   | (512, 512, 512, 512)  | (1..2, 1..2)  |
+/// | 3840 × 2160   | (9000, 0, 500, 500)   | 빈 범위       |
+pub fn visible_tiles(
+    image: (u32, u32),
+    window: (f32, f32, f32, f32),
+) -> (std::ops::Range<u32>, std::ops::Range<u32>) {
+    let (n_cols, n_rows) = tile_counts(image);
+    let side = TILE_SIDE as f32;
+    let span = |start: f32, length: f32, n_tiles: u32| {
+        let limit = n_tiles as f32 * side;
+        let (from, to) = (start.max(0.0), (start + length).min(limit));
+        if to <= from { 0..0 } else { (from / side).floor() as u32..((to / side).ceil() as u32).min(n_tiles) }
+    };
+    (span(window.0, window.2, n_cols), span(window.1, window.3, n_rows))
+}
+
 /// 표시 크기가 칸을 넘어 스크롤이 필요한지.
 pub fn scrolls(
     shown: (f32, f32),
@@ -224,11 +280,50 @@ mod tests {
     }
 
     #[test]
-    fn test_c_review_m3_a_fit_view_uploads_the_picture_reduced_to_the_pane_not_the_original() {
+    fn test_a_fit_view_uploads_the_picture_reduced_to_the_pane_not_the_original() {
         assert_eq!(fit_decode_size(3840, 2160, (1500, 900), DECODE_PIXELS), (1500, 844));
         assert_eq!(fit_decode_size(800, 600, (1500, 900), DECODE_PIXELS), (800, 600));
         assert_eq!(fit_decode_size(1000, 8000, (1500, 900), DECODE_PIXELS), (1000, 8000));
         let (width, height) = fit_decode_size(20_000, 20_000, (30_000, 30_000), DECODE_PIXELS);
         assert!(u64::from(width) * u64::from(height) <= DECODE_PIXELS);
+    }
+
+    #[test]
+    fn test_tiles_cover_the_image_with_edge_tiles_cut_short() {
+        // 1:1로 볼 때 원본을 TILE_SIDE 조각으로 나눈 칸 수와 각 조각의 위치·크기.
+        assert_eq!(tile_counts((1920, 1080)), (4, 3));
+        assert_eq!(tile_counts((512, 512)), (1, 1));
+        assert_eq!(tile_counts((513, 1)), (2, 1));
+        assert_eq!(tile_counts((0, 0)), (1, 1));
+        assert_eq!(tile_rect((1920, 1080), 0, 0), (0, 0, 512, 512));
+        assert_eq!(tile_rect((1920, 1080), 3, 2), (1536, 1024, 384, 56));
+        // 모든 조각의 넓이를 합치면 원본 픽셀 수와 같다.
+        let (cols, rows) = tile_counts((3840, 2160));
+        let total: u64 = (0..rows)
+            .flat_map(|row| (0..cols).map(move |col| (col, row)))
+            .map(|(col, row)| {
+                let (_, _, width, height) = tile_rect((3840, 2160), col, row);
+                u64::from(width) * u64::from(height)
+            })
+            .sum();
+        assert_eq!(total, 3840 * 2160);
+    }
+
+    #[test]
+    fn test_only_the_tiles_touching_the_visible_window_are_wanted() {
+        // 창(x, y, 가로, 세로: 원본 픽셀 좌표)과 겹치는 조각의 칸 범위.
+        assert_eq!(visible_tiles((3840, 2160), (0.0, 0.0, 1500.0, 900.0)), (0..3, 0..2));
+        // 조각 경계에 정확히 닿는 쪽은 겹치지 않는다.
+        assert_eq!(visible_tiles((3840, 2160), (0.0, 0.0, 512.0, 512.0)), (0..1, 0..1));
+        assert_eq!(visible_tiles((3840, 2160), (512.0, 512.0, 512.0, 512.0)), (1..2, 1..2));
+        // 가운데로 스크롤하면 양쪽 경계에 걸친 조각이 모두 든다.
+        assert_eq!(visible_tiles((3840, 2160), (1000.0, 600.0, 1500.0, 900.0)), (1..5, 1..3));
+        // 원본 밖으로 나간 창은 원본 안으로 잘라 본다.
+        assert_eq!(visible_tiles((3840, 2160), (3000.0, 1500.0, 5000.0, 5000.0)), (5..8, 2..5));
+        assert_eq!(visible_tiles((3840, 2160), (-300.0, -300.0, 500.0, 500.0)), (0..1, 0..1));
+        // 창이 원본을 통째로 벗어나면 비어 있다.
+        assert!(visible_tiles((3840, 2160), (9000.0, 0.0, 500.0, 500.0)).0.is_empty());
+        // 작은 이미지는 조각이 하나다.
+        assert_eq!(visible_tiles((100, 50), (0.0, 0.0, 800.0, 600.0)), (0..1, 0..1));
     }
 }

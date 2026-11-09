@@ -7,6 +7,7 @@ use std::path::Path;
 use paddock_core::account_launch::{
     AccountLaunchInput, Location, Permissions, account_launch_cwd, account_terminal_spec,
 };
+use paddock_core::account_session::Resume;
 use paddock_core::agent_account::{AccountProfile, Runtime};
 use paddock_core::shell_catalog::wsl_folder;
 use paddock_protocol::shared_config::{config_dir, native_profile_directory};
@@ -35,14 +36,14 @@ pub fn account_want(
     home: &str,
     permissions: Permissions,
     is_windows: bool,
-    resume_session_id: Option<&str>,
+    resume: Option<&Resume>,
 ) -> Result<Want, String> {
     let folder = folder.unwrap_or(home);
     // WSL 폴더(`\\wsl.localhost\…`)와 WSL 계정의 Linux 경로는 이 컴퓨터의 파일 시스템에서 확인할 수 없고, 열 때 WSL이 확인한다.
     let is_checked_by_wsl =
         wsl_folder(folder).is_some() || (profile.runtime == Runtime::Wsl && folder.starts_with('/'));
     if is_checked_by_wsl || Path::new(folder).is_dir() {
-        want_in_folder(profile, folder, home, permissions, is_windows, resume_session_id)
+        want_in_folder(profile, folder, home, permissions, is_windows, resume)
     } else {
         Err(FOLDER_UNAVAILABLE.to_string())
     }
@@ -55,7 +56,7 @@ fn want_in_folder(
     home: &str,
     permissions: Permissions,
     is_windows: bool,
-    resume_session_id: Option<&str>,
+    resume: Option<&Resume>,
 ) -> Result<Want, String> {
     let cwd = account_launch_cwd(profile, folder, Some(home), is_windows).map_err(|error| error.to_string())?;
     let (config, flag) = match profile.runtime {
@@ -75,15 +76,37 @@ fn want_in_folder(
         is_windows,
         permissions,
         flag_settings_file: (profile.provider == "claude").then_some(flag),
-        resume_session_id,
+        resume,
     })
     .map_err(|error| error.to_string())?;
+    #[cfg(feature = "automation")]
+    let launch = confine_wsl_home(profile, launch)?;
     let (shell, wsl_distribution) = match profile.runtime {
         Runtime::Wsl => ("wsl", profile.wsl_distribution.clone()),
         Runtime::Native if is_windows => ("powershell", None),
         Runtime::Native => ("bash", None),
     };
     Ok(Want::Launch { shell: shell.to_string(), wsl_distribution, launch: Box::new(launch) })
+}
+
+/// 자동 점검 빌드가 WSL 계정 터미널을 열면 `PADDOCK_TEST_WSL_HOME`을 그 셸의 `HOME`으로 덮는다(`wsl.exe … -e env HOME=<폴더> /bin/bash …`).
+/// 점검이 사용자의 실제 WSL 홈(`~/.paddock/agent-profiles`·`.bashrc`)을 건드리지 않게 하려는 것이라, 변수가 없으면 WSL 계정은 열지 않는다.
+#[cfg(feature = "automation")]
+fn confine_wsl_home(
+    profile: &AccountProfile,
+    mut launch: paddock_core::account_launch::Launch,
+) -> Result<paddock_core::account_launch::Launch, String> {
+    if profile.runtime == Runtime::Wsl {
+        let home = std::env::var("PADDOCK_TEST_WSL_HOME")
+            .ok()
+            .filter(|home| home.starts_with('/'))
+            .ok_or_else(|| "Automation builds open WSL accounts only with PADDOCK_TEST_WSL_HOME set.".to_string())?;
+        if let Some(position) = launch.args.iter().position(|argument| argument == "-e") {
+            launch.args.insert(position + 1, format!("HOME={home}"));
+            launch.args.insert(position + 1, "env".to_string());
+        }
+    }
+    Ok(launch)
 }
 
 #[cfg(test)]
@@ -154,7 +177,7 @@ mod tests {
             &folder,
             Permissions::Ask,
             false,
-            Some(session),
+            Some(&Resume::SessionId(session.to_string())),
         );
         let Ok(Want::Launch { launch, .. }) = want else { panic!("{want:?}") };
         let script = launch.args.last().unwrap().replace("'\"'\"'", "'");
@@ -162,7 +185,13 @@ mod tests {
         // WSL 계정의 Linux 경로는 이 컴퓨터의 폴더가 아니라 WSL이 확인하므로 거부하지 않는다.
         let wsl =
             account_want(&profile(Runtime::Wsl, "claude"), Some("/home/me/app"), "~", Permissions::Ask, true, None);
-        let Ok(Want::Launch { launch, .. }) = wsl else { panic!("{wsl:?}") };
-        assert!(launch.args.iter().any(|argument| argument == "/home/me/app"), "{:?}", launch.args);
+        // 자동 점검 빌드는 PADDOCK_TEST_WSL_HOME 없이는 WSL 계정을 열지 않는다(실제 WSL 홈을 건드리지 않으려는 안전장치).
+        #[cfg(feature = "automation")]
+        assert!(wsl.unwrap_err().contains("PADDOCK_TEST_WSL_HOME"));
+        #[cfg(not(feature = "automation"))]
+        {
+            let Ok(Want::Launch { launch, .. }) = wsl else { panic!("{wsl:?}") };
+            assert!(launch.args.iter().any(|argument| argument == "/home/me/app"), "{:?}", launch.args);
+        }
     }
 }

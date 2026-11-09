@@ -4,7 +4,8 @@
 //! 저장한 데몬과 지금 데몬이 다르면 저장 내용을 잇지 않는다. 파일이 깨져도 앱이 시작되도록 읽기는 실패하지 않으며,
 //! 모양이 틀린 항목은 그 항목만 버린다.
 //!
-//! 형식(버전 3): `{version, daemon, work: {folders, terminals}, groups, selected_terminal, layouts, sidebar_collapsed, files_collapsed}`.
+//! 형식(버전 3): `{version, daemon, work: {folders, terminals}, groups, selected_terminal, layouts, sidebar_collapsed, files_collapsed, usage_selection}`.
+//! `usage_selection`(상태 줄에 도구별로 마지막에 고른 사용량 범위)은 터미널 번호와 무관해 데몬이 바뀌어도 남고, 없는 옛 파일은 빈 선택으로 읽는다.
 //! `layouts`는 칸 배치(분할) 목록이다. 배치는 묶음 이름이 아니라 든 터미널 번호로 묶음을 찾으므로, 묶음의 시작 터미널이
 //! 바뀌어도 배치가 이어진다. 버전 1(평평한 `terminals` 목록)은 폴더·묶음이 없는 파일이라 빈 목록으로 읽는다.
 //!
@@ -15,9 +16,11 @@ use std::collections::{BTreeMap, HashSet};
 
 use serde_json::{Value, json};
 
+use crate::agent_account::Scope;
 use crate::file_kind::{FileKind, kind_of};
 use crate::file_pane::{DEFAULT_RATIO, FilePane, FilePanes, FileTab};
 use crate::layout_model::Layout;
+use crate::usage_scopes::UsageSelection;
 use crate::work_model::{Group, GroupKey, GroupMember, Member, WorkState, same_folder};
 
 /// state.json의 현재 형식 번호.
@@ -41,6 +44,8 @@ pub struct SessionState {
     pub files: FilePanes,
     /// 사이드바의 파일 목록 구획이 접혀 있다.
     pub files_collapsed: bool,
+    /// 상태 줄에 도구별로 마지막에 고른 사용량 범위. 터미널 번호와 무관해 데몬이 바뀌어도 남는다.
+    pub usage_selection: UsageSelection,
 }
 
 fn as_id(value: Option<&Value>) -> Option<u32> {
@@ -99,6 +104,11 @@ impl SessionState {
             "sidebar_collapsed": self.sidebar_collapsed,
             "files_collapsed": self.files_collapsed,
         });
+        let mut document = document;
+        if !self.usage_selection.is_empty() {
+            document["usage_selection"] =
+                serde_json::to_value(&self.usage_selection).expect("a selection is plain data");
+        }
         serde_json::to_string_pretty(&document).expect("session state is plain data")
     }
 
@@ -142,6 +152,7 @@ impl SessionState {
             state.layouts = restore_layouts(&parsed, &seen);
             state.sidebar_collapsed = parsed.get("sidebar_collapsed").and_then(Value::as_bool).unwrap_or(false);
             state.files_collapsed = parsed.get("files_collapsed").and_then(Value::as_bool).unwrap_or(false);
+            state.usage_selection = restore_usage_selection(&parsed);
         }
         state
     }
@@ -222,8 +233,26 @@ impl SessionState {
             sidebar_collapsed: self.sidebar_collapsed,
             files,
             files_collapsed: self.files_collapsed,
+            usage_selection: self.usage_selection.clone(),
         }
     }
+}
+
+/// 저장 값에서 상태 줄 사용량 선택을 읽는다. 도구별로 모양이 틀린 항목은 그 도구만 버리고, 도구가 맞지 않거나 미등록 폴더인 항목도 버린다.
+fn restore_usage_selection(parsed: &Value) -> UsageSelection {
+    let mut selection = UsageSelection::default();
+    for provider in ["claude", "codex"] {
+        let scope = parsed
+            .get("usage_selection")
+            .and_then(|saved| saved.get(provider))
+            .and_then(|entry| serde_json::from_value::<Scope>(entry.clone()).ok())
+            .filter(|scope| scope.provider == provider && !scope.custom && scope.linked.is_none());
+        match (provider, scope) {
+            ("claude", scope) => selection.claude = scope,
+            (_, scope) => selection.codex = scope,
+        }
+    }
+    selection
 }
 
 /// 파일 칸을 저장 값으로 만든다.
@@ -388,6 +417,16 @@ mod tests {
         let pane = restored.files.get(&GroupKey::Folder("/home/me/app".into())).unwrap();
         assert_eq!((pane.selected, pane.ratio), (1, 0.35));
         assert!(restored.files_collapsed);
+    }
+
+    #[test]
+    fn test_c_d67_unsaved_text_is_not_written_to_state() {
+        // 파일 탭은 경로만 저장한다. 편집기 글자·저장하지 않은 표시는 상태 파일에 들어가지 않는다(앱이 죽으면 편집은 잃는다).
+        let saved = files_sample().serialize();
+        assert!(saved.contains("/home/me/app/src/a.ts"));
+        for forbidden in ["text", "unsaved", "content", "bytes", "encoded"] {
+            assert!(!saved.contains(&format!("\"{forbidden}\"")), "{forbidden}: {saved}");
+        }
     }
 
     #[test]
@@ -676,5 +715,44 @@ mod tests {
         empty.work.set_folder_label("/home/me/app", "앱");
         let restored = SessionState::restore(&empty.serialize(), &HashSet::new(), "9@t2");
         assert_eq!(restored.work.folders, empty.work.folders);
+    }
+    #[test]
+    fn test_c_d74_the_usage_selection_survives_a_restart_and_a_daemon_change_and_old_files_read_as_empty() {
+        let profile = crate::agent_account::AccountProfile {
+            id: "a".to_string(),
+            provider: "codex".to_string(),
+            label: "Work".to_string(),
+            runtime: crate::agent_account::Runtime::Native,
+            wsl_distribution: None,
+        };
+        let mut state = sample();
+        state.usage_selection =
+            UsageSelection { claude: Some(Scope::provider("claude")), codex: Some(Scope::of_profile(&profile)) };
+        let saved = state.serialize();
+        let live: HashSet<u32> = [1].into_iter().collect();
+        assert_eq!(SessionState::restore(&saved, &live, "7@t0").usage_selection, state.usage_selection);
+        assert_eq!(
+            SessionState::restore(&saved, &live, "other@t1").usage_selection,
+            state.usage_selection,
+            "a selection does not depend on terminal numbers"
+        );
+        assert_eq!(SessionState::restore_saved(&saved).usage_selection, state.usage_selection);
+        assert!(sample().usage_selection.is_empty());
+        assert!(!sample().serialize().contains("usage_selection"), "an empty selection adds nothing to the file");
+        assert!(SessionState::restore(&sample().serialize(), &live, "7@t0").usage_selection.is_empty());
+        let renumbered = state.renumbered(&BTreeMap::new(), "9@t2");
+        assert_eq!(renumbered.usage_selection, state.usage_selection);
+    }
+
+    #[test]
+    fn test_c_d74_malformed_or_foreign_usage_selection_entries_are_dropped_one_by_one() {
+        let text = r#"{"version":3,"daemon":"7@t0","usage_selection":{"claude":{"provider":"codex"},"codex":{"provider":"codex","custom":true}}}"#;
+        assert!(
+            SessionState::restore(text, &HashSet::new(), "7@t0").usage_selection.is_empty(),
+            "a wrong tool and an unregistered folder are not revived"
+        );
+        let text = r#"{"version":3,"daemon":"7@t0","usage_selection":{"claude":7,"codex":{"provider":"codex"}}}"#;
+        let restored = SessionState::restore(text, &HashSet::new(), "7@t0").usage_selection;
+        assert_eq!((restored.claude, restored.codex), (None, Some(Scope::provider("codex"))));
     }
 }

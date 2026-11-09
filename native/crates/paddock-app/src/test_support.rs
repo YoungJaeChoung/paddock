@@ -1,6 +1,6 @@
 //! 시험 보조: 임시 홈 폴더, 시험용 데몬 실행 파일 위치, 시험이 띄운 데몬 정리.
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -27,7 +27,20 @@ impl TempHome {
         home.set("HOME", Some(path.as_os_str()));
         home.set("USERPROFILE", Some(path.as_os_str()));
         home.set("XDG_RUNTIME_DIR", None);
+        // 기본 CLI의 설정 폴더를 정하는 변수는 시험을 돌리는 사람의 환경을 따라가지 않게 비운다.
+        home.set("CLAUDE_CONFIG_DIR", None);
+        home.set("CODEX_HOME", None);
         home
+    }
+
+    /// 이 시험이 띄우는 데몬이 물려받을 환경 변수를 정한다(`None`이면 지운다). 시험 데몬의 `test-hooks` 변수에 쓰며,
+    /// 버릴 때 원래대로 돌아간다.
+    pub fn set_env(
+        &mut self,
+        key: &'static str,
+        value: Option<&str>,
+    ) {
+        self.set(key, value.map(std::ffi::OsStr::new));
     }
 
     fn set(
@@ -82,6 +95,24 @@ pub fn daemon_exe() -> PathBuf {
             found(&candidates).expect("paddock-daemon was built")
         }
     }
+}
+
+/// 데몬 실행 파일 뒤에 한 바이트를 덧붙인 사본을 `into` 폴더에 만든다. 그대로 실행되지만 지문이 다르다 —
+/// 앱만 업데이트돼 앱이 기대하는 데몬 파일이 실행 중인 데몬과 달라진 상황을 만든다.
+pub fn altered_copy(
+    exe: &Path,
+    into: &Path,
+) -> PathBuf {
+    let copy = into.join(format!("paddock-daemon-altered{}", std::env::consts::EXE_SUFFIX));
+    let mut bytes = std::fs::read(exe).unwrap();
+    bytes.push(0);
+    std::fs::write(&copy, bytes).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&copy, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    copy
 }
 
 /// 버릴 때 `daemon.json`의 데몬을 끝낸다. `TempHome`보다 나중에 만들어야 홈 폴더가 남아 있을 때 정리된다.

@@ -9,7 +9,7 @@ use paddock_core::layout_model::Layout;
 use paddock_core::work_model::WorkState;
 
 use crate::app_log;
-use crate::daemon_client::{DaemonConnection, Ensure, MismatchPolicy, ensure};
+use crate::daemon_client::{DaemonConnection, Ensure, Policy, ensure};
 use crate::restore;
 use crate::shell_choice::default_shell;
 use crate::state_store;
@@ -37,13 +37,18 @@ pub struct Restored {
     pub files_collapsed: bool,
     /// 데몬이 앱의 작업 개체에서 분리되지 못했다. 앱을 닫으면 터미널도 끝난다.
     pub breakaway_denied: bool,
+    /// 데몬 실행 파일이 이 앱이 기대하는 것과 다르지만 프로토콜이 같아 계속 쓰는 중이다.
+    pub daemon_outdated: bool,
 }
 
 /// 시작 결과.
 pub enum Startup {
     Ready(Restored),
-    /// 실행 중인 데몬이 이 앱과 지문이 달라 쓰지 않았다. 데몬은 그대로 있다. 사용자가 교체할지 정한다.
-    MismatchKept,
+    /// 실행 중인 데몬의 프로토콜 버전이 이 앱과 달라 쓰지 않았다. 데몬은 그대로 있다. 사용자가 교체할지 정한다.
+    /// `daemon_version`이 None이면 인사를 거절한 옛 데몬(버전 1)이다.
+    ProtocolMismatch {
+        daemon_version: Option<u32>,
+    },
     /// 실행 중인 데몬이 인사에 답하지 않는다. 사용자가 데몬을 다시 시작할지 정한다.
     DaemonStalled,
 }
@@ -57,11 +62,11 @@ pub enum Startup {
 /// 데몬에 연결하지 못하면 서버가 준 문장 그대로의 오류다.
 pub fn open_workspace(
     daemon_exe: &Path,
-    policy: MismatchPolicy,
+    policy: Policy,
     started: Instant,
 ) -> io::Result<Startup> {
     match ensure(daemon_exe, policy)? {
-        Ensure::MismatchKept { .. } => Ok(Startup::MismatchKept),
+        Ensure::ProtocolMismatch { daemon_version, .. } => Ok(Startup::ProtocolMismatch { daemon_version }),
         Ensure::Stalled { .. } => Ok(Startup::DaemonStalled),
         Ensure::Connected(connection) => restore_terminals(daemon_exe, connection, started).map(Startup::Ready),
     }
@@ -74,6 +79,7 @@ pub fn restore_terminals(
     started: Instant,
 ) -> io::Result<Restored> {
     let breakaway_denied = connection.breakaway_denied;
+    let daemon_outdated = connection.outdated;
     let daemon_id = connection.daemon_id.clone();
     let listed = list_terminals(&connection)?.terminals;
     let live_ids: HashSet<u32> = listed.iter().map(|terminal| terminal.id).collect();
@@ -112,7 +118,13 @@ pub fn restore_terminals(
         let session = match revived_sessions.remove(&id) {
             Some(session) => Ok(session),
             None => next_connection(daemon_exe, &mut first_connection)
-                .and_then(|connection| start_session(connection, Want::Attach { id }, started)),
+                .and_then(|connection| start_session(connection, Want::Attach { id }, started))
+                .map(|mut session| {
+                    // 데몬에 이미 있던 터미널의 셸은 데몬 목록이 안다.
+                    session.shell =
+                        listed.iter().find(|terminal| terminal.id == id).map(|t| t.shell.clone()).unwrap_or_default();
+                    session
+                }),
         };
         match session {
             Ok(session) => {
@@ -165,6 +177,7 @@ pub fn restore_terminals(
         files,
         files_collapsed: state.files_collapsed,
         breakaway_denied,
+        daemon_outdated,
     })
 }
 
@@ -179,11 +192,15 @@ fn next_connection(
     }
 }
 
-/// 이미 떠 있는 데몬에 새 연결을 연다. 데몬을 띄우거나 교체하지는 않는다.
+/// 이미 떠 있는 데몬에 새 연결을 연다. 데몬을 교체하지는 않는다(없을 때만 띄운다).
+///
+/// 앱을 쓰는 중에 부르므로 `Policy::Keep`이다 — 데몬이 바뀌면 같은 앱의 다른 터미널 연결이 끊긴다.
 pub fn connect_daemon(daemon_exe: &Path) -> io::Result<DaemonConnection> {
-    match ensure(daemon_exe, MismatchPolicy::Quit)? {
+    match ensure(daemon_exe, Policy::Keep)? {
         Ensure::Connected(connection) => Ok(connection),
-        Ensure::MismatchKept { .. } => Err(io::Error::other("A different version of the terminal daemon is running")),
+        Ensure::ProtocolMismatch { .. } => {
+            Err(io::Error::other("A different version of the terminal daemon is running"))
+        }
         Ensure::Stalled { .. } => Err(io::Error::new(io::ErrorKind::TimedOut, "Daemon did not answer")),
     }
 }
@@ -210,7 +227,7 @@ mod tests {
     use paddock_core::work_model::GroupKey;
 
     use super::*;
-    use crate::test_support::{DaemonCleanup, TempHome, daemon_exe};
+    use crate::test_support::{DaemonCleanup, TempHome, altered_copy, daemon_exe};
 
     #[cfg(unix)]
     const SHELL: &str = "bash";
@@ -225,7 +242,7 @@ mod tests {
     fn ready(startup: Startup) -> Restored {
         match startup {
             Startup::Ready(restored) => restored,
-            Startup::MismatchKept | Startup::DaemonStalled => panic!("expected terminals"),
+            Startup::ProtocolMismatch { .. } | Startup::DaemonStalled => panic!("expected terminals"),
         }
     }
 
@@ -235,7 +252,7 @@ mod tests {
     }
 
     fn open(exe: &Path) -> Restored {
-        ready(open_workspace(exe, MismatchPolicy::Quit, Instant::now()).unwrap())
+        ready(open_workspace(exe, Policy::ReplaceIfIdle, Instant::now()).unwrap())
     }
 
     #[test]
@@ -249,6 +266,21 @@ mod tests {
         assert_eq!(restored.work.group_of(id), Some(id), "the first terminal starts an Unassigned group");
         assert_eq!(restored.selected, None);
         assert!(!restored.breakaway_denied);
+        assert!(!restored.daemon_outdated);
+    }
+
+    #[test]
+    fn test_c7_start_reports_an_outdated_daemon_and_keeps_its_terminals() {
+        let home = TempHome::new();
+        let _cleanup = DaemonCleanup;
+        let exe = daemon_exe();
+        let first = open_shell(&exe);
+        // 앱만 업데이트돼 기대하는 데몬 파일의 지문이 달라졌다. 터미널이 있으므로 데몬을 바꾸지 않고 붙는다.
+        let altered = altered_copy(&exe, home.dir.path());
+        let restored = open(&altered);
+        assert!(restored.daemon_outdated);
+        assert_eq!(restored.terminals.len(), 1);
+        assert_eq!(restored.terminals[0].session.shell_pid, first.shell_pid);
     }
 
     #[test]
@@ -273,6 +305,7 @@ mod tests {
             sidebar_collapsed: true,
             files: files.clone(),
             files_collapsed: true,
+            ..SessionState::default()
         };
         state_store::save(&state).unwrap();
         // 앱이 닫혔다 다시 열린 것처럼 새 연결로 되살린다(셸은 그대로 살아 있다).

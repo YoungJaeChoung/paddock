@@ -1,0 +1,56 @@
+# 텍스트 파일 분리 창 메모리 진단(덩어리 39): memory-pdf-diag와 같은 4번 되풀이를 텍스트 편집기(400줄)로 잰다. 임시 홈 이름 memory-text-diag.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-fdp"; Set-Content "$p\\notes.txt" ((1..400 | ForEach-Object { "line $_ of the notes file" }) -join "`n"); cd $p\r
+send echo MEM-TD\r
+waitline MEM-TD @20000
+act openpath C:/Temp/pdk-run/home-memory-text-diag/proj-fdp/notes.txt
+waitstate kind=text state=text @15000
+wait 15000
+mem d-before
+gpumem d-before
+act detachsize 900 600
+act movetowindow file C:/Temp/pdk-run/home-memory-text-diag/proj-fdp/notes.txt
+waitstate notes.txt place=detached @10000
+wait 10000
+mem d-open-1
+gpumem d-open-1
+act moveback file C:/Temp/pdk-run/home-memory-text-diag/proj-fdp/notes.txt
+waitstate notes.txt selected shown place=main @10000
+wait 10000
+mem d-back-1
+gpumem d-back-1
+act movetowindow file C:/Temp/pdk-run/home-memory-text-diag/proj-fdp/notes.txt
+waitstate notes.txt place=detached @10000
+wait 10000
+mem d-open-2
+gpumem d-open-2
+act moveback file C:/Temp/pdk-run/home-memory-text-diag/proj-fdp/notes.txt
+waitstate notes.txt selected shown place=main @10000
+wait 10000
+mem d-back-2
+gpumem d-back-2
+act movetowindow file C:/Temp/pdk-run/home-memory-text-diag/proj-fdp/notes.txt
+waitstate notes.txt place=detached @10000
+wait 10000
+mem d-open-3
+gpumem d-open-3
+act moveback file C:/Temp/pdk-run/home-memory-text-diag/proj-fdp/notes.txt
+waitstate notes.txt selected shown place=main @10000
+wait 10000
+mem d-back-3
+gpumem d-back-3
+act movetowindow file C:/Temp/pdk-run/home-memory-text-diag/proj-fdp/notes.txt
+waitstate notes.txt place=detached @10000
+wait 10000
+mem d-open-4
+gpumem d-open-4
+act moveback file C:/Temp/pdk-run/home-memory-text-diag/proj-fdp/notes.txt
+waitstate notes.txt selected shown place=main @10000
+wait 10000
+mem d-back-4
+gpumem d-back-4
+wait 40000
+mem d-final
+gpumem d-final
+quit

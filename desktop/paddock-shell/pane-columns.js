@@ -33,7 +33,7 @@ function paneColumns(
  * 탭을 열 순서로 나눈다. 열 안에서는 칸 순서(위→아래), 같은 칸 안에서는 `ids`의 원래 순서를 지킨다.
  *
  * `paneOf(id)`는 그 탭의 화면이 든 칸의 키, 칸이 없으면(다른 창에 분리된 탭 등) null이다.
- * 칸이 없는 탭은 마지막 열 뒤에 붙인다. 열이 없으면 모든 탭이 한 묶음이다.
+ * 칸이 없는 탭은 마지막 열 뒤에 붙인다(칸을 나눈 줄에서 분리된 탭은 호출자가 먼저 뺀다: attachedTabIds). 열이 없으면 모든 탭이 한 묶음이다.
  *
  * Examples:
  *   ids        columns                 paneOf          → groups
@@ -107,4 +107,28 @@ function orderTabsByPane(
         .map(({ id }) => id);
 }
 
-module.exports = { paneColumns, groupTabsByColumn, columnSpans, orderTabsByPane };
+/**
+ * 칸을 나눈 동안 위쪽 탭 줄에 그릴 탭만 남긴다: 다른 창으로 분리된 탭은 뺀다.
+ *
+ * 나눈 줄에서 탭은 자기 칸 바로 위에 놓이는데, 분리된 탭은 이 창에 칸이 없다. 그대로 그리면 마지막 열 뒤에 붙어
+ * 다른 칸 위에 떠, 분리한 탭이 옛 칸에 남은 것처럼 보인다. 칸을 나누지 않은 줄(한 열 이하)에서는 줄 끝에 그대로 두어
+ * 우클릭 Move Back to Main Window로 되돌릴 입구를 남긴다.
+ *
+ * `isDetached(id)`는 그 탭이 다른 창에 있으면 true다. 입력 순서는 지킨다.
+ *
+ * Examples:
+ *   ids        isSplit  detached  → ids
+ *   [t1,t2,w]  true     w         → [t1,t2]
+ *   [t1,t2,w]  false    w         → [t1,t2,w]
+ *   [w]        true     w         → []
+ */
+function attachedTabIds(
+    ids,
+    isSplit,
+    isDetached,
+) {
+    const attached = isSplit ? ids.filter(id => !isDetached(id)) : [...ids];
+    return attached;
+}
+
+module.exports = { paneColumns, groupTabsByColumn, columnSpans, orderTabsByPane, attachedTabIds };

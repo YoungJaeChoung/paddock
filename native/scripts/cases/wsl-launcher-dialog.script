@@ -1,0 +1,15 @@
+# WSL 래퍼 묻기 창(덩어리 32), 첫 실행: 설정이 ask이고 Windows + WSL이면 시작 때 창이 뜬다. Enter는 기본 단추 Turn on이 아니라 Ask me later라서
+# 창만 닫히고 설정은 ask 그대로이며 .bashrc에는 아무 줄도 없다. 다음 실행(wsl-launcher-dialog-2)에서 다시 묻는지 확인한다.
+waittabs 1 @30000
+waitstate overlay: wsl-launcher @60000
+waitstate focus=overlay @5000
+shot 01-dialog
+state dialog
+key enter
+waitstate overlay: none @5000
+waitstate focus=other @5000
+waitstate usage-setup-settings memory-notice=off limit=4096 wsl-launcher=ask @5000
+waitstate bashrc-lines=0 @5000
+files dialog-later
+state later
+quit

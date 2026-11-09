@@ -1,0 +1,15 @@
+# 본 창을 닫으려 하면 분리 창이 있어도 종료 묻기는 본 창에 하나만 뜨고, 백그라운드 유지를 고르면 분리 창이 먼저 닫히고 앱이 끝난다.
+waittabs 1 @30000
+send echo M-ONE\r
+waitline M-ONE @20000
+key ctrl-shift-t
+waittabs 2 @20000
+act movetowindow 2
+waitstate detached=2 @10000
+state before
+closewindow
+waitoverlay quit @5000
+state quit-prompt
+shot quit-prompt
+key enter
+wait 3000

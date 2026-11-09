@@ -1,39 +1,151 @@
 //! Work 목록 행에 보이는 에이전트 정보의 글: 오른쪽 프로그램 요약과 상태 글자. 화면 그리기를 모르는 순수 규칙이다.
 use paddock_core::agent_account::scope_name;
-use paddock_core::agent_model::{ActivityState, is_shell};
+use paddock_core::agent_model::{ActivityState, StatusState, is_shell};
 use paddock_protocol::message::TerminalState;
 
-/// 행에 보이는 에이전트 상태 하나.
+/// 상태 칸의 색을 고르는 구분. 점·글자가 같은 색이다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Status {
-    /// 화면 글자. 내부 이름(waiting·working·quiet)과 다르다.
-    pub label: &'static str,
-    /// 색을 고르는 상태. `Unknown`은 보이지 않으므로 여기 오지 않는다.
-    pub activity: ActivityState,
+pub enum Tone {
+    /// 일하는 중(알린 `Working`)·최근 출력(추정 `Output`).
+    Working,
+    /// Enter를 막 보냄(추정 `Sent`)·사용자를 기다림(알린 `Needs input`).
+    Attention,
+    /// 알린 오류.
+    Error,
+    /// 쉬는 중·조용함.
+    Quiet,
 }
 
-/// 터미널 상태에서 행에 그릴 상태 글자를 고른다: Enter 직후는 `Sent`, 최근 출력은 `Output`, 조용하면 `Quiet`.
+/// 행에 보이는 에이전트 상태 하나.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Status {
+    /// 화면 글자.
+    pub label: &'static str,
+    pub tone: Tone,
+    /// 마우스를 올리면 뜨는 설명: `프로그램 — 뜻. 알린 것인지 추정인지`.
+    pub tooltip: String,
+}
+
+/// 터미널 상태에서 행에 그릴 상태 글자를 고른다.
 ///
+/// 에이전트가 직접 알린 상태(`signal`)가 있으면 그것이 우선이다: `Working`·`Needs input`·`Idle`(끝남도 같은 글자)·`Error`.
+/// 없을 때만 터미널 입력·출력으로 추정한다: Enter 직후는 `Sent`, 최근 출력은 `Output`, 조용하면 `Quiet`.
 /// 에이전트가 아니거나(상태 없음) 앞쪽 프로그램을 아직 모르면(`Unknown`) 그리지 않는다.
 /// 막 연 터미널은 대부분 곧 셸로 밝혀져 칸이 사라지므로, 잠깐 뜻 없는 글자가 깜빡이는 것을 막는다.
 ///
 /// Examples
 /// --------
-/// | activity  | 결과     |
-/// |-----------|----------|
-/// | Waiting   | `Sent`   |
-/// | Working   | `Output` |
-/// | Quiet     | `Quiet`  |
-/// | Unknown·없음 | 없음  |
+/// | 알린 상태   | 추정 상태 | 결과          |
+/// |-------------|-----------|---------------|
+/// | `working`   | 아무거나  | `Working`     |
+/// | `blocked`   | 아무거나  | `Needs input` |
+/// | `idle`·`done` | 아무거나 | `Idle`       |
+/// | `error`     | 아무거나  | `Error`       |
+/// | 없음        | Waiting   | `Sent`        |
+/// | 없음        | Working   | `Output`      |
+/// | 없음        | Quiet     | `Quiet`       |
+/// | 어느 쪽이든 | Unknown·없음 | 없음       |
 pub fn status_of(state: Option<&TerminalState>) -> Option<Status> {
-    let activity = state.and_then(|state| state.activity)?;
-    let label = match activity {
-        ActivityState::Waiting => Some("Sent"),
-        ActivityState::Working => Some("Output"),
-        ActivityState::Quiet => Some("Quiet"),
-        ActivityState::Unknown => None,
+    let state = state?;
+    let activity = state.activity.filter(|activity| *activity != ActivityState::Unknown)?;
+    let program = state.program.as_deref().unwrap_or("The agent");
+    let reported = state.signal.as_ref().and_then(|signal| match signal.state {
+        StatusState::Working => Some(("Working", Tone::Working, "The agent is working on a request.")),
+        StatusState::Blocked => {
+            Some(("Needs input", Tone::Attention, "The agent is waiting for your permission or an answer."))
+        }
+        StatusState::Done => {
+            Some(("Idle", Tone::Quiet, "The agent finished its last request and is waiting for your next prompt."))
+        }
+        StatusState::Idle => Some(("Idle", Tone::Quiet, "The agent is waiting for your next prompt.")),
+        StatusState::Error => Some(("Error", Tone::Error, "The agent stopped with an error.")),
+        StatusState::Clear => None,
+    });
+    let status = match reported {
+        Some((label, tone, detail)) => Status {
+            label,
+            tone,
+            tooltip: format!("{program} \u{2014} {detail} Reported by {program} (program status)."),
+        },
+        None => {
+            let (label, tone, detail) = match activity {
+                ActivityState::Waiting => (
+                    "Sent",
+                    Tone::Attention,
+                    "Enter was sent less than 3 seconds ago; no subsequent terminal output has been detected. This does not confirm the agent received a request.",
+                ),
+                ActivityState::Working => (
+                    "Output",
+                    Tone::Working,
+                    "Terminal output was detected in the last 3 seconds; this can include prompt redraws. This does not confirm the agent is working.",
+                ),
+                ActivityState::Quiet | ActivityState::Unknown => (
+                    "Quiet",
+                    Tone::Quiet,
+                    "No terminal output in the last 3 seconds. The agent may be waiting for input or still thinking.",
+                ),
+            };
+            Status {
+                label,
+                tone,
+                tooltip: format!("{program} \u{2014} {detail} Estimated from terminal input and output."),
+            }
+        }
     };
-    label.map(|label| Status { label, activity })
+    Some(status)
+}
+
+/// 에이전트가 사용자의 허락이나 답을 기다린다고 알렸는가(알린 `blocked`). 접힌 폴더·묶음 행의 `N need input` 도움말이 센다.
+pub fn needs_input(state: Option<&TerminalState>) -> bool {
+    state.is_some_and(|state| {
+        state.is_agent && state.signal.as_ref().is_some_and(|signal| signal.state == StatusState::Blocked)
+    })
+}
+
+/// 입력을 기다리는 에이전트 수의 글. 없으면 None이다.
+///
+/// Examples
+/// --------
+/// | 수 | 결과           |
+/// |----|----------------|
+/// | 0  | 없음           |
+/// | 1  | `1 needs input`|
+/// | 3  | `3 need input` |
+pub fn need_input_text(n_waiting: usize) -> Option<String> {
+    match n_waiting {
+        0 => None,
+        1 => Some("1 needs input".to_string()),
+        n => Some(format!("{n} need input")),
+    }
+}
+
+/// 작업 폴더 행의 도움말.
+pub fn folder_tip(
+    _key: &str,
+    _home: Option<&str>,
+    _unseen: bool,
+    _states: &[Option<TerminalState>],
+) -> String {
+    String::new()
+}
+
+/// Unassigned 묶음 행의 도움말.
+pub fn group_tip(
+    _root: Option<&TerminalState>,
+    _home: Option<&str>,
+    _unseen: bool,
+    _members: &[Option<TerminalState>],
+) -> String {
+    String::new()
+}
+
+/// 터미널 탭의 도움말.
+pub fn tab_tip(
+    _label: &str,
+    _state: Option<&TerminalState>,
+    _detached: bool,
+) -> String {
+    String::new()
 }
 
 /// 행 이름 옆에 보이는 요약: `프로그램 · 계정 이름`.
@@ -105,8 +217,8 @@ fn provider_title(provider: &str) -> &'static str {
 mod tests {
     use super::*;
     use paddock_core::agent_account::{AccountProfile, Runtime, Scope};
-    use paddock_core::agent_model::ActivityState;
-    use paddock_protocol::message::TerminalState;
+    use paddock_core::agent_model::{ActivityState, StatusState};
+    use paddock_protocol::message::{Signal, TerminalState};
 
     fn state(
         program: Option<&str>,
@@ -120,6 +232,8 @@ mod tests {
             activity,
             finished: false,
             account: None,
+            conversation: None,
+            signal: None,
         }
     }
 
@@ -133,6 +247,143 @@ mod tests {
         assert_eq!(label(Some(ActivityState::Unknown)), None);
         assert_eq!(label(None), None);
         assert_eq!(status_of(None), None);
+    }
+
+    fn signalled(
+        program: &str,
+        state_name: StatusState,
+    ) -> TerminalState {
+        TerminalState {
+            signal: Some(Signal { state: state_name, kind: None }),
+            ..state(Some(program), Some(ActivityState::Quiet))
+        }
+    }
+
+    #[test]
+    fn test_c_a2_a_reported_state_wins_over_the_estimate_and_has_its_own_words() {
+        let label = |state_name| status_of(Some(&signalled("claude", state_name))).map(|status| status.label);
+        assert_eq!(label(StatusState::Working), Some("Working"));
+        assert_eq!(label(StatusState::Blocked), Some("Needs input"));
+        assert_eq!(label(StatusState::Idle), Some("Idle"));
+        assert_eq!(label(StatusState::Done), Some("Idle"), "done is the same as idle on screen");
+        assert_eq!(label(StatusState::Error), Some("Error"));
+        // 추정 상태가 Output이어도 알린 상태가 있으면 알린 글자다.
+        let mut recent_output = signalled("claude", StatusState::Idle);
+        recent_output.activity = Some(ActivityState::Working);
+        assert_eq!(status_of(Some(&recent_output)).map(|status| status.label), Some("Idle"));
+        // 에이전트가 아니거나 프로그램을 모르면 신호가 있어도 보이지 않는다.
+        let mut not_agent = signalled("bash", StatusState::Blocked);
+        not_agent.activity = None;
+        assert_eq!(status_of(Some(&not_agent)), None);
+        let mut unknown = signalled("claude", StatusState::Blocked);
+        unknown.activity = Some(ActivityState::Unknown);
+        assert_eq!(status_of(Some(&unknown)), None);
+    }
+
+    #[test]
+    fn test_c_a2_the_tooltip_says_what_the_state_means_and_whether_it_was_reported_or_estimated() {
+        let reported = status_of(Some(&signalled("claude", StatusState::Blocked))).unwrap();
+        assert_eq!(
+            reported.tooltip,
+            "claude \u{2014} The agent is waiting for your permission or an answer. Reported by claude (program status)."
+        );
+        let estimated = status_of(Some(&state(Some("codex"), Some(ActivityState::Working)))).unwrap();
+        assert_eq!(
+            estimated.tooltip,
+            "codex \u{2014} Terminal output was detected in the last 3 seconds; this can include prompt redraws. This does not confirm the agent is working. Estimated from terminal input and output."
+        );
+        let sent = status_of(Some(&state(Some("codex"), Some(ActivityState::Waiting)))).unwrap();
+        assert!(sent.tooltip.ends_with("Estimated from terminal input and output."), "{}", sent.tooltip);
+    }
+
+    #[test]
+    fn test_c_a2_colors_follow_the_state_blocked_is_attention_and_error_is_the_danger_tone() {
+        let tone = |state_name| status_of(Some(&signalled("claude", state_name))).map(|status| status.tone);
+        assert_eq!(tone(StatusState::Working), Some(Tone::Working));
+        assert_eq!(tone(StatusState::Blocked), Some(Tone::Attention));
+        assert_eq!(tone(StatusState::Error), Some(Tone::Error));
+        assert_eq!(tone(StatusState::Idle), Some(Tone::Quiet));
+        assert_eq!(tone(StatusState::Done), Some(Tone::Quiet));
+        let estimate = |activity| status_of(Some(&state(Some("claude"), Some(activity)))).map(|status| status.tone);
+        assert_eq!(estimate(ActivityState::Working), Some(Tone::Working));
+        assert_eq!(estimate(ActivityState::Waiting), Some(Tone::Attention));
+        assert_eq!(estimate(ActivityState::Quiet), Some(Tone::Quiet));
+    }
+
+    #[test]
+    fn test_c_a2_only_a_reported_blocked_agent_counts_as_needing_input() {
+        assert!(needs_input(Some(&signalled("claude", StatusState::Blocked))));
+        for state_name in [StatusState::Working, StatusState::Idle, StatusState::Done, StatusState::Error] {
+            assert!(!needs_input(Some(&signalled("claude", state_name))), "{state_name:?}");
+        }
+        assert!(!needs_input(Some(&state(Some("claude"), Some(ActivityState::Quiet)))), "an estimate never counts");
+        let mut left_for_shell = signalled("bash", StatusState::Blocked);
+        left_for_shell.is_agent = false;
+        assert!(!needs_input(Some(&left_for_shell)));
+        assert!(!needs_input(None));
+    }
+
+    #[test]
+    fn test_c_a2_the_folder_and_group_tooltip_counts_agents_that_need_input() {
+        assert_eq!(need_input_text(0), None);
+        assert_eq!(need_input_text(1).as_deref(), Some("1 needs input"));
+        assert_eq!(need_input_text(2).as_deref(), Some("2 need input"));
+    }
+
+    fn at(
+        program: &str,
+        cwd: &str,
+        state_name: Option<StatusState>,
+    ) -> Option<TerminalState> {
+        Some(TerminalState {
+            cwd: Some(cwd.to_string()),
+            signal: state_name.map(|state_name| Signal { state: state_name, kind: None }),
+            ..state(Some(program), Some(ActivityState::Quiet))
+        })
+    }
+
+    #[test]
+    fn test_c_a2_the_folder_tip_shows_the_display_path_unseen_and_how_many_agents_need_input() {
+        let waiting = at("claude", "/home/me/app", Some(StatusState::Blocked));
+        let quiet = at("codex", "/home/me/app", Some(StatusState::Idle));
+        let wsl = "\\\\wsl.localhost\\Ubuntu\\home\\me\\app";
+        assert_eq!(folder_tip(wsl, None, false, &[]), "~/app");
+        assert_eq!(folder_tip("/home/me/app", Some("/home/me"), false, &[quiet.clone(), None]), "~/app");
+        assert_eq!(
+            folder_tip("/srv/data", Some("/home/me"), true, &[waiting.clone()]),
+            "/srv/data \u{b7} Unseen activity \u{b7} 1 needs input"
+        );
+        assert_eq!(
+            folder_tip("/srv/data", None, false, &[waiting.clone(), waiting.clone(), quiet]),
+            "/srv/data \u{b7} 2 need input"
+        );
+    }
+
+    #[test]
+    fn test_c_a2_the_group_tip_names_program_folder_unseen_and_waiting_agents() {
+        let waiting = at("claude", "\\\\wsl.localhost\\Ubuntu\\home\\me\\app", Some(StatusState::Blocked));
+        assert_eq!(
+            group_tip(waiting.as_ref(), None, false, &[waiting.clone()]),
+            "claude \u{b7} ~/app \u{b7} 1 needs input \u{2014} double-click to rename"
+        );
+        assert_eq!(
+            group_tip(waiting.as_ref(), None, true, &[waiting.clone(), waiting.clone()]),
+            "claude \u{b7} ~/app \u{b7} Unseen activity in this group \u{b7} 2 need input \u{2014} double-click to rename"
+        );
+        // 아직 상태를 모르는 터미널은 이름 바꾸기 안내만 남는다.
+        assert_eq!(group_tip(None, None, false, &[None]), "double-click to rename");
+    }
+
+    #[test]
+    fn test_c_a2_the_tab_tip_names_the_program_the_reported_state_and_a_tab_in_another_window() {
+        let blocked = at("claude", "/work", Some(StatusState::Blocked));
+        assert_eq!(tab_tip("claude", blocked.as_ref(), false), "claude \u{b7} claude \u{b7} Needs input");
+        // 추정 상태는 탭에 보이지 않는다.
+        let estimated = at("claude", "/work", None);
+        assert_eq!(tab_tip("build", estimated.as_ref(), false), "build \u{b7} claude");
+        assert_eq!(tab_tip("build", None, false), "build");
+        // 다른 창에 있는 탭은 상태를 말하지 않는다.
+        assert_eq!(tab_tip("build", blocked.as_ref(), true), "build \u{b7} Open in another window");
     }
 
     #[test]

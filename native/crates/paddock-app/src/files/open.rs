@@ -6,6 +6,7 @@ use std::io::Read;
 use std::sync::Arc;
 
 use paddock_core::file_kind::{FileKind, HEAD_LEN, TEXT_LIMIT, extension_of, looks_binary};
+use paddock_core::text_file::{Encoded, decode_text};
 
 use super::image_load::{Limits, Pixels, RasterLoad, load_raster_with};
 use super::pdf_render::{FILE_LIMIT as PDF_LIMIT, OpenError, PdfDocument};
@@ -19,6 +20,31 @@ pub fn file_stamp(path: &str) -> Option<FileStamp> {
     std::fs::metadata(path)
         .ok()
         .and_then(|metadata| metadata.modified().ok().map(|modified| (modified, metadata.len())))
+}
+
+/// 파일을 읽되, 읽는 사이 파일이 바뀌었으면(읽기 전후의 쓴 시각·크기가 다르면) 그 결과를 버리고 다시 읽는다. 최대 `max_tries`번 읽는다.
+/// 끝내 안정되지 않으면 마지막 읽기 결과와 그 읽기 **전**의 쓴 시각을 돌려준다 — 그 시각은 지금 파일과 달라 다음 변경 확인이 다시 읽게 한다.
+///
+/// Examples
+/// --------
+/// | 읽기 전 | 읽은 뒤 | 결과                                   |
+/// |---------|---------|----------------------------------------|
+/// | A       | A       | 그 읽기 결과, 시각 A                   |
+/// | A       | B       | 버리고 다시 읽는다(B에서 B면 시각 B)   |
+pub fn read_stable<T>(
+    mut stamp: impl FnMut() -> Option<FileStamp>,
+    mut read: impl FnMut() -> T,
+    max_tries: usize,
+) -> (T, Option<FileStamp>) {
+    let mut tries = 0;
+    loop {
+        let before = stamp();
+        let content = read();
+        tries += 1;
+        if stamp() == before || tries >= max_tries.max(1) {
+            break (content, before);
+        }
+    }
 }
 
 /// 안내 탭이 보이는 이유.
@@ -45,8 +71,8 @@ pub enum NoticeReason {
 /// 파일을 읽은 결과.
 #[derive(Debug)]
 pub enum Loaded {
-    /// 텍스트 보기에 보일 내용. 잘못된 UTF-8 바이트는 대체 글자로 보인다.
-    Text { text: String, size: u64 },
+    /// 텍스트 보기에 보일 내용. 잘못된 UTF-8 바이트는 대체 글자로 보인다. `encoded`는 저장할 때 되살릴 BOM·줄바꿈 종류다.
+    Text { text: String, size: u64, encoded: Encoded },
     /// 안내 탭으로 보낸다. `size`는 파일 크기(바이트)다.
     Notice { reason: NoticeReason, size: u64 },
     /// 화면에 올릴 이미지. `original`은 파일 속 가로세로, `size`는 파일 크기(바이트)다.
@@ -160,23 +186,15 @@ fn read_text(
             Loaded::Notice { reason: NoticeReason::Binary, size }
         }
         Ok(_) => {
-            // UTF-8 BOM은 보기에서만 뗀다(파일은 그대로다).
-            let mut body = bytes;
-            if body.starts_with(b"\xef\xbb\xbf") {
-                body.drain(..3);
-            }
-            Loaded::Text { text: into_text(body), size }
+            // UTF-8 BOM은 보기에서만 떼고 `encoded`에 남긴다(저장할 때 되살린다).
+            let (text, encoded) = decode_text(bytes);
+            Loaded::Text { text, size, encoded }
         }
     }
 }
 
-/// 바이트를 글자로 만든다. UTF-8이면 복사 없이 쓰고, 아니면 잘못된 바이트만 대체 글자로 바꾼다.
-fn into_text(bytes: Vec<u8>) -> String {
-    String::from_utf8(bytes).unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
-}
-
 /// 입출력 오류를 사용자에게 보일 짧은 영어 문장 조각으로 바꾼다.
-fn describe(error: &std::io::Error) -> String {
+pub(crate) fn describe(error: &std::io::Error) -> String {
     match error.kind() {
         std::io::ErrorKind::NotFound => "the file no longer exists.".to_string(),
         std::io::ErrorKind::PermissionDenied => "permission denied.".to_string(),
@@ -405,11 +423,25 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = write(dir.path(), "a.ts", "const 한글 = 1;\r\n".as_bytes());
         match load(&path, FileKind::Text, false) {
-            Loaded::Text { text, size } => assert_eq!((text.as_str(), size), ("const 한글 = 1;\r\n", 19)),
+            Loaded::Text { text, size, .. } => assert_eq!((text.as_str(), size), ("const 한글 = 1;\r\n", 19)),
             other => panic!("expected text, got {other:?}"),
         }
         let empty = write(dir.path(), "empty.txt", b"");
         assert!(matches!(load(&empty, FileKind::Text, false), Loaded::Text { size: 0, .. }));
+    }
+
+    #[test]
+    fn test_c_edit_9_loading_text_keeps_the_bom_and_line_ending_for_saving() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write(dir.path(), "bom.txt", b"\xef\xbb\xbfa\r\nb\r\n");
+        match load(&path, FileKind::Text, false) {
+            Loaded::Text { text, encoded, .. } => {
+                assert_eq!(text, "a\r\nb\r\n");
+                assert!(encoded.bom && !encoded.lossy);
+                assert_eq!(paddock_core::text_file::encode_for_save(&text, &encoded), fs::read(&path).unwrap());
+            }
+            other => panic!("expected text, got {other:?}"),
+        }
     }
 
     #[test]
@@ -549,7 +581,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = write(dir.path(), "bom.txt", b"\xef\xbb\xbfhello");
         match load(&path, FileKind::Text, false) {
-            Loaded::Text { text, size } => assert_eq!((text.as_str(), size), ("hello", 8)),
+            Loaded::Text { text, size, .. } => assert_eq!((text.as_str(), size), ("hello", 8)),
             other => panic!("expected text, got {other:?}"),
         }
     }
@@ -587,5 +619,36 @@ mod tests {
         assert_eq!(editor("linux", "/a/run.sh"), ("xdg-open".into(), vec!["/a/run.sh".into()]));
         assert_eq!(open_command("macos", "/a/b.pdf", false), ("open".into(), vec!["/a/b.pdf".into()]));
         assert_eq!(open_command("windows", "C:/a/b.mp3", false).0, "explorer.exe");
+    }
+
+    #[test]
+    fn test_c_live_1_a_file_that_changes_while_it_is_read_is_read_again_and_the_stale_result_is_dropped() {
+        use std::time::{Duration, UNIX_EPOCH};
+        let at = |seconds: u64| Some((UNIX_EPOCH + Duration::from_secs(seconds), 1));
+        // 첫 읽기 도중 파일이 바뀐다(읽기 전 A, 읽은 뒤 B) → 그 결과는 버리고 B에서 다시 읽어 안정된 결과를 쓴다.
+        let stamps = std::cell::RefCell::new(vec![at(1), at(2), at(2), at(2)].into_iter());
+        let reads = std::cell::Cell::new(0);
+        let (content, stamp) = read_stable(
+            || stamps.borrow_mut().next().unwrap(),
+            || {
+                reads.set(reads.get() + 1);
+                reads.get()
+            },
+            3,
+        );
+        assert_eq!((content, reads.get(), stamp), (2, 2, at(2)), "the second read is the one that is used");
+        // 끝내 안정되지 않으면 `max_tries`번 읽고 마지막 읽기를 쓰되, 시각은 읽기 전의 것이라 다음 확인이 다시 읽는다.
+        let counter = std::cell::Cell::new(0);
+        let unstable = || {
+            counter.set(counter.get() + 1);
+            at(counter.get())
+        };
+        let (_, last_before) = read_stable(unstable, || (), 3);
+        assert_eq!(counter.get(), 6, "three reads, two stamps each");
+        assert_eq!(last_before, at(5));
+        // 한 번만 읽어도 되는 설정(0은 1로 본다).
+        let reads_once = std::cell::Cell::new(0);
+        read_stable(|| None, || reads_once.set(reads_once.get() + 1), 0);
+        assert_eq!(reads_once.get(), 1);
     }
 }

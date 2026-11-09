@@ -1,0 +1,12 @@
+# 폴더 검색(WSL 홈): WSL 배포판의 홈 폴더(`\\wsl.localhost\<배포판>\home\<사용자>`)에 있는 터미널도 검색할 폴더가 없다. 안내만 보이고 훑지 않는다. 기본 셸은 WSL이다.
+waittabs 1 @30000
+send cd ~\r
+wait 4000
+key ctrl-shift-f
+waitstate search open=y scope=- @5000
+waitstate search-notice No folder to search. @5000
+state search-nofolder-wsl
+shot search-nofolder-wsl
+key ctrl-shift-f
+waitstate search open=n @5000
+quit

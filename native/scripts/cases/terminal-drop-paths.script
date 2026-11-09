@@ -1,0 +1,15 @@
+# 동기화 ② 터미널에 파일 끌어 놓기(클립보드를 바꾸지 않는 낮 점검, C-D69): `act termdrop`이 `on_drop::<ExternalPaths>`와 같은 경로로 경로 글자를 붙인다.
+# PowerShell 탭은 빈칸이 든 경로를 큰따옴표로 감싸고, 뒤에 빈칸이 하나 붙으며 Enter는 없다. WSL 탭은 `terminal-drop-paths-wsl.script`가 본다.
+# 이 대본은 실행 이름이 terminal-drop-paths일 때 임시 홈 경로를 쓴다. 기본 셸은 PowerShell이다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send mkdir "$env:USERPROFILE\\My Files" -Force | Out-Null; Set-Content "$env:USERPROFILE\\My Files\\a.png" x; Set-Content "$env:USERPROFILE\\b.png" y\r
+send echo READY-DROP\r
+waitline READY-DROP @20000
+# PowerShell 탭: 입력줄에 경로 둘이 들어간다(Enter 없이). 입력을 지운 뒤(Ctrl+C) 다음 시험으로 간다.
+act termdrop C:/Temp/pdk-run/home-terminal-drop-paths/My Files/a.png|C:/Temp/pdk-run/home-terminal-drop-paths/b.png
+wait 800
+dump powershell-line
+key ctrl-c
+wait 500
+quit

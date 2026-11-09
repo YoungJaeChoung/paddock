@@ -112,6 +112,7 @@ impl WorkWindow {
         cx.notify();
     }
 
+    #[cfg(any(test, feature = "automation"))]
     pub(crate) fn scm_stage_all(
         &mut self,
         _window: &mut Window,
@@ -148,18 +149,18 @@ impl WorkWindow {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.git.is_committing() {
-            return;
-        }
-        let n_staged = self.git.ready().map_or(0, |repo| repo.status.n_in(Section::Staged));
-        let message = self.commit_message(cx);
-        match commit_state(n_staged, &message) {
-            CommitState::Ready => {
-                self.scm.note = None;
-                self.git.commit(&message);
+        // 커밋이 진행 중이면 다시 시작하지 않는다.
+        if !self.git.is_committing() {
+            let n_staged = self.git.ready().map_or(0, |repo| repo.status.n_in(Section::Staged));
+            let message = self.commit_message(cx);
+            match commit_state(n_staged, &message) {
+                CommitState::Ready => {
+                    self.scm.note = None;
+                    self.git.commit(&message);
+                }
+                CommitState::NeedsMessage => self.scm.note = Some("Enter a commit message.".to_string()),
+                CommitState::NothingStaged => {}
             }
-            CommitState::NeedsMessage => self.scm.note = Some("Enter a commit message.".to_string()),
-            CommitState::NothingStaged => {}
         }
         cx.notify();
     }
@@ -229,7 +230,7 @@ impl WorkWindow {
         result: Result<Vec<DiffFile>, String>,
         cx: &mut Context<Self>,
     ) {
-        if self.workspace.files().open_keys().any(|open| open == key) {
+        if self.workspace.open_file_keys().any(|open| open == key) {
             let content = match result {
                 Ok(files) => FileContent::Diff(build_diff(files, cx)),
                 Err(message) => FileContent::Failed(message),

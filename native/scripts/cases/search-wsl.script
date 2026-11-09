@@ -1,0 +1,26 @@
+# 폴더 검색(WSL 공유 폴더): 터미널이 WSL 폴더에 있으면 검색은 `\\wsl.localhost\<배포판>\…` 공유를 직접 훑는다(자식 프로세스 없음, 9P 읽기). 파일 300개(각각 needle 한 줄)와 .git 안의 일치 하나를
+# 만들고 검색해 결과 300건·300개 파일(.git 안은 빠짐)이 나오는 시간(waitstate 줄의 found after ms)과 창 스레드가 일한 최대 시간(ui-max-busy-ms)을 남긴다. 기본 셸은 WSL이다.
+waittabs 1 @30000
+send unset HISTFILE; rm -rf /tmp/pdk-search && mkdir -p /tmp/pdk-search/proj/src /tmp/pdk-search/proj/.git && ln -sf /bin/bash /tmp/pdk-search/claude && export PATH=/tmp/pdk-search:$PATH && cd /tmp/pdk-search/proj && for i in $(seq 1 300); do echo "line needle $i" > f$i.txt; done && echo "needle in git" > .git/x && echo "no match" > src/a.js\r
+send echo READY-WSL-SEARCH\r
+waitline READY-WSL-SEARCH @30000
+send claude -c 'for i in $(seq 1 200); do echo work $i; sleep 0.5; done'\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @20000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+act resetgap
+key ctrl-shift-f
+waitstate search open=y @5000
+act search needle
+waitstate n_results=300 n_files=300 capped=n state=done @120000
+state search-wsl
+act search nomatchanywhere
+waitstate n_results=0 n_files=0 capped=n state=done @120000
+state search-wsl-none
+shot search-wsl
+send rm -rf /tmp/pdk-search\r
+wait 500
+quit

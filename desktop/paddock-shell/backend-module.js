@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { fileURLToPath } = require('node:url');
 const { execFile, spawn, spawnSync } = require('node:child_process');
 const express = require('express');
 const { ContainerModule, injectable, inject, decorate } = require('@theia/core/shared/inversify');
@@ -17,6 +18,7 @@ const { CodexUsage } = require('./codex-usage');
 const { AccountSessions } = require('./account-session');
 const { readJson, writeJson, usageError } = require('./usage-files');
 const { MemoryHook, memoryHookCommand, setMemoryNotice } = require('./memory-hook-settings');
+const { AgentStatusHook, agentStatusHookCommand, setAgentStatusHook } = require('./agent-status-hook-settings');
 const { flagSettingsPath, buildFlagSettings, writeFlagSettings } = require('./claude-flag-settings');
 const { ClaudeWrapper, installClaudeWrapper } = require('./claude-wrapper');
 const { LegacyCleanup, cleanSettingsFiles, describeCleanup } = require('./legacy-settings-cleanup');
@@ -48,6 +50,11 @@ function paddockConfigDirectory() {
 /** 앱에 들어 있는 메모리 안내 훅 스크립트 원본. 백엔드는 하나의 번들로 묶이므로 앱 폴더의 paddock-shell에서 찾는다. */
 function memoryHookSource() {
     return path.join(process.env.THEIA_APP_PROJECT_PATH || process.cwd(), 'paddock-shell', MemoryHook.SCRIPT_NAME);
+}
+
+/** 앱에 들어 있는 에이전트 상태 훅 스크립트 원본. 메모리 안내 훅과 같은 곳에서 찾는다. */
+function agentStatusHookSource() {
+    return path.join(process.env.THEIA_APP_PROJECT_PATH || process.cwd(), 'paddock-shell', AgentStatusHook.SCRIPT_NAME);
 }
 
 /** 실제 경로. 링크를 따라갈 수 없으면 입력 경로를 그대로 쓴다. */
@@ -276,6 +283,8 @@ const accountSessions = new AccountSessions({ accounts, readWslInfo, readWindows
  * `POST /paddock/memory-notice?enabled=true|false[&minimumMb=N]` → 가용 메모리가 부족할 때 에이전트에게 알리는 훅을 같은 Paddock 전용 설정 파일에 넣거나 뺀다.
  *   Linux 앱은 이 컴퓨터의 파일, Windows 앱은 WSL 안의 파일에 쓴다.
  *   훅이 `sh`와 `/proc/meminfo`를 쓰므로 macOS·Windows 이 컴퓨터 쪽은 `{ state: 'unsupported' }`다. 응답은 `{ state: 'on'|'off'|'unsupported' }`.
+ * `POST /paddock/agent-status-hook?enabled=true|false` → 에이전트(Claude Code)의 상태를 터미널 신호로 알리는 훅을 같은 Paddock 전용 설정 파일에 넣거나 뺀다.
+ *   적용 범위와 응답은 메모리 안내와 같다. 기본은 켬이라 `state.json`에 적힌 적이 없으면 켠 것으로 본다.
  */
 class PaddockStatusRoutes {
     constructor() {
@@ -292,6 +301,46 @@ class PaddockStatusRoutes {
         this.pendingDefaultWrites = Promise.resolve();
         this.liveCodexUsage = new CodexUsage();
         this.accountUsage = new AccountUsage({ accounts, readWslInfo, liveCodexUsage: this.liveCodexUsage });
+        // 폴더 키별 `.git` 읽기 결과 `{ mtimeMs, result }`. `.git`의 수정 시각이 그대로면 다시 읽지 않는다.
+        this.dotGitCache = new Map();
+    }
+
+    /**
+     * 폴더의 `.git` 한 항목을 읽어 `{ directory: true }`·`{ content }`(앞 4KB)로 돌려준다.
+     * 폴더는 있는데 `.git`이 없으면 `{ none: true }`, 폴더가 없거나 읽지 못하면 null이다. 저장소 키 판정은 `worktree-repo.js`가 한다.
+     */
+    async dotGitOf(
+        key,
+    ) {
+        let result = null;
+        try {
+            const folder = fileURLToPath(key);
+            const gitPath = path.join(folder, '.git');
+            const stat = await fs.promises.stat(gitPath).catch(error => (['ENOENT', 'ENOTDIR'].includes(error.code) ? null : Promise.reject(error)));
+            if (stat === null) {
+                const folderStat = await fs.promises.stat(folder).catch(() => null);
+                result = folderStat?.isDirectory() ? { none: true } : null;
+            } else if (this.dotGitCache.get(key)?.mtimeMs === stat.mtimeMs) {
+                result = this.dotGitCache.get(key).result;
+            } else {
+                if (stat.isDirectory()) {
+                    result = { directory: true };
+                } else {
+                    const handle = await fs.promises.open(gitPath, 'r');
+                    try {
+                        const buffer = Buffer.alloc(4096);
+                        const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+                        result = { content: buffer.toString('utf8', 0, bytesRead) };
+                    } finally {
+                        await handle.close();
+                    }
+                }
+                this.dotGitCache.set(key, { mtimeMs: stat.mtimeMs, result });
+            }
+        } catch {
+            result = null;
+        }
+        return result;
     }
 
     configure(
@@ -345,6 +394,22 @@ class PaddockStatusRoutes {
                 detached: wslMemory ? wslMemory.detached : [],
                 advice: memoryAdvice({ windowsTotal: total, wslTotal: wslMemory?.total, swapTotal: wslMemory?.swap }),
             });
+        });
+        // 폴더마다 `.git` 한 항목만 읽어 돌려준다(`worktree-repo.js`가 저장소 키로 바꾼다). git은 띄우지 않는다.
+        // 쿼리 `folders`는 폴더 키(file URI) 배열의 JSON이다. 읽지 못한 폴더는 null이다.
+        app.get('/paddock/repo-roots', async (request, response) => {
+            let keys = [];
+            try {
+                const parsed = JSON.parse(String(request.query.folders || '[]'));
+                keys = Array.isArray(parsed) ? parsed.filter(key => typeof key === 'string').slice(0, 200) : [];
+            } catch {
+                keys = [];
+            }
+            const roots = {};
+            await Promise.all(keys.map(async (key) => {
+                roots[key] = await this.dotGitOf(key);
+            }));
+            response.json(roots);
         });
         app.get('/paddock/foreground', async (request, response) => {
             const names = {};
@@ -484,6 +549,16 @@ class PaddockStatusRoutes {
                     .catch(error => response.status(error.statusCode || 500).json({ error: error instanceof Error ? error.message : String(error) }));
             }
         });
+        app.post('/paddock/agent-status-hook', (request, response) => {
+            const { enabled } = request.query;
+            if (enabled !== 'true' && enabled !== 'false') {
+                response.status(400).json({ error: 'enabled must be true or false' });
+            } else {
+                this.queueDefaultWrite(() => this.setAgentStatusHook({ enabled: enabled === 'true' }))
+                    .then(result => response.json(result))
+                    .catch(error => response.status(error.statusCode || 500).json({ error: error instanceof Error ? error.message : String(error) }));
+            }
+        });
         app.get('/paddock/startup-warnings', (request, response) => {
             response.json({ warnings: this.startupWarnings });
         });
@@ -559,6 +634,52 @@ class PaddockStatusRoutes {
             else state = 'off';
         }
         if (state !== 'unsupported') this.updateState({ memory: { enabled, minimumMb } });
+        await this.writeFlagFiles();
+        return { state };
+    }
+
+    /**
+     * 에이전트 상태 훅 스크립트를 이 컴퓨터(Linux)와 WSL 안에 놓거나(켬) 꺼짐 표시를 둔다(끔). 설정 파일은 건드리지 않는다.
+     * 켠 적 없는 곳을 끄면 파일을 만들지 않는다. 적용한 곳이 없으면(macOS·WSL이 없는 Windows) 'unsupported'다.
+     */
+    async placeAgentStatusHook(
+        enabled,
+    ) {
+        let state = 'unsupported';
+        const source = agentStatusHookSource();
+        // 장소마다 따로 시도한다. 한 곳이 실패해도 다른 곳은 놓고, 첫 오류를 마지막에 던진다.
+        const failures = [];
+        if (process.platform === 'linux') {
+            try {
+                state = setAgentStatusHook({ scriptFile: path.join(this.usageDirectory(), AgentStatusHook.SCRIPT_NAME), source, enabled });
+            } catch (error) {
+                failures.push(error);
+            }
+        }
+        const wslInfo = await readWslInfo();
+        if (wslInfo.home && wslInfo.linuxHome) {
+            try {
+                const { toLocal, configDirectory } = wslPaths(wslInfo);
+                const script = toLocal(`${configDirectory}/usage/${AgentStatusHook.SCRIPT_NAME}`);
+                if (enabled || fs.existsSync(script)) state = setAgentStatusHook({ scriptFile: script, source, enabled });
+                else state = 'off';
+            } catch (error) {
+                failures.push(error);
+            }
+        }
+        if (failures.length) throw failures[0];
+        return state;
+    }
+
+    /**
+     * 에이전트 상태 훅을 켜거나 끈다. 스크립트를 놓고 켜짐 여부를 `usage/state.json`에 적은 뒤 Paddock 전용 설정 파일을 다시 쓴다.
+     * 기본은 켬이다(`state.statusHook`가 없으면 켠 것으로 본다). 사용자의 Claude 설정 파일은 건드리지 않는다.
+     */
+    async setAgentStatusHook(
+        { enabled },
+    ) {
+        const state = await this.placeAgentStatusHook(enabled);
+        if (state !== 'unsupported') this.updateState({ statusHook: { enabled } });
         await this.writeFlagFiles();
         return { state };
     }
@@ -674,6 +795,9 @@ class PaddockStatusRoutes {
                 this.startupWarnings.push(`${label}: ${error instanceof Error ? error.message : String(error)}`);
             }
         };
+        // 에이전트 상태 훅은 기본 켬이라 스크립트를 이 앱 판으로 다시 놓는다(끈 상태면 꺼짐 표시를 유지한다).
+        // 복사에 실패해도 아래 설정 파일 쓰기는 이어간다. 스크립트가 없는 곳에는 설정 파일이 훅 명령을 넣지 않는다.
+        await attempt('The agent status hook script could not be installed', () => this.placeAgentStatusHook(state.statusHook?.enabled !== false));
         await attempt('Paddock Claude settings could not be written', async () => {
             if (state.claude === 'on') await this.installStatusLineScripts();
             // 켜져 있던 메모리 안내는 스크립트도 이 앱 판으로 다시 놓는다. 이 경로가 설정 파일도 함께 쓴다.
@@ -766,7 +890,10 @@ class PaddockStatusRoutes {
             }
             const hookScript = path.join(configDirectory, 'usage', MemoryHook.SCRIPT_NAME);
             const hook = process.platform === 'linux' && state.memory?.enabled === true ? memoryHookCommand(hookScript, state.memory.minimumMb) : null;
-            writeFlagSettings(flagSettingsPath(configDirectory), buildFlagSettings({ statusLineCommand: statusLineCommandText, memoryHookCommand: hook }));
+            // 스크립트가 없으면(복사 실패) 훅 명령을 넣지 않는다. 넣으면 에이전트가 이벤트마다 훅 오류를 띄운다.
+            const statusHookScript = path.join(configDirectory, 'usage', AgentStatusHook.SCRIPT_NAME);
+            const statusHook = process.platform === 'linux' && state.statusHook?.enabled !== false && fs.existsSync(statusHookScript) ? agentStatusHookCommand(statusHookScript) : null;
+            writeFlagSettings(flagSettingsPath(configDirectory), buildFlagSettings({ statusLineCommand: statusLineCommandText, memoryHookCommand: hook, statusHookCommand: statusHook }));
         });
         const wslInfo = await readWslInfo();
         if (wslInfo.home && wslInfo.linuxHome) {
@@ -778,7 +905,9 @@ class PaddockStatusRoutes {
                 const statusLineCommandText = state.claude === 'on' && wslInfo.node
                     ? [wslInfo.node, `${wslConfigDirectory}/usage/claude-statusline.cjs`, `${wslConfigDirectory}/usage/claude.json`].map(quote).join(' ') : null;
                 const hook = state.memory?.enabled === true ? memoryHookCommand(`${wslConfigDirectory}/usage/${MemoryHook.SCRIPT_NAME}`, state.memory.minimumMb) : null;
-                writeFlagSettings(toLocal(flagSettingsPath(wslConfigDirectory, path.posix.join)), buildFlagSettings({ statusLineCommand: statusLineCommandText, memoryHookCommand: hook }));
+                const statusHookScript = `${wslConfigDirectory}/usage/${AgentStatusHook.SCRIPT_NAME}`;
+                const statusHook = state.statusHook?.enabled !== false && fs.existsSync(toLocal(statusHookScript)) ? agentStatusHookCommand(statusHookScript) : null;
+                writeFlagSettings(toLocal(flagSettingsPath(wslConfigDirectory, path.posix.join)), buildFlagSettings({ statusLineCommand: statusLineCommandText, memoryHookCommand: hook, statusHookCommand: statusHook }));
             });
         }
         if (failures.length) throw failures[0];

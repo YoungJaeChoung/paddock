@@ -29,7 +29,7 @@ gpui-kit = { git = "https://github.com/longbridge/gpui-component", rev = "9b7655
 alacritty_terminal = "0.26"
 interprocess = "2"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"
 rand = "0.8"
 polling = "3"
@@ -48,6 +48,11 @@ hayro = "0.8"
 # SVG를 직접 읽고 그린다(<image href>를 거부하는 리졸버를 주려고 gpui의 SVG 렌더러를 쓰지 않는다). gpui가 쓰는 판(0.46)에 맞춘다.
 usvg = "0.46"
 resvg = "0.46"
+# 폴더 검색: ripgrep의 검색 엔진을 라이브러리로 앱 스레드에서 돌린다(자식 프로세스 없음). ignore는 이미 lock에 있던 판이다.
+grep-searcher = "0.1"
+grep-regex = "0.1"
+grep-matcher = "0.1"
+ignore = "0.4"
 tracing = "0.1"
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
@@ -66,7 +71,10 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_Input_Ime",
     "Win32_UI_Shell",
     "Win32_System_Com",
+    "Win32_System_SystemInformation",
 ] }
+# 자동 점검 빌드가 같은 순간의 그래픽 메모리 사용량(DXGI)을 읽는 데 쓴다. GPUI가 이미 쓰는 판(0.62)에 맞춘다.
+windows = { version = "0.62", features = ["Win32_Graphics_Dxgi", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
 # GPUI 창의 운영체제 창 핸들을 얻어 입력기 조합을 마치게 하는 데 쓴다(Windows).
 raw-window-handle = "0.6"
 

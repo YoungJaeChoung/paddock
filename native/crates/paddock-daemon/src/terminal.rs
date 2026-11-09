@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
+use paddock_core::account_session::SessionIdentity;
 use paddock_core::agent_account::AccountProfile;
 use paddock_core::claude_wrapper_path::with_wrapper_path;
 use paddock_core::replay_ring::ReplayRing;
@@ -10,14 +11,16 @@ use paddock_core::shell_catalog::{ShellSpec, shell_spec};
 use paddock_core::terminal_history::{HistoryInput, HistoryLimits, HistoryRecord, TrailingDebounce, build_record};
 use paddock_core::wsl_probe::{MARKER, forwarded_wslenv};
 use paddock_protocol::frame::Frame;
-use paddock_protocol::message::{Attached, Launch, New, TerminalInfo, TerminalState, kind};
+use paddock_protocol::message::{
+    Attached, CheckIdleReply, Launch, New, StopAgent, StopAgentReply, TerminalInfo, TerminalState, kind,
+};
 use paddock_protocol::shared_config::config_dir;
 
 use crate::activity::{Observed, QUERY_REPLY, Tracker, now_ms, refresh_terminals};
 use crate::history::{self, AgentContext, History};
 use crate::log;
 use crate::outbox::Outbox;
-use crate::probe::{Probe, ProbeTarget, Reading, WslTarget};
+use crate::probe::{Probe, ProbeTarget, Reading, SystemProbe, WslTarget};
 use crate::pty::{self, PtyHandle, PtyMsg};
 
 /// 터미널마다 보관하는 원시 출력 바이트 수(1 MiB).
@@ -350,6 +353,60 @@ impl Terminal {
         })
     }
 
+    /// 이 터미널 앞쪽 에이전트(claude)를 `request`가 가리키는 프로세스와 대조해 멈춘다. 셸·다른 프로그램은 건드리지 않는다.
+    ///
+    /// 앞쪽 프로세스를 지금 다시 읽어 확인하고(저장해 둔 값을 믿지 않는다), Linux는 SIGTERM, Windows의 WSL은 WSL 안의 고정 스크립트로 보낸다.
+    /// Windows 네이티브는 거부한다.
+    pub fn stop_agent(
+        &self,
+        request: &StopAgent,
+    ) -> StopAgentReply {
+        let target = self.probe_target();
+        let reply = |message: &str| StopAgentReply { id: self.id, stopped: false, message: message.to_string() };
+        match target {
+            None => reply(crate::stop::CHANGED),
+            #[cfg(windows)]
+            Some(ProbeTarget { wsl: None, .. }) => reply(crate::stop::WINDOWS_NATIVE),
+            Some(target) => {
+                let read = || read_front(&target);
+                let signal = |pid: u32| {
+                    #[cfg(unix)]
+                    let result = {
+                        let _ = &target;
+                        crate::stop::terminate(pid)
+                    };
+                    #[cfg(windows)]
+                    let result = match &target.wsl {
+                        Some(wsl) => crate::probe::wsl::stop_process(
+                            wsl.distribution.as_deref(),
+                            pid,
+                            &wsl.marker,
+                            request.start_mark,
+                        ),
+                        None => Err(crate::stop::WINDOWS_NATIVE.to_string()),
+                    };
+                    result
+                };
+                crate::stop::stop_agent(request, &read, &signal, crate::stop::STOP_TIMEOUT, crate::stop::STOP_POLL)
+            }
+        }
+    }
+
+    /// 이 터미널 앞쪽이 지금 셸 자신인지 다시 읽어 답한다(`Start in this terminal with …`가 일하는 중인 터미널을 끝내지 않게 한다).
+    /// 저장해 둔 상태는 Enter 직후 몇 초 낡을 수 있어 쓰지 않는다.
+    pub fn check_idle(&self) -> CheckIdleReply {
+        let front = match self.probe_target() {
+            Some(target) => read_front(&target),
+            None => crate::stop::Front::Unreadable,
+        };
+        let (idle, message) = match front {
+            crate::stop::Front::Gone => (true, ""),
+            crate::stop::Front::Unreadable => (false, SessionIdentity::NOT_CHECKED),
+            crate::stop::Front::Agent(_) | crate::stop::Front::Other => (false, SessionIdentity::BUSY_SHELL),
+        };
+        CheckIdleReply { id: self.id, idle, message: message.to_string() }
+    }
+
     /// 앞쪽 프로그램이 이어 열 수 있는 에이전트이면 그 대화를 찾는다(같은 프로세스에서 이미 찾았으면 다시 읽지 않는다).
     pub fn find_agent(
         &self,
@@ -475,9 +532,30 @@ impl Terminal {
     }
 }
 
+/// 터미널 앞쪽을 지금 읽어 모양을 가른다(저장해 둔 값을 쓰지 않는다).
+fn read_front(target: &ProbeTarget) -> crate::stop::Front {
+    let reading = SystemProbe.read(std::slice::from_ref(target)).remove(&target.id);
+    crate::stop::front_of(reading.as_ref())
+}
+
 /// WSL 안의 셸에 붙이는 터미널 표지: 데몬 프로세스 번호와 터미널 번호.
 fn marker_of(id: u32) -> String {
     format!("{}-{id}", std::process::id())
+}
+
+/// `marker_of`의 거꾸로: 이 데몬이 붙인 표지에서 터미널 번호를 꺼낸다. 다른 데몬의 표지거나 모양이 틀리면 None이다.
+///
+/// Examples
+/// --------
+/// | 표지               | 결과                       |
+/// |--------------------|----------------------------|
+/// | `<내 pid>-7`       | `Some(7)`                  |
+/// | `<다른 pid>-7`     | None                       |
+/// | `abc`              | None                       |
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn marker_id(marker: &str) -> Option<u32> {
+    let (process, id) = marker.rsplit_once('-')?;
+    (process == std::process::id().to_string()).then(|| id.parse().ok()).flatten()
 }
 
 /// 기록을 쓰다 실패했음을 데몬 기록 파일에 남긴다. 사유만 적고 화면 출력·폴더는 적지 않는다.
@@ -706,6 +784,13 @@ impl Registry {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn test_c_d76_a_marker_names_the_terminal_only_for_this_daemon() {
+        assert_eq!(super::marker_id(&super::marker_of(7)), Some(7));
+        assert_eq!(super::marker_id(&format!("{}-7", std::process::id() + 1)), None);
+        assert_eq!(super::marker_id("abc"), None);
+    }
+
     use super::*;
 
     /// 유휴 시간 0으로 판정해 지금 데몬이 할 일이 없는 상태인지 본다.

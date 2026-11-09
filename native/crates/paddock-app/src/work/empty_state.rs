@@ -14,7 +14,7 @@ pub fn empty_state(has_unassigned: bool) -> impl IntoElement {
     let mut steps = div()
         .flex()
         .flex_col()
-        .pl(zpx(size::STEPS_PADDING_LEFT))
+        .pl(zpx(size::STEPS_PADDING_BASE + crate::look::sidebar_indent()))
         .pr(zpx(size::STEPS_PADDING_RIGHT))
         .pb(zpx(size::STEPS_PADDING_BOTTOM))
         .text_size(zpx(text::SMALL))

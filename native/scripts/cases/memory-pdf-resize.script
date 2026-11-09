@@ -1,0 +1,54 @@
+# PDF 분리 창 크기 조절 진단(덩어리 39): PDF를 분리 창(900×600)으로 연 뒤 창 크기를 여러 번 바꿀 때마다 Private·그래픽 몫·반납 기록을 잰다.
+# 크기가 바뀌면 PDF 보기가 쪽 그림을 새 배율로 다시 그리고 옛 그림을 반납한다 — 분리 창에서 그린 그림이 분리 창의 텍스처 보관소에서 풀리는지 본다. 임시 홈 이름 memory-pdf-resize.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send echo MEM-PR\r
+waitline MEM-PR @20000
+act openpath C:/Temp/pdk-run/home-memory-pdf-resize/proj-fdp/sample-3p.pdf
+waitstate kind=pdf state=pdf pages=3 @15000
+wait 8000
+mem z-before
+gpumem z-before
+act detachsize 900 600
+act movetowindow file C:/Temp/pdk-run/home-memory-pdf-resize/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 8000
+mem z-open
+gpumem z-open
+act resizewin file C:/Temp/pdk-run/home-memory-pdf-resize/proj-fdp/sample-3p.pdf 1100 700
+wait 6000
+mem z-size-1
+gpumem z-size-1
+act resizewin file C:/Temp/pdk-run/home-memory-pdf-resize/proj-fdp/sample-3p.pdf 800 500
+wait 6000
+mem z-size-2
+gpumem z-size-2
+act resizewin file C:/Temp/pdk-run/home-memory-pdf-resize/proj-fdp/sample-3p.pdf 1000 650
+wait 6000
+mem z-size-3
+gpumem z-size-3
+act resizewin file C:/Temp/pdk-run/home-memory-pdf-resize/proj-fdp/sample-3p.pdf 1200 750
+wait 6000
+mem z-size-4
+gpumem z-size-4
+act resizewin file C:/Temp/pdk-run/home-memory-pdf-resize/proj-fdp/sample-3p.pdf 850 550
+wait 6000
+mem z-size-5
+gpumem z-size-5
+act resizewin file C:/Temp/pdk-run/home-memory-pdf-resize/proj-fdp/sample-3p.pdf 1100 700
+wait 6000
+mem z-size-6
+gpumem z-size-6
+act resizewin file C:/Temp/pdk-run/home-memory-pdf-resize/proj-fdp/sample-3p.pdf 900 600
+wait 6000
+mem z-size-7
+gpumem z-size-7
+act moveback file C:/Temp/pdk-run/home-memory-pdf-resize/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf selected shown place=main @10000
+wait 10000
+mem z-back
+gpumem z-back
+wait 20000
+mem z-final
+gpumem z-final
+quit

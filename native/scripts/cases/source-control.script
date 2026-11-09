@@ -5,7 +5,7 @@ waitstate cwd=C: @30000
 send $p = "$env:USERPROFILE\\proj-scm"; mkdir "$p\\src", "$env:USERPROFILE\\bin", "$env:USERPROFILE\\plain" -Force | Out-Null; cd $p; git init -q -b main; git config user.name Tester; git config user.email t@example.com; Set-Content a.txt one; Set-Content src\\b.txt two; git add -A; git commit -q -m base; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"\r
 send echo READY-SCM\r
 waitline READY-SCM @30000
-send claude -n 400 127.0.0.1\r
+send claude.exe -n 400 127.0.0.1\r
 waitstate program=claude @20000
 waitstate row folder @20000
 waitstate scm state=ready @15000

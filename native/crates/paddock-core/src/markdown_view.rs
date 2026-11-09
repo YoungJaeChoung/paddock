@@ -5,6 +5,9 @@
 //! 주소도 렌더러가 같은 이미지 원천·링크 처리기로 넘기므로 이 규칙을 그대로 지난다.
 use std::collections::HashMap;
 
+use crate::paths::parent_of;
+use crate::work_model::WorkState;
+
 /// Markdown 탭이 보여 주는 방식.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum View {
@@ -65,6 +68,24 @@ impl ViewChoices {
     ) {
         self.chosen.insert(path.to_string(), view);
     }
+
+    /// 파일이나 폴더의 이름이 `from`에서 `to`로 바뀐 뒤 그 아래 파일들이 고른 보기 모드를 새 경로로 옮긴다.
+    pub fn renamed(
+        &mut self,
+        from: &str,
+        to: &str,
+    ) {
+        let moved: Vec<(String, String)> = self
+            .chosen
+            .keys()
+            .filter_map(|path| crate::paths::rebased(from, to, path).map(|new_path| (path.clone(), new_path)))
+            .collect();
+        for (old_path, new_path) in moved {
+            if let Some(view) = self.chosen.remove(&old_path) {
+                self.chosen.insert(new_path, view);
+            }
+        }
+    }
 }
 
 /// 이미지로 읽을 수 있는 확장자(소문자). 본문 속 이미지 주소가 이 밖이면 파일을 읽지 않는다.
@@ -100,6 +121,27 @@ fn percent_decode(text: &str) -> String {
         }
     }
     String::from_utf8(decoded).unwrap_or_else(|_| text.to_string())
+}
+
+/// Markdown 파일의 본문 이미지를 읽을 수 있는 뿌리 폴더. 파일을 품은 작업 폴더(여럿이면 가장 가까운 것)이고, 없으면 문서가 있는 폴더다.
+///
+/// 파일 탭이 놓인 칸(어느 묶음이 연 탭인지)은 보지 않는다: 같은 파일은 어느 칸에서 열어도 같은 뿌리를 가져야 이미지가 달라지지 않는다.
+///
+/// Examples
+/// --------
+/// | 작업 폴더         | 파일                  | 결과              |
+/// |-------------------|-----------------------|-------------------|
+/// | `~`, `~/repo`     | `~/repo/docs/a.md`    | `~/repo`          |
+/// | `~/repo`          | `~/repo/a.md`         | `~/repo`          |
+/// | `~/repo`          | `/tmp/notes/a.md`     | `/tmp/notes`      |
+pub fn image_root_for(
+    work: &WorkState,
+    file: &str,
+) -> String {
+    match work.folder_containing(file) {
+        Some(folder) => folder.to_string(),
+        None => parent_of(file),
+    }
 }
 
 /// 본문 속 이미지 주소를 디스크의 파일 경로로 푼다. 작업 폴더(`root_dir`) 안의 로컬 이미지 파일이 아니면 None이다.
@@ -427,6 +469,17 @@ mod tests {
     }
 
     #[test]
+    fn test_c_md_image_root_is_the_work_folder_holding_the_file_not_the_pane_it_sits_in() {
+        let mut work = WorkState::default();
+        work.ensure_folder("/home/me");
+        work.ensure_folder("/home/me/repo");
+        assert_eq!(image_root_for(&work, "/home/me/repo/docs/a.md"), "/home/me/repo", "the nearest folder wins");
+        assert_eq!(image_root_for(&work, "/home/me/notes.md"), "/home/me");
+        assert_eq!(image_root_for(&work, "/tmp/notes/a.md"), "/tmp/notes", "outside every folder: the document folder");
+        assert_eq!(image_root_for(&WorkState::default(), "/tmp/notes/a.md"), "/tmp/notes");
+    }
+
+    #[test]
     fn test_c_md_6_image_addresses_must_stay_inside_the_work_folder() {
         let inside = |url: &str| resolve_image_path("C:/proj/docs", "C:/proj", url);
         assert_eq!(inside("../shot.png").as_deref(), Some("C:/proj/shot.png"));
@@ -461,7 +514,7 @@ mod tests {
     }
 
     #[test]
-    fn test_c_review_4_top_level_quotes_split_out_and_the_rest_stays_whole() {
+    fn test_top_level_quotes_split_out_and_the_rest_stays_whole() {
         let parts = split_blockquotes("intro\n\n> q1\n> q2\n\nafter\n");
         assert_eq!(
             parts,
@@ -473,7 +526,7 @@ mod tests {
     }
 
     #[test]
-    fn test_c_review_4_a_greater_than_inside_a_code_fence_is_not_a_quote_and_lazy_lines_stay_in_the_quote() {
+    fn test_a_greater_than_inside_a_code_fence_is_not_a_quote_and_lazy_lines_stay_in_the_quote() {
         let fenced = "```\n> not a quote\n```\n";
         assert_eq!(split_blockquotes(fenced), [Segment::Body(fenced.into())]);
         let lazy = split_blockquotes("> first\nlazy continuation\n\nnext\n");
@@ -485,7 +538,7 @@ mod tests {
     }
 
     #[test]
-    fn test_c_review_4_reference_link_definitions_are_copied_to_every_piece_so_links_keep_working() {
+    fn test_reference_link_definitions_are_copied_to_every_piece_so_links_keep_working() {
         let parts = split_blockquotes("see [site]\n\n> quoted [site]\n\n[site]: https://example.com\n");
         assert_eq!(parts.len(), 3);
         for part in &parts {

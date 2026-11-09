@@ -1,0 +1,17 @@
+   Compiling paddock-core v0.1.0 (/home/youngjae/paddock-workspace/paddock/native/crates/paddock-core)
+   Compiling rust-embed v8.13.0
+   Compiling tree-sitter v0.26.13
+   Compiling rust-i18n v4.2.4
+   Compiling gpui-kit-assets v0.7.3 (https://github.com/longbridge/gpui-component?rev=9b7655158f5581c58025af7f8fe1753de274e291#9b765515)
+   Compiling gpui-component v0.7.3 (https://github.com/longbridge/gpui-component?rev=9b7655158f5581c58025af7f8fe1753de274e291#9b765515)
+   Compiling paddock-protocol v0.1.0 (/home/youngjae/paddock-workspace/paddock/native/crates/paddock-protocol)
+   Compiling paddock-daemon v0.1.0 (/home/youngjae/paddock-workspace/paddock/native/crates/paddock-daemon)
+   Compiling gpui-kit v0.7.3 (https://github.com/longbridge/gpui-component?rev=9b7655158f5581c58025af7f8fe1753de274e291#9b765515)
+   Compiling paddock-app v0.1.0 (/home/youngjae/paddock-workspace/paddock/native/crates/paddock-app)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 29.59s
+  Executable unittests src/lib.rs (target/x86_64-pc-windows-msvc/debug/deps/paddock_app-5ad839da90f39936.exe)
+  Executable unittests src/main.rs (target/x86_64-pc-windows-msvc/debug/deps/paddock_app-b09c78c34469b850.exe)
+  Executable unittests src/lib.rs (target/x86_64-pc-windows-msvc/debug/deps/paddock_core-370e34e88154f7b9.exe)
+  Executable unittests src/main.rs (target/x86_64-pc-windows-msvc/debug/deps/paddock_daemon-50fe4f9a0a8109d7.exe)
+  Executable tests/daemon_roundtrip.rs (target/x86_64-pc-windows-msvc/debug/deps/daemon_roundtrip-e9833849e2b749c5.exe)
+  Executable unittests src/lib.rs (target/x86_64-pc-windows-msvc/debug/deps/paddock_protocol-aecd303c990d309b.exe)

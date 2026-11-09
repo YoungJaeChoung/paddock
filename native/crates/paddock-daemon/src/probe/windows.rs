@@ -43,6 +43,7 @@ pub fn read(targets: &[ProbeTarget]) -> BTreeMap<u32, Reading> {
                         distribution: String::new(),
                         pid: Some(chosen.pid),
                         started_at: filetime_to_unix_ms(chosen.created_at),
+                        start_mark: filetime_to_unix_ms(chosen.created_at),
                         session_record: None,
                     },
                 );

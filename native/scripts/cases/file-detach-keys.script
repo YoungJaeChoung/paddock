@@ -1,0 +1,47 @@
+# 파일 분리 창이 받은 앱 단축키(덩어리 38): 새 터미널·사이드바 접기는 본 창을 앞으로 가져와 본 창에서 실행되고, 그 뒤에도 분리 창의 키 입력이 이어진다.
+# 분리 창 파일에서 Ctrl+Shift+W는 본 창에 닫기 묻기(저장하지 않은 변경이 있을 때)를 연다. 실행 이름이 file-detach-keys일 때 임시 홈 경로(C:/Temp/pdk-run/home-file-detach-keys)를 쓴다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\proj-fdk"; mkdir $p -Force | Out-Null; [IO.File]::WriteAllText("$p\k.txt", "k1`n"); cd $p\r
+send echo READY-FDK\r
+waitline READY-FDK @20000
+act openpath C:/Temp/pdk-run/home-file-detach-keys/proj-fdk/k.txt
+waitstate kind=text state=text @10000
+# 파일 탭 우클릭 메뉴 `Move to New Window`(터미널 탭 메뉴와 같은 길)로 분리한다.
+act menu filetab 1
+waitstate menu: file-tab @3000
+act menuitem Move to New Window
+waitstate k.txt place=detached @10000
+state detached-by-menu
+keywin file_k.txt ctrl-shift-t
+waittabs 2 @10000
+waitstate main-activations=1 @5000
+state after-new-terminal
+keywin file_k.txt ctrl-b
+waitstate sidebar: collapsed @5000
+state after-sidebar
+keywin file_k.txt ctrl-end
+textwin file_k.txt x
+waitstate dfile file_k.txt unsaved=yes @5000
+state typed-after-shortcuts
+keywin file_k.txt ctrl-shift-w
+waitoverlay close-file @5000
+waitstate main-activations=3 @3000
+state close-prompt
+act savechoice dont
+waitoverlay none @5000
+waitnostate k.txt place=detached @5000
+state closed
+# 분리 창 탭 메뉴 `Move Back to Main Window`로 되돌린다.
+act openpath C:/Temp/pdk-run/home-file-detach-keys/proj-fdk/k.txt
+waitstate kind=text state=text @10000
+act menu filetab 1
+act menuitem Move to New Window
+waitstate k.txt place=detached @10000
+act detachedmenu file C:/Temp/pdk-run/home-file-detach-keys/proj-fdk/k.txt
+act detachedmenuitem file C:/Temp/pdk-run/home-file-detach-keys/proj-fdk/k.txt Move Back to Main Window
+waitnostate k.txt place=detached @5000
+waitstate k.txt selected shown place=main @5000
+state back-by-menu
+act quick quitstop
+wait 3000

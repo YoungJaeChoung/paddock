@@ -1,0 +1,15 @@
+# 호환 데몬 계속 쓰기(옛 데몬 계속 쓰기): 앱 옆 데몬 파일과 지문이 다르지만 프로토콜이 같은 데몬이 이미 터미널 1개(화면에 OLD-ONE)를 쥐고 있을 때,
+# 앱은 묻지 않고 그 데몬에 붙고(daemon=outdated) 터미널이 그대로 살아 있으며 빠른 설정 맨 아래에 안내 줄이 보인다.
+# 이 대본 앞에 실행기(daemon-run.ps1)가 데몬을 먼저 띄운다. 단독으로는 돌지 않는다(데몬이 없으면 daemon=outdated가 TIMEOUT).
+waittabs 1 @30000
+waitstate daemon=outdated @10000
+waitline OLD-ONE @20000
+send echo NEW-TWO\r
+waitline NEW-TWO @20000
+state outdated
+act quick open
+waitstate quick=open @5000
+wait 500
+shot panel-outdated
+act quick close
+quit

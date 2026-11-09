@@ -149,7 +149,7 @@ mod tests {
     }
 
     #[test]
-    fn test_c_review_10_wsl_own_utf16_text_is_decoded_and_utf8_text_is_left_alone() {
+    fn test_wsl_own_utf16_text_is_decoded_and_utf8_text_is_left_alone() {
         let message = "There is no distribution with the supplied name.\r\n";
         assert_eq!(decode_text(&utf16(message)), message);
         assert_eq!(decode_text(&[&[0xff, 0xfe][..], &utf16("Wsl/Service/E_FAIL")].concat()), "Wsl/Service/E_FAIL");
@@ -160,7 +160,7 @@ mod tests {
     }
 
     #[test]
-    fn test_c_review_8_the_time_limit_ends_a_slow_run_and_no_limit_waits_for_it() {
+    fn test_the_time_limit_ends_a_slow_run_and_no_limit_waits_for_it() {
         let _home = crate::test_support::TempHome::new();
         let dir = tempfile::tempdir().unwrap();
         let cwd = dir.path().to_string_lossy().to_string();

@@ -39,6 +39,8 @@ fn main() {
         .detach();
         open_main_window(cx);
     });
+    // 앱이 끝날 때 돌고 있던 사용량 조회의 자식 프로세스를 남기지 않는다.
+    paddock_app::usage::codex::terminate_all();
 }
 
 fn window_options(cx: &App) -> WindowOptions {
@@ -109,9 +111,8 @@ impl AutomationArgs {
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| std::env::temp_dir().join("paddock-app-out"));
         paddock_app::automation::init(out);
-        Self {
-            script: value("--script").map(std::path::PathBuf::from),
-            offscreen: args.iter().any(|arg| arg == "--offscreen"),
-        }
+        let offscreen = args.iter().any(|arg| arg == "--offscreen");
+        paddock_app::automation::set_offscreen(offscreen);
+        Self { script: value("--script").map(std::path::PathBuf::from), offscreen }
     }
 }

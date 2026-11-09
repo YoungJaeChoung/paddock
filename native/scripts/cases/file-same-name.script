@@ -1,0 +1,26 @@
+# 동기화 ① 같은 이름 파일 탭: `src/a.js`와 `lib/a.js`를 열면 탭 글자가 `a.js · src`·`a.js · lib`이 되고, 하나를 닫으면 남은 탭은 `a.js`로 돌아온다.
+# 이 대본은 실행 이름이 file-same-name일 때 임시 홈 경로(C:/Temp/pdk-run/home-file-same-name)를 쓴다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-same"; mkdir "$p\\src", "$p\\lib", "$env:USERPROFILE\\bin" -Force | Out-Null; Set-Content "$p\\src\\a.js" one; Set-Content "$p\\lib\\a.js" two; Set-Content "$p\\b.js" three; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo READY-SAME\r
+waitline READY-SAME @20000
+send claude.exe -n 300 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+act openpath C:/Temp/pdk-run/home-file-same-name/proj-same/src/a.js
+waitstate file-view kind=text state=text @10000
+state one-a
+act openpath C:/Temp/pdk-run/home-file-same-name/proj-same/b.js
+waitstate file-tab-label 2 b.js @10000
+act openpath C:/Temp/pdk-run/home-file-same-name/proj-same/lib/a.js
+waitstate file-tab-label 3 a.js · lib @10000
+waitstate file-tab-label 1 a.js · src @10000
+state two-a
+shot same-name-tabs
+act filetab 3
+act closefile
+waitnostate file-tab-label 1 a.js · @10000
+state one-a-left
+shot same-name-closed
+quit

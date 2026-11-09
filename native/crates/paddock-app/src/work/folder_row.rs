@@ -1,6 +1,7 @@
 //! Work 목록의 작업 폴더 행: 펼침 표지·폴더 그림·이름·`>_ N`과, 마우스를 올렸을 때 나오는 ＋·⋯ 단추.
 use gpui_kit::{
-    Context, FontWeight, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement, Styled, div,
+    Context, FontWeight, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement,
+    StatefulInteractiveElement, Styled, div,
 };
 use paddock_core::theme::{folder_row as size, sidebar, text};
 use paddock_core::work_model::NewPlace;
@@ -22,6 +23,8 @@ pub struct FolderRowSpec {
     /// 선택한 터미널이 이 폴더에 있다.
     pub current: bool,
     pub unseen: bool,
+    /// 마우스를 올리면 뜨는 설명(경로·읽지 않은 알림·입력을 기다리는 에이전트 수).
+    pub tip: String,
 }
 
 /// 몸통과 귀를 가진 작은 폴더 그림. 아이콘 글꼴을 싣지 않으므로 도형으로 그린다.
@@ -99,6 +102,7 @@ pub fn folder_row(
         .text_size(zpx(text::UI))
         .font_weight(weight)
         .hover(move |style| if spec.current { style } else { style.bg(hsla(colors().hover_bg)) })
+        .tooltip(crate::usage::bar::tooltip(spec.tip))
         .child(
             div()
                 .flex_none()

@@ -7,7 +7,7 @@ mem start-1-terminal
 send $p = "$env:USERPROFILE\\proj-big"; mkdir "$p", "$env:USERPROFILE\\bin" -Force | Out-Null; 1..990 | ForEach-Object { Set-Content "$p\\file-$_.txt" x }; 1..10 | ForEach-Object { mkdir "$p\\dir-$_" -Force | Out-Null }; $line = "export const value = 'a long enough line of source text to fill the file quickly';`n"; $big = $line * [math]::Ceiling(1048576 / $line.Length); [IO.File]::WriteAllText("$p\\a-exact.ts", $big.Substring(0, 1048576)); Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
 send echo READY-BIG\r
 waitline READY-BIG @60000
-send claude -n 60 127.0.0.1\r
+send claude.exe -n 60 127.0.0.1\r
 waitstate program=claude @20000
 waitstate row folder @20000
 key ctrl-shift-c

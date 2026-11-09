@@ -11,6 +11,8 @@ const { BrowserBridge } = require('./account-browser');
 const { flagSettingsPath } = require('./claude-flag-settings');
 const { PencilServer, PencilDoctor, toWslPath, repairPencilCommand, findWindowsPencil } = require('./account-pencil');
 const { ClaudeConfig, syncClaudeConfig } = require('./account-claude-config');
+const { AgentStatusHook, agentStatusHookCommand } = require('./agent-status-hook-settings');
+const { CodexHooks, syncCodexStatusHook, releaseOwnCodexHooks } = require('./codex-hooks');
 const { inspectDirectories, repairDirectory, storageAccessResult, openFolderSettings } = require('./account-storage-access');
 
 class AccountProfile {
@@ -691,6 +693,8 @@ class AccountProfiles {
             }
         }
         const hostDirectory = profile.provider === 'claude' ? this.claudeDirectory : this.codexDirectory;
+        // A hooks.json that Paddock wrote (only its status hook) before the host got its own must not block sharing the host's file: drop it so the link below can take its place.
+        if (profile.provider === 'codex' && process.platform === 'linux') warnings.push(...sharingStep('Agent status hook', () => { releaseOwnCodexHooks(configDir, path.join(hostDirectory, CodexHooks.FILE)); }));
         // Each sharing step fails on its own: a refused link or an unreadable default file becomes a warning and the account still opens.
         // Structure checks (the account folders above) and the browser helper keep throwing because an account on a redirected folder must not start.
         for (const [names, kind] of [[AccountProfile.SHARED_FOLDERS[profile.provider], 'folder'], [AccountProfile.SHARED_FILES[profile.provider], 'file']]) {
@@ -715,7 +719,32 @@ class AccountProfiles {
                 pencilCommand: command,
             }).warnings));
         }
+        // Codex gets Paddock's agent status hook in its own account folder (Linux hosts; Windows hosts have no `sh` for native accounts).
+        if (profile.provider === 'codex' && process.platform === 'linux') warnings.push(...sharingStep('Agent status hook', () => this.syncCodexStatusHook(configDir)));
         return { configDir, warnings, ...(browserDirectory ? { browserDirectory } : {}) };
+    }
+
+    /**
+     * Puts Paddock's agent status hook into (or takes it out of) a Codex account folder's hooks.json, following the "agent status hook" setting
+     * recorded in usage/state.json (on unless turned off). Returns a notice text only when the hook was just written, because Codex asks to trust a changed hook.
+     * Nothing is written before the hook script exists (it is placed when the app starts).
+     */
+    syncCodexStatusHook(
+        configDir,
+    ) {
+        let state = {};
+        try {
+            state = JSON.parse(fs.readFileSync(path.join(this.configDirectory, 'usage', 'state.json'), 'utf8'));
+        } catch {
+            state = {};
+        }
+        const script = path.join(this.configDirectory, 'usage', AgentStatusHook.SCRIPT_NAME);
+        const isEnabled = state.statusHook?.enabled !== false;
+        let notice = null;
+        if (!isEnabled || fs.existsSync(script)) {
+            notice = syncCodexStatusHook(configDir, isEnabled ? agentStatusHookCommand(script, AgentStatusHook.APPS.CODEX) : null) === 'written' ? CodexHooks.TRUST_NOTICE : null;
+        }
+        return notice;
     }
 
     /** Returns the Windows Pencil server as a /mnt path for a WSL profile, or an empty text when it is not installed. */

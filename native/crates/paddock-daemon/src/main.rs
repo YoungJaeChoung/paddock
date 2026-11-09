@@ -3,13 +3,18 @@
 //!
 //! `--breakaway-denied`: 앱이 데몬을 부모 작업 개체에서 분리하려다 거부당했음을 알리는 실행 인자.
 //! 데몬이 `daemon.json`에 그대로 기록한다(접속 정보를 쓰는 주체를 데몬 하나로 두기 위해서다).
+//!
+//! cargo 기능 `test-hooks`: 시험이 다른 버전의 데몬을 흉내 내는 환경 변수를 읽는다(`hooks` 모듈). 배포 빌드에는 켜지 않는다.
 mod activity;
 mod history;
+mod hooks;
 mod log;
+mod memory;
 mod outbox;
 mod probe;
 mod pty;
 mod server;
+mod stop;
 mod terminal;
 #[cfg(test)]
 mod test_home;
@@ -130,6 +135,8 @@ fn listen(breakaway_denied: bool) -> io::Result<()> {
         fingerprint,
         own_user: current_user()?,
         endpoint,
+        protocol_version: hooks::protocol_version(),
+        strict_hello: hooks::strict_hello(),
     });
     watch_idle(ctx.clone());
     watch_terminals(ctx.registry.clone());

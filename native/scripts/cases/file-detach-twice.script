@@ -1,0 +1,32 @@
+# 같은 파일이 두 묶음 파일 칸에 열린 채 한 탭을 분리해도(`EditorState` 하나를 본 창 칸과 분리 창이 같이 그린다) 입력·포커스가 깨지지 않는다.
+# 분리 창에서 고친 글자는 본 창 칸의 같은 파일 탭에도 보이고(내용 해시 같음), 분리 창을 × 로 닫아도 다른 탭이 편집을 이어 쥐므로 묻지 않는다.
+# 실행 이름이 file-detach-twice일 때 임시 홈 경로(C:/Temp/pdk-run/home-file-detach-twice)를 쓴다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\proj-fdt"; mkdir $p -Force | Out-Null; [IO.File]::WriteAllText("$p\u.txt", "t1`n"); cd $p\r
+send echo READY-FDT\r
+waitline READY-FDT @20000
+act openpath C:/Temp/pdk-run/home-file-detach-twice/proj-fdt/u.txt
+waitstate kind=text state=text @10000
+act workadd
+waittabs 2 @20000
+act openpath C:/Temp/pdk-run/home-file-detach-twice/proj-fdt/u.txt
+waitstate kind=text state=text @10000
+act menu filetab 1
+act menuitem Move to New Window
+waitstate u.txt place=detached @10000
+state twice-detached
+keywin file_u.txt ctrl-end
+textwin file_u.txt ab
+waitstate dfile file_u.txt unsaved=yes @5000
+keywin file_u.txt ctrl-s
+waitstate dfile file_u.txt unsaved=no @5000
+send $x = [BitConverter]::ToString([IO.File]::ReadAllBytes("$env:USERPROFILE\proj-fdt\u.txt")); if ($x -eq '74-31-0A-61-62') { Write-Host ("SA" + "ME-T") } else { Write-Host ("DI" + "FF-T " + $x) }\r
+waitline SAME-T @10000
+# 분리 창 ×: 같은 파일이 다른 묶음 칸에 열려 있어 묻지 않고 닫힌다.
+act detachedclose file C:/Temp/pdk-run/home-file-detach-twice/proj-fdt/u.txt
+waitnostate u.txt place=detached @5000
+waitoverlay none @1000
+state twice-closed
+act quick quitstop
+wait 3000

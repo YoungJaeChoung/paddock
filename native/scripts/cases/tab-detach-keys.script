@@ -1,0 +1,22 @@
+# 분리 창이 받은 앱 단축키는 본 창을 앞으로 가져오고 본 창에서 실행된다(새 터미널·사이드바 접기). Ctrl+Shift+H(찾기 띠)는 분리 창에 그 창의 찾기 띠를 열고(덩어리 38) 터미널로 새지 않는다(tab-detach-find가 찾기 동작을 본다).
+waittabs 1 @30000
+send echo K-ONE\r
+waitline K-ONE @20000
+key ctrl-shift-t
+waittabs 2 @20000
+act movetowindow 2
+waitstate detached=2 @10000
+keywin 2 ctrl-shift-t
+waittabs 3 @5000
+waitstate main-activations=1 @5000
+state after-new-terminal
+keywin 2 ctrl-b
+waitstate sidebar: collapsed @5000
+state after-sidebar
+sendto 2 echo K-STILL-ALIVE\r
+keywin 2 ctrl-shift-h
+waitstate term-find open=y terminal=2 @5000
+nolinestart 2 ^H
+state after-find-key
+act quick quitstop
+wait 3000

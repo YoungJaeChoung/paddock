@@ -119,6 +119,13 @@ class FileTree {
             row.dataset.uri = key;
             // 밖에서 끌어 오거나 붙여 넣은 파일은 폴더 행이면 그 폴더에, 파일 행이면 그 파일이 있는 폴더에 복사한다.
             this.acceptFiles(row, entry.isDirectory ? uri : uri.parent);
+            // F2는 VS Code 탐색기와 같은 이름 바꾸기 키다. 행에 초점이 있을 때만 받는다.
+            row.addEventListener('keydown', (event) => {
+                if (event.key === 'F2' && !event.ctrlKey && !event.altKey && !event.shiftKey && !event.metaKey) {
+                    event.preventDefault();
+                    this.workspace.run(() => this.renameEntry(uri, entry.isDirectory));
+                }
+            });
             row.addEventListener('contextmenu', (event) => {
                 event.preventDefault();
                 const point = { x: event.clientX, y: event.clientY };
@@ -152,6 +159,44 @@ class FileTree {
         if (isDirectory) this.expandedDirectories.add(uri.toString());
         else await this.workspace.openFile(uri);
         await this.workspace.refresh();
+    }
+
+    /**
+     * 파일·폴더 이름을 바꾼다. 같은 폴더 안에서만 옮기고, 다른 항목이 이미 그 이름을 쓰면 덮어쓰지 않고 알린다.
+     *
+     * 열린 파일 탭은 Theia가 옮겨진 경로로 따라가게 한다. 펼쳐 둔 폴더는 새 경로로 기억을 옮겨 접히지 않게 한다.
+     * 대소문자만 바꾸는 경우(`readme.md` → `README.md`)는 Windows·macOS에서 같은 항목으로 보이므로 이름 겹침으로 보지 않는다.
+     */
+    async renameEntry(
+        uri,
+        isDirectory,
+    ) {
+        const current = uri.path.base;
+        const dot = current.lastIndexOf('.');
+        const name = await new SingleTextInputDialog({
+            title: `Rename ${isDirectory ? 'Folder' : 'File'}`,
+            initialValue: current,
+            // 확장자는 그대로 두는 일이 많아 앞부분만 고른다.
+            initialSelectionRange: { start: 0, end: !isDirectory && dot > 0 ? dot : current.length },
+            validate: value => validateEntryName(value),
+        }).open();
+        if (name === undefined || name === current) return;
+        const target = uri.parent.resolve(name);
+        const isCaseOnly = name.toLowerCase() === current.toLowerCase();
+        if (!isCaseOnly && await this.workspace.files.exists(target)) throw new Error(`“${name}” already exists. Choose another name.`);
+        await this.workspace.files.move(uri, target);
+        if (isDirectory) {
+            const from = uri.toString();
+            const moved = [...this.expandedDirectories].filter(key => key === from || key.startsWith(`${from}/`));
+            for (const key of moved) {
+                this.expandedDirectories.delete(key);
+                this.expandedDirectories.add(target.toString() + key.slice(from.length));
+            }
+            if (this.lastExpandedDirectory === from || this.lastExpandedDirectory?.startsWith(`${from}/`)) {
+                this.lastExpandedDirectory = target.toString() + this.lastExpandedDirectory.slice(from.length);
+            }
+        }
+        await this.reloadDirectory();
     }
 
     /** 읽어 둔 폴더 내용을 모두 버리고 디스크에서 다시 읽어 그린다. 펼친 폴더는 그대로 둔다. */
@@ -298,7 +343,7 @@ class FileTree {
         window.electronTheiaCore.showItemInFolder(FileUri.fsPath(uri));
     }
 
-    /** 폴더에는 생성 동작을, 파일에는 설치된 확장의 편집기 선택을 제공한다. */
+    /** 폴더에는 생성 동작을, 파일에는 설치된 확장의 편집기 선택을 제공한다. 둘 다 붙여넣기·이름 바꾸기·파일 관리자에서 보기를 둔다. */
     openFileMenu(
         uri,
         point,
@@ -309,10 +354,12 @@ class FileTree {
         const reveal = ['folder-opened', `Reveal in ${systemName}`, () => this.revealInSystem(uri)];
         // 붙여 넣은 파일은 폴더면 그 안, 파일이면 그 파일이 있는 폴더에 들어간다(Ctrl+V와 같다).
         const paste = ['clippy', 'Paste', () => this.pasteInto(uri, isDirectory ? uri : uri.parent)];
+        const rename = ['edit', 'Rename...', () => this.renameEntry(uri, isDirectory)];
         const items = isDirectory ? [
             ['new-file', 'New File...', () => this.createFileEntry(uri, false)],
             ['new-folder', 'New Folder...', () => this.createFileEntry(uri, true)],
             paste,
+            rename,
             reveal,
         ] : [
             ['file', 'Open', () => this.workspace.openFile(uri)],
@@ -324,6 +371,7 @@ class FileTree {
                 await this.workspace.commands.executeCommand('workbench.action.showCommands');
             }],
             paste,
+            rename,
             reveal,
         ];
         for (const [icon, label, action] of items) {

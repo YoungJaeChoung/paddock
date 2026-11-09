@@ -82,6 +82,8 @@ pub struct PaintInputs {
     pub focused: bool,
     /// 한글 조합 중인 글자. 있으면 커서 칸부터 밑줄 친 미리보기로 겹쳐 그린다.
     pub marked: Option<String>,
+    /// Ctrl을 누른 채 올린 파일 경로 링크의 자리(화면 줄, 칸 범위). 있으면 그 글자 밑에 밑줄을 긋는다.
+    pub link: Option<(i32, std::ops::Range<usize>)>,
 }
 
 /// 0xRRGGBB를 GPUI 색으로.
@@ -211,6 +213,21 @@ pub fn paint_grid(
             let line = Bounds::new(point(px(cell_x), px(cell_y + cell_h / 2.0)), size(px(span_w), px(thickness())));
             window.paint_quad(fill(line, hsla(style.fg)));
         }
+    }
+
+    // 파일 경로 링크 밑줄.
+    if let Some((row, columns)) = &inputs.link
+        && *row >= 0
+        && *row < rows as i32
+    {
+        let underline = Bounds::new(
+            point(
+                px(origin_x + columns.start as f32 * cell_w),
+                px(origin_y + (*row as f32 + 1.0) * cell_h - 2.0 * thickness()),
+            ),
+            size(px(columns.len() as f32 * cell_w), px(thickness())),
+        );
+        window.paint_quad(fill(underline, hsla(colors().fg_strong)));
     }
 
     // 블록이 아닌 커서 모양.

@@ -9,6 +9,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { installMemoryHook } = require('./memory-hook-settings');
+const { installAgentStatusHook } = require('./agent-status-hook-settings');
 const { assertPlainPath } = require('./usage-files');
 
 class FlagSettings {
@@ -45,13 +46,16 @@ function flagSettingsPath(
  * | `node s.cjs u`    | null              | `{ statusLine: { type: 'command', command } }`    |
  * | null              | `sh m.sh`         | `{ hooks: { PreToolUse: [메모리 안내 훅] } }`     |
  * | null              | null              | `{}`                                              |
+ *
+ * `statusHookCommand`(에이전트 상태 훅)가 있으면 상태 신호 이벤트마다 그 훅이 더해지고 메모리 안내 훅과 함께 들어간다.
  */
 function buildFlagSettings(
-    { statusLineCommand = null, memoryHookCommand = null } = {},
+    { statusLineCommand = null, memoryHookCommand = null, statusHookCommand = null } = {},
 ) {
     let settings = {};
     if (statusLineCommand) settings.statusLine = { type: 'command', command: statusLineCommand };
     if (memoryHookCommand) settings = installMemoryHook(settings, memoryHookCommand);
+    if (statusHookCommand) settings = installAgentStatusHook(settings, statusHookCommand);
     return settings;
 }
 

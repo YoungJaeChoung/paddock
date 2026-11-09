@@ -245,7 +245,7 @@ mod tests {
     }
 
     #[test]
-    fn test_c_review_3_the_merge_header_plus_stages_only_the_conflict_paths() {
+    fn test_the_merge_header_plus_stages_only_the_conflict_paths() {
         let with_conflict =
             status(&format!("u UU N... 100644 100644 100644 100644 1 2 3 c.rs;1 .M {HEX} a.rs;? n.txt;"));
         assert_eq!(paths_to_stage(&with_conflict, Group::Merge), Some(vec!["c.rs".to_string()]));

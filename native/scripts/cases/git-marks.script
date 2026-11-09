@@ -7,7 +7,7 @@ waitstate cwd=C: @30000
 send $p = "$env:USERPROFILE\\proj-git"; mkdir "$p\\src", "$p\\sub dir", "$env:USERPROFILE\\bin" -Force | Out-Null; cd $p; git init -q -b main; git config user.name Tester; git config user.email t@example.com; Set-Content a.txt one; Set-Content src\\b.txt two; Set-Content -LiteralPath "sub dir\\c d.txt" three; git add -A; git commit -q -m base; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"\r
 send echo READY-GIT\r
 waitline READY-GIT @30000
-send claude -n 300 127.0.0.1\r
+send claude.exe -n 300 127.0.0.1\r
 waitstate program=claude @20000
 waitstate row folder @20000
 waitstate files-loaded=true @10000

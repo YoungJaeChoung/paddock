@@ -1,0 +1,13 @@
+# WSL ~/.bashrc가 저장소 파일로 가는 링크일 때(dotfiles): 줄은 실제 파일에 들어가고 링크는 남으며, 저장소에 올리라는 안내가 상태 줄에 보인다.
+# 실행기는 PADDOCK_TEST_WSL_HOME=/tmp/paddock-test-usage-setup-link 로 띄우고 준비 단계가 .bashrc를 repo-bashrc로 가는 링크로 만들어 둔다.
+# 파일 쪽 확인(링크 유지·표지 줄 1개)은 실행기가 끝난 뒤 WSL 안에서 한다.
+waittabs 1 @30000
+waitstate wrapper=yes script=yes @60000
+act quick choose wsllauncher on
+waitstate launcher=added @30000
+waitstate notice=/tmp/paddock-test-usage-setup-link/repo-bashrc changed. If you keep it in a repository, commit or sync it. @10000
+state link-added
+act quick choose wsllauncher off
+waitstate launcher=removed @30000
+state link-removed
+quit

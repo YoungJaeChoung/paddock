@@ -4,7 +4,7 @@
  * 계정 터미널은 시작 명령에 `--settings`를 직접 넣지만, 일반 터미널은 사용자가 `claude`를 직접 치므로
  * Paddock 설정 폴더의 `bin` 폴더를 터미널 PATH 맨 앞에 두고 거기에 같은 이름의 래퍼를 놓는다.
  * 래퍼는 자기 폴더를 PATH에서 뺀 뒤 진짜 `claude`를 `--settings`와 함께 실행하고, 나머지 인자는 그대로 넘긴다.
- * 플래그 파일이 없으면 인자를 붙이지 않는다.
+ * 플래그 파일이 없거나 첫 인자가 `remote-control`이면 인자를 붙이지 않는다.
  */
 const fs = require('node:fs');
 const path = require('node:path');
@@ -37,6 +37,7 @@ function shellWord(
  * | ---- | ------------------------------------------------------------------------------------------------ |
  * | sh   | 자기 폴더를 PATH에서 뺌 → 플래그 파일이 있으면 `exec claude --settings <파일> "$@"`, 없으면 `exec claude "$@"` |
  * | cmd  | 자기 폴더를 PATH에서 뺌 → 같은 규칙으로 `claude --settings "<파일>" %*`                         |
+ * | 둘 다 | `claude remote-control ...`은 플래그 파일이 있어도 `--settings` 없이 그대로 넘긴다               |
  */
 function claudeWrapperScript(
     { kind, flagFile, ownDirectory },
@@ -58,7 +59,9 @@ function claudeWrapperScript(
             'IFS=$old_ifs',
             'if [ -z "$real" ]; then printf \'%s\\n\' "claude was not found in PATH (Paddock\'s launcher found only itself). Install Claude Code, then try again." >&2; exit 127; fi',
             `flag=${shellWord(flagFile)}`,
-            'if [ -f "$flag" ]; then exec "$real" --settings "$flag" "$@"; fi',
+            // `claude remote-control`(원격 접속 서버)은 하위 명령 앞의 `--settings`를 자기가 띄우는 세션에 넘길 수 없다며 시작을 거부한다.
+            // 그래서 이 명령일 때만 플래그 파일을 붙이지 않는다. 대화 세션의 `--remote-control`·`/remote-control`은 `--settings`와 함께 동작한다.
+            'if [ "$1" != remote-control ] && [ -f "$flag" ]; then exec "$real" --settings "$flag" "$@"; fi',
             'exec "$real" "$@"',
             '',
         ].join('\n');
@@ -77,6 +80,8 @@ function claudeWrapperScript(
             '    echo claude was not found in PATH ^(Paddock launcher found only itself^). Install Claude Code, then try again. 1>&2',
             '    exit /b 9009',
             ')',
+            // sh 래퍼와 같은 이유로 `claude remote-control`에는 --settings를 붙이지 않는다.
+            'if /i "%~1"=="remote-control" goto plain',
             `if not exist "${flagFile}" goto plain`,
             '"%real%" --settings "' + flagFile + '" %*',
             'exit /b %ERRORLEVEL%',

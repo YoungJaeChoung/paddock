@@ -1,0 +1,72 @@
+# 메모리(2단계 총측정): 터미널 4개(네이티브 폴더 2·WSL 폴더 2), 파일 탭 3(200 KB 텍스트·Markdown 미리보기·1080p 이미지)과 3쪽 PDF 열림, 폴더 검색 1회(결과 2,000건),
+# Source control 보기(변경 40개)를 연 채 20초 쉰 뒤 Private 메모리와 같은 순간 그래픽 몫·Rust 보유량(`gpumem`)을 잰다.
+# 기준 exe(1단계 마감)에도 같은 대본을 돌려(알 수 없는 `act`·`gpumem`은 무시된다) 증가분을 비교한다(D49). 기준 exe가 몰라서는 안 되므로 1단계에 있는 상태 글만 기다리고 나머지는 고정 대기를 쓴다.
+# WSL 폴더는 PowerShell 터미널에서 `\\wsl.localhost\<배포판>\tmp\pdk-stage2\proj`로 옮겨 연다(실행기 prep-stage2.sh가 배포판 안에 저장소를 만든다).
+# 임시 홈에 prep-stage2.sh로 proj-a를 채우고 기본 셸을 PowerShell로 둬야 한다. 실행 이름은 memory-stage2다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+mem start-1-terminal
+gpumem start-1-terminal
+send $p = "$env:USERPROFILE\\proj-a"; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p; git init -q -b main; git config user.name Tester; git config user.email t@example.com; git add -A; git commit -q -m base; 1..30 | ForEach-Object { Set-Content "file-$_.txt" "changed $_" }; 1..10 | ForEach-Object { Set-Content "new-$_.txt" new }\r
+send echo READY-A\r
+waitline READY-A @180000
+send claude.exe -n 600 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+act workadd
+waittabs 3 @20000
+waitstate cwd=C: @30000
+send cd \\\\wsl.localhost\\Ubuntu\\tmp\\pdk-stage2\\proj\r
+send echo READY-W\r
+waitline READY-W @30000
+send claude.exe -n 600 127.0.0.1\r
+wait 4000
+key ctrl-shift-c
+waittabs 4 @20000
+wait 3000
+state four-terminals
+act selecttab 1
+wait 5000
+mem before-open
+gpumem before-open
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/code-200k.ts
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/README.md
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/f-1080p.png
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+wait 10000
+state tabs-open
+mem tabs-open-13s
+gpumem tabs-open-13s
+act search needle
+wait 15000
+state search-open
+mem search-15s
+gpumem search-15s
+act view scm
+wait 20000
+state scm-open
+mem final-20s
+gpumem final-20s
+shot memory-stage2
+wait 5000
+mem final-25s
+gpumem final-25s
+act view work
+act closefile
+act closefile
+act closefile
+act closefile
+key ctrl-shift-f
+wait 500
+wait 600
+wait 600
+wait 8000
+mem after-close
+gpumem after-close
+quit

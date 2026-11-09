@@ -1,0 +1,26 @@
+# 동기화 ② 파일 목록 붙여넣기(WSL 공유 폴더 목적지, C-D69). **클립보드를 바꾸므로 야간에만.** 9P 위의 폴더에 복사해도 창이 막히지 않는다(ui-max-busy-ms ≤ 100).
+# 기본 셸은 WSL이다. 클립보드의 파일은 Windows 쪽 임시 폴더에 만든다.
+waittabs 1 @30000
+send unset HISTFILE; rm -rf /tmp/pdk-paste && mkdir -p /tmp/pdk-paste/proj/src && touch /tmp/pdk-paste/proj/a.js && ln -sf /bin/bash /tmp/pdk-paste/claude && export PATH=/tmp/pdk-paste:$PATH && cd /tmp/pdk-paste/proj\r
+send echo READY-WSL\r
+waitline READY-WSL @20000
+send claude -c 'for i in $(seq 1 300); do echo work $i; sleep 0.5; done'\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+# Windows 쪽 파일을 클립보드에 올리려면 PowerShell이 필요하다: WSL 셸에서 powershell.exe를 부른다.
+send powershell.exe -NoProfile -Command "Set-Content $env:TEMP\\pdk-paste-wsl.txt wsl; Set-Clipboard -Path $env:TEMP\\pdk-paste-wsl.txt"\r
+wait 2500
+act clipboard
+waitstate clipboard=files:1 @5000
+act resetgap
+act selectrow 1
+act filespaste
+waitstate file-row 1 file pdk-paste-wsl.txt @8000
+state wsl-pasted
+send rm -rf /tmp/pdk-paste\r
+wait 500
+quit

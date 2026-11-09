@@ -1,0 +1,26 @@
+# 열린 파일 바로 다시 읽기(WSL 공유 폴더, 24-추가): 감시 사건이 오지 않는 폴더의 열린 파일은 2초 주기로 확인한다 — 바뀐 뒤 3.5초 안에 다시 읽힌다. 기본 셸은 WSL이다.
+waittabs 1 @30000
+send unset HISTFILE; rm -rf /tmp/pdk-live && mkdir -p /tmp/pdk-live/proj && for i in $(seq 1 50); do echo line $i; done > /tmp/pdk-live/proj/long.txt && ln -sf /bin/bash /tmp/pdk-live/claude && export PATH=/tmp/pdk-live:$PATH && cd /tmp/pdk-live/proj\r
+send echo READY-WSL\r
+waitline READY-WSL @20000
+send claude -c 'for i in $(seq 1 300); do echo work $i; sleep 0.5; done'\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+waitstate files-watch=polling @5000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+act openpath //wsl.localhost/Ubuntu/tmp/pdk-live/proj/long.txt
+waitstate kind=text state=text lines=50 @10000
+wait 2500
+mark change-1
+send echo more >> /tmp/pdk-live/proj/long.txt\r
+waitstate lines=51 @3500
+mark change-2
+send echo more >> /tmp/pdk-live/proj/long.txt\r
+waitstate lines=52 @3500
+state wsl-after
+send rm -rf /tmp/pdk-live\r
+wait 500
+quit

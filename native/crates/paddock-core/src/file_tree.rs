@@ -4,6 +4,8 @@
 use std::collections::HashSet;
 
 use crate::settings_text::SettingValues;
+// 경로 판정은 `paths`에 있다. 호출처가 `file_tree::child_path`로 쓰던 이름을 그대로 받도록 다시 내보낸다.
+pub use crate::paths::child_path;
 use crate::work_model::{Folder, folder_key, folder_name, is_inside, same_folder};
 
 /// 폴더를 읽지 못했을 때 목록 자리에 보이는 안내.
@@ -179,13 +181,138 @@ pub fn creation_folder(
     inside.unwrap_or(files_folder).to_string()
 }
 
-/// `parent` 폴더 안 `name` 항목의 경로. 부모가 쓰는 구분자(역슬래시가 있으면 `\`, 아니면 `/`)를 그대로 쓴다.
-pub fn child_path(
-    parent: &str,
-    name: &str,
+/// 항목 `from`의 이름을 `new_name`으로 바꾼 경로(같은 폴더 안). 앞부분의 구분자 철자는 그대로다.
+pub fn renamed(
+    from: &str,
+    new_name: &str,
 ) -> String {
-    let separator = if parent.contains('\\') { '\\' } else { '/' };
-    if parent.ends_with(['/', '\\']) { format!("{parent}{name}") } else { format!("{parent}{separator}{name}") }
+    crate::paths::with_file_name(from, new_name)
+}
+
+/// 이름만 대소문자를 바꾸는 이름 바꾸기인지(`readme.md` → `README.md`). Windows·macOS에서는 같은 항목으로 보이므로 이름 겹침 검사를 하지 않는다.
+///
+/// Examples
+/// --------
+/// | 지금 이름   | 새 이름     | 결과  |
+/// |-------------|-------------|-------|
+/// | `readme.md` | `README.md` | 참    |
+/// | `a.txt`     | `a.txt`     | 거짓  |
+/// | `a.txt`     | `b.txt`     | 거짓  |
+pub fn is_case_only_rename(
+    current: &str,
+    new_name: &str,
+) -> bool {
+    current != new_name && current.to_lowercase() == new_name.to_lowercase()
+}
+
+/// 폴더 `from`의 이름이 `to`로 바뀐 뒤의 펼침 기억: `from`과 그 아래 펼친 폴더, 마지막으로 펼친 폴더의 경로를 새 경로로 옮긴다. 폴더가 접히지 않는다.
+///
+/// Examples
+/// --------
+/// | 펼친 폴더                  | from       | to        | 결과                         |
+/// |----------------------------|------------|-----------|------------------------------|
+/// | `/p/src`, `/p/src/a`, `/p/x` | `/p/src` | `/p/lib`  | `/p/lib`, `/p/lib/a`, `/p/x` |
+pub fn move_expanded(
+    expanded: &HashSet<String>,
+    last_expanded: Option<&str>,
+    from: &str,
+    to: &str,
+) -> (HashSet<String>, Option<String>) {
+    let moved = |path: &str| crate::paths::rebased(from, to, path).unwrap_or_else(|| path.to_string());
+    (expanded.iter().map(|path| moved(path)).collect(), last_expanded.map(moved))
+}
+
+/// 이름 바꾸기 창의 제목.
+pub fn rename_title(is_dir: bool) -> &'static str {
+    if is_dir { "Rename Folder" } else { "Rename File" }
+}
+
+/// 이름 바꾸기 창이 처음 선택해 둘 글자 범위(바이트): 파일은 마지막 확장자 앞까지(확장자는 그대로 두는 일이 많다), 폴더와 점으로 시작하는 이름(`.env`)은 전체다.
+///
+/// Examples
+/// --------
+/// | 이름         | 폴더 | 결과(선택한 글자) |
+/// |--------------|------|-------------------|
+/// | `a.txt`      | 아니오 | `a`             |
+/// | `a.tar.gz`   | 아니오 | `a.tar`         |
+/// | `.env`       | 아니오 | `.env`          |
+/// | `Makefile`   | 아니오 | `Makefile`      |
+/// | `v1.2`       | 예   | `v1.2`            |
+pub fn initial_selection(
+    name: &str,
+    is_dir: bool,
+) -> std::ops::Range<usize> {
+    let end = match name.rfind('.') {
+        Some(dot) if !is_dir && dot > 0 => dot,
+        _ => name.len(),
+    };
+    0..end
+}
+
+/// 파일 목록이 키를 받을 때 앱이 가로채는 키가 하는 일.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ListKey {
+    /// F2: 선택한 행의 이름 바꾸기.
+    Rename,
+    /// Ctrl+V: 클립보드의 파일·그림을 선택한 행의 폴더에 붙여 넣기.
+    Paste,
+}
+
+/// 파일 목록이 키(F2·Ctrl+V)를 받는 구역인지를 바꾸는 사건.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ListFocusEvent {
+    /// 목록의 행을 눌렀다(우클릭 포함).
+    RowPressed,
+    /// 키 입력을 터미널·편집기로 돌려주었다(`focus_selected`). 그 뒤 늦게 끝난 읽기도 이 사건을 만들 수 있으나 호출자가 목록 구역을 지킬 때는 부르지 않는다.
+    KeysReturned,
+    /// 터미널·편집기에 글자가 나갔다(입력 방식 경로 포함).
+    TextTyped,
+    /// 목록 밖의 다른 구역을 눌렀다.
+    OtherAreaPressed,
+    /// 목록의 키가 아닌 다른 키를 눌렀다.
+    OtherKey,
+}
+
+/// 목록이 키를 받는 구역인지의 규칙 하나: 행을 누르면 참이 되고, 그 밖의 모든 사건(키를 돌려줌·글자 입력·다른 구역 누름·다른 키)은 거짓으로 거둔다.
+/// 파일 목록이 키를 받는지를 바꾸는 곳은 모두 이 함수를 지난다.
+///
+/// Examples
+/// --------
+/// | 사건               | 결과 |
+/// |--------------------|------|
+/// | `RowPressed`       | 참   |
+/// | `KeysReturned`     | 거짓 |
+/// | `TextTyped`        | 거짓 |
+/// | `OtherAreaPressed` | 거짓 |
+/// | `OtherKey`         | 거짓 |
+///
+/// 결과는 이전 상태와 무관하다(눌린 행이 있으면 참, 아니면 거짓).
+pub fn list_focus_after(event: ListFocusEvent) -> bool {
+    matches!(event, ListFocusEvent::RowPressed)
+}
+
+/// 키 누름이 목록의 키(F2·Ctrl+V)이면 그 일을 돌려준다. 수정 키가 하나라도 더 눌렸으면 목록의 키가 아니다.
+/// 호출자는 목록이 키를 받고 있을 때만 이 키를 가로채야 한다 — 아니면 F2의 이스케이프 열과 Ctrl+V는 터미널로 간다.
+///
+/// Examples
+/// --------
+/// | 키       | Ctrl | Shift | Alt | 결과     |
+/// |----------|------|-------|-----|----------|
+/// | `f2`     | 거짓 | 거짓  | 거짓 | `Rename` |
+/// | `v`      | 참   | 거짓  | 거짓 | `Paste`  |
+/// | `v`      | 참   | 참    | 거짓 | None     |
+/// | `f2`     | 참   | 거짓  | 거짓 | None     |
+pub fn list_key(
+    key: &str,
+    control: bool,
+    shift: bool,
+    alt: bool,
+) -> Option<ListKey> {
+    match (key, control, shift, alt) {
+        ("f2", false, false, false) => Some(ListKey::Rename),
+        ("v", true, false, false) => Some(ListKey::Paste),
+        _ => None,
+    }
 }
 
 /// 폴더를 작업 폴더 기준 짧은 이름으로 쓴다. 작업 폴더 밖이면 홈 기준 경로이고, 홈 밖이면 경로 그대로다.
@@ -470,15 +597,6 @@ mod tests {
         assert_eq!(creation_folder(Some("/pp/x"), &set(&["/pp/x"]), "/p"), "/p", "a sibling with the same prefix");
     }
 
-    #[test]
-    fn test_c_files_13_child_paths_keep_the_separator_style_of_the_parent() {
-        assert_eq!(child_path("/p/src", "a.js"), "/p/src/a.js");
-        assert_eq!(child_path("C:/Users/me", "a.js"), "C:/Users/me/a.js");
-        assert_eq!(child_path(r"\\wsl.localhost\Ubuntu\home", "a.js"), r"\\wsl.localhost\Ubuntu\home\a.js");
-        assert_eq!(child_path("/", "etc"), "/etc");
-        assert_eq!(child_path(r"C:\", "x"), r"C:\x");
-    }
-
     fn folder(key: &str) -> Folder {
         Folder { key: key.to_string(), expanded: true, label: None }
     }
@@ -527,5 +645,71 @@ mod tests {
         let missing = Directory { found: false, empty: true, children: Vec::new() };
         assert_eq!(notice_of(&missing), Some(NOT_FOUND_NOTICE));
         assert_eq!(notice_of(&dir(Vec::new())), Some(EMPTY_NOTICE));
+    }
+
+    #[test]
+    fn test_c_rename_1_the_new_path_keeps_the_folder_and_case_only_renames_are_found() {
+        assert_eq!(renamed("/p/src/a.txt", "b.txt"), "/p/src/b.txt");
+        assert_eq!(renamed("C:\\p\\a.txt", "b.txt"), "C:\\p\\b.txt");
+        assert!(is_case_only_rename("readme.md", "README.md"));
+        assert!(!is_case_only_rename("a.txt", "a.txt"));
+        assert!(!is_case_only_rename("a.txt", "b.txt"));
+        assert_eq!((rename_title(false), rename_title(true)), ("Rename File", "Rename Folder"));
+    }
+
+    #[test]
+    fn test_c_rename_2_the_initial_selection_stops_before_the_last_extension_of_a_file() {
+        let selected = |name: &str, is_dir: bool| name[initial_selection(name, is_dir)].to_string();
+        assert_eq!(selected("a.txt", false), "a");
+        assert_eq!(selected("a.tar.gz", false), "a.tar");
+        assert_eq!(selected(".env", false), ".env");
+        assert_eq!(selected("Makefile", false), "Makefile");
+        assert_eq!(selected("v1.2", true), "v1.2");
+        assert_eq!(selected("한글.md", false), "한글");
+    }
+
+    #[test]
+    fn test_c_rename_3_renaming_a_folder_moves_the_open_folders_below_it_and_the_last_opened_one() {
+        let expanded: HashSet<String> = ["/p/src", "/p/src/a", "/p/x"].iter().map(|path| path.to_string()).collect();
+        let (moved, last) = move_expanded(&expanded, Some("/p/src/a"), "/p/src", "/p/lib");
+        let wanted: HashSet<String> = ["/p/lib", "/p/lib/a", "/p/x"].iter().map(|path| path.to_string()).collect();
+        assert_eq!(moved, wanted);
+        assert_eq!(last.as_deref(), Some("/p/lib/a"));
+        assert_eq!(
+            move_expanded(&expanded, None, "/p/zzz", "/p/y").0,
+            expanded,
+            "a folder that is not open moves nothing"
+        );
+    }
+
+    #[test]
+    fn test_c_rename_6_only_plain_f2_and_ctrl_v_are_list_keys() {
+        assert_eq!(list_key("f2", false, false, false), Some(ListKey::Rename));
+        assert_eq!(list_key("v", true, false, false), Some(ListKey::Paste));
+        for (key, control, shift, alt) in [
+            ("v", true, true, false),
+            ("v", false, false, false),
+            ("f2", true, false, false),
+            ("f2", false, true, false),
+            ("v", true, false, true),
+            ("f3", false, false, false),
+        ] {
+            assert_eq!(list_key(key, control, shift, alt), None, "{key} {control} {shift} {alt}");
+        }
+    }
+
+    #[test]
+    fn test_c_d70_the_list_gets_keys_only_from_a_row_press_and_every_other_event_takes_them_back() {
+        for focused in [false, true] {
+            assert!(list_focus_after(ListFocusEvent::RowPressed), "{focused}");
+            for event in [
+                ListFocusEvent::KeysReturned,
+                ListFocusEvent::TextTyped,
+                ListFocusEvent::OtherAreaPressed,
+                ListFocusEvent::OtherKey,
+            ] {
+                assert!(!list_focus_after(event), "{focused} {event:?}");
+            }
+        }
     }
 }

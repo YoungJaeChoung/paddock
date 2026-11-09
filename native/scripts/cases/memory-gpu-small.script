@@ -1,0 +1,32 @@
+# 메모리(작은 이미지 대조): 640x480 이미지 하나를 열어 그리고 닫는다. 이미지 크기와 상관없이 첫 이미지 그리기에 고정 몫이 얹히는지 같은 순간 측정(`gpumem`)으로 본다. 실행 이름은 memory-gpu-small이다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send echo READY-SMALL\r
+waitline READY-SMALL @30000
+wait 25000
+gpumem before-open
+act openpath C:/Temp/pdk-run/home-memory-gpu-small/proj-big/img/b.jpg
+waitstate kind=image state=image @20000
+wait 3000
+shot small
+wait 2000
+gpumem open
+act closefile
+wait 600
+wait 600
+wait 5000
+gpumem closed
+wait 20000
+gpumem closed-25s
+act openpath C:/Temp/pdk-run/home-memory-gpu-small/proj-big/img/b.jpg
+waitstate kind=image state=image @20000
+wait 3000
+shot small2
+wait 2000
+gpumem open-again
+act closefile
+wait 600
+wait 600
+wait 5000
+gpumem closed-again
+quit

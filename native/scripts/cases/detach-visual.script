@@ -1,0 +1,38 @@
+# 분리 창 화면 대조(덩어리 36): 메뉴 항목·분리 창(제목줄·탭 한 줄·본문)·본 창의 흐린 탭·Work 행 other window·칸을 나눈 줄에서 빠진 탭을 찍는다.
+waittabs 1 @30000
+send echo V-ONE\r
+waitline V-ONE @20000
+key ctrl-shift-t
+waittabs 2 @20000
+key ctrl-shift-t
+waittabs 3 @20000
+act selecttab 2
+act menu terminal 2
+waitstate menu: terminal @5000
+shot menu-move-to-new-window
+act menuitem Move to New Window
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+sendto 2 echo V-TWO-IN-DETACHED\r
+wait 1000
+shot main-faded-tab
+shotwin 2 detached-900x600
+act menu terminal 2
+waitstate menu: terminal @5000
+shot menu-move-back
+key escape
+waitstate menu: none @5000
+act detachedmenu 2
+wait 800
+shotwin 2 detached-menu
+act detachedmenuitem 2 Move Back to Main Window
+waitstate detached=- @10000
+key ctrl-shift-c
+waittabs 4 @20000
+act movetowindow 2
+waitstate detached=2 @10000
+wait 1000
+shot split-strip-without-detached
+act quick quitstop
+wait 3000

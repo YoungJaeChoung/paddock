@@ -13,6 +13,14 @@ pub const TERMINAL_FONT_CANDIDATES: [&str; 8] =
 pub const INTERFACE_FONT_CANDIDATES: [&str; 7] =
     ["Segoe UI", "Inter", "Noto Sans", "Noto Sans CJK KR", "Malgun Gothic", "Apple SD Gothic Neo", "Arial"];
 
+/// 쓰는 데몬이 앱의 것과 실행 파일만 다를 때(`outdated`) 패널 맨 아래에 보이는 안내. 아니면 None이다.
+///
+/// 데몬 쪽 수정은 터미널이 모두 닫히고 새 데몬이 뜬 뒤에야 반영되므로, 바로 바꾸는 길인 `Quit and Stop All Terminals`를 가리킨다.
+pub fn outdated_daemon_hint(outdated: bool) -> Option<&'static str> {
+    outdated
+        .then_some("Using the previous terminal daemon until all terminals close (quit with Stop All to switch now)")
+}
+
 /// 패널의 줄 하나.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Row {
@@ -21,27 +29,49 @@ pub enum Row {
     FontSize,
     TerminalFont,
     InterfaceFont,
+    SidebarIndent,
     DefaultShell,
+    CopyOnSelection,
     DoneSound,
     OnQuit,
     RestoreOnRestart,
     AgentPermissions,
+    /// 상태 줄 `Claude usage` 묶음 켬/끔.
+    ClaudeUsage,
+    /// 상태 줄 `Codex usage` 묶음 켬/끔.
+    CodexUsage,
+    /// 상태 줄 `Memory` 묶음 켬/끔.
+    Memory,
+    /// 메모리가 부족할 때 Claude Code 에이전트에게 알리는 훅 켬/끔.
+    MemoryNotice,
+    /// 메모리 안내를 붙이는 가용 메모리 기준(MB).
+    MemoryNoticeMinimumMb,
+    /// WSL 일반 터미널의 `claude`가 Paddock 실행 래퍼를 거치게 `~/.bashrc`에 줄을 넣을지.
+    WslClaudeLauncher,
     QuitAndStopAll,
 }
 
 impl Row {
     /// 패널에 보이는 순서. 마지막 줄은 앱을 끝내는 줄이다.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 19] = [
         Self::Theme,
         Self::Zoom,
         Self::FontSize,
         Self::TerminalFont,
         Self::InterfaceFont,
+        Self::SidebarIndent,
         Self::DefaultShell,
+        Self::CopyOnSelection,
         Self::DoneSound,
         Self::OnQuit,
         Self::RestoreOnRestart,
         Self::AgentPermissions,
+        Self::ClaudeUsage,
+        Self::CodexUsage,
+        Self::Memory,
+        Self::MemoryNotice,
+        Self::MemoryNoticeMinimumMb,
+        Self::WslClaudeLauncher,
         Self::QuitAndStopAll,
     ];
 
@@ -52,11 +82,19 @@ impl Row {
             Self::FontSize => "Code font size",
             Self::TerminalFont => "Code font",
             Self::InterfaceFont => "Interface font",
+            Self::SidebarIndent => "Sidebar indent",
             Self::DefaultShell => "Default shell",
+            Self::CopyOnSelection => "Copy on selection",
             Self::DoneSound => "Agent done sound",
             Self::OnQuit => "On quit",
             Self::RestoreOnRestart => "Restore on restart",
             Self::AgentPermissions => "Agent permissions",
+            Self::ClaudeUsage => "Claude usage",
+            Self::CodexUsage => "Codex usage",
+            Self::Memory => "Memory",
+            Self::MemoryNotice => "Memory notice",
+            Self::MemoryNoticeMinimumMb => "Memory notice limit",
+            Self::WslClaudeLauncher => "WSL claude launcher",
             Self::QuitAndStopAll => "Quit and Stop All Terminals",
         }
     }
@@ -67,12 +105,30 @@ impl Row {
             Self::Theme | Self::Zoom => "All windows, right away",
             Self::FontSize | Self::TerminalFont => "All terminals and file views, right away",
             Self::InterfaceFont => "Sidebar, tabs and status bar",
+            Self::SidebarIndent => "Work and file lists",
             Self::DefaultShell => "New terminals",
+            Self::CopyOnSelection => "Text you select in a terminal",
             Self::DoneSound => "Next agent completion",
             Self::OnQuit => "Next time you quit",
             Self::RestoreOnRestart => "Next time Paddock starts",
             Self::AgentPermissions => "New agent terminals",
+            Self::ClaudeUsage | Self::CodexUsage | Self::Memory => "Status bar, right away",
+            Self::MemoryNotice => "Claude started after the change",
+            Self::MemoryNoticeMinimumMb => "Tells agents below this much free memory",
+            Self::WslClaudeLauncher => "Regular WSL terminals, ~/.bashrc line",
             Self::QuitAndStopAll => "Ends every terminal, then quits",
+        }
+    }
+}
+
+impl Row {
+    /// 상태 줄 항목 줄이면 그 항목의 설정 키. 값은 켬/끔(기본 켬)이다.
+    pub fn status_item_key(self) -> Option<&'static str> {
+        match self {
+            Self::ClaudeUsage => Some(key::STATUS_BAR_CLAUDE),
+            Self::CodexUsage => Some(key::STATUS_BAR_CODEX),
+            Self::Memory => Some(key::STATUS_BAR_MEMORY),
+            _ => None,
         }
     }
 }
@@ -87,6 +143,7 @@ pub enum Field {
     OnQuit,
     RestoreOnRestart,
     AgentPermissions,
+    WslClaudeLauncher,
 }
 
 /// 선택지 하나: 설정 파일에 쓰는 값과 화면에 보이는 이름.
@@ -175,6 +232,7 @@ pub fn choices(field: Field) -> Vec<Choice> {
         Field::AgentPermissions => {
             vec![Choice::new("ask", "Ask"), Choice::new("allowSkip", "Allow skip"), Choice::new("skip", "Skip all")]
         }
+        Field::WslClaudeLauncher => vec![Choice::new("ask", "Ask"), Choice::new("on", "On"), Choice::new("off", "Off")],
         Field::TerminalFont | Field::InterfaceFont | Field::DefaultShell => Vec::new(),
     }
 }
@@ -198,6 +256,7 @@ pub fn current_value(
         Field::OnQuit => known(key::ON_QUIT, field, "ask"),
         Field::RestoreOnRestart => known(key::RESTORE_ON_RESTART, field, "always"),
         Field::AgentPermissions => known(key::AGENT_PERMISSIONS, field, "ask"),
+        Field::WslClaudeLauncher => values.wsl_claude_launcher().as_str().to_string(),
         Field::TerminalFont => {
             values.appearance().terminal_font_family.unwrap_or_else(|| font::TERMINAL_FAMILY.to_string())
         }
@@ -219,6 +278,7 @@ pub fn setting_of(
         Field::OnQuit => (key::ON_QUIT, Value::from(value)),
         Field::RestoreOnRestart => (key::RESTORE_ON_RESTART, Value::from(value)),
         Field::AgentPermissions => (key::AGENT_PERMISSIONS, Value::from(value)),
+        Field::WslClaudeLauncher => (key::WSL_CLAUDE_LAUNCHER, Value::from(value)),
     }
 }
 
@@ -229,6 +289,14 @@ mod tests {
 
     use super::*;
     use crate::quit_policy::OnQuit;
+
+    #[test]
+    fn test_c7_outdated_daemon_hint_shows_only_for_an_outdated_daemon_and_names_stop_all() {
+        assert_eq!(outdated_daemon_hint(false), None);
+        let hint = outdated_daemon_hint(true).expect("hint for an outdated daemon");
+        assert!(hint.starts_with("Using the previous terminal daemon"), "{hint}");
+        assert!(hint.contains("Stop All"), "{hint}");
+    }
 
     #[test]
     fn test_c_d51_font_rows_say_they_apply_to_terminals_and_file_views() {
@@ -307,6 +375,58 @@ mod tests {
         }
         assert_eq!(Row::QuitAndStopAll.label(), "Quit and Stop All Terminals");
     }
+
+    #[test]
+    fn test_c_d79_the_three_status_bar_rows_sit_before_quit_and_write_the_shared_status_bar_keys() {
+        let at = |row: Row| Row::ALL.iter().position(|other| *other == row).unwrap();
+        assert_eq!(at(Row::CodexUsage), at(Row::ClaudeUsage) + 1);
+        assert_eq!(at(Row::Memory), at(Row::CodexUsage) + 1);
+        assert_eq!(at(Row::MemoryNotice), at(Row::Memory) + 1);
+        assert_eq!(at(Row::MemoryNoticeMinimumMb), at(Row::MemoryNotice) + 1);
+        assert_eq!(at(Row::WslClaudeLauncher), at(Row::MemoryNoticeMinimumMb) + 1);
+        assert_eq!(at(Row::QuitAndStopAll), at(Row::WslClaudeLauncher) + 1);
+        assert_eq!(
+            [Row::ClaudeUsage, Row::CodexUsage, Row::Memory].map(|row| (row.label(), row.status_item_key())),
+            [
+                ("Claude usage", Some("paddock.statusBar.claude")),
+                ("Codex usage", Some("paddock.statusBar.codex")),
+                ("Memory", Some("paddock.statusBar.memory")),
+            ]
+        );
+        for row in [Row::ClaudeUsage, Row::CodexUsage, Row::Memory] {
+            assert_eq!(row.applies_to(), "Status bar, right away");
+        }
+        assert_eq!(Row::Theme.status_item_key(), None);
+    }
+
+    #[test]
+    fn test_c_sync_20_sidebar_indent_and_copy_on_selection_rows_sit_between_the_existing_rows_and_say_what_they_apply_to()
+     {
+        let at = |row: Row| Row::ALL.iter().position(|other| *other == row).unwrap();
+        assert_eq!(at(Row::SidebarIndent), at(Row::InterfaceFont) + 1);
+        assert!(at(Row::CopyOnSelection) < at(Row::QuitAndStopAll));
+        assert_eq!(
+            (Row::SidebarIndent.label(), Row::SidebarIndent.applies_to()),
+            ("Sidebar indent", "Work and file lists")
+        );
+        assert_eq!(Row::CopyOnSelection.label(), "Copy on selection");
+        assert_eq!(Row::ALL.len(), 19);
+    }
+
+    #[test]
+    fn test_c_d73_the_claude_settings_rows_use_the_shared_keys_and_the_launcher_offers_ask_on_off() {
+        let values = SettingValues::from_texts(r#"{"paddock.wsl.claudeLauncher": "on"}"#, "");
+        assert_eq!(current_value(Field::WslClaudeLauncher, &values), "on");
+        assert_eq!(current_value(Field::WslClaudeLauncher, &SettingValues::from_texts("", "")), "ask");
+        assert_eq!(
+            choices(Field::WslClaudeLauncher).into_iter().map(|choice| choice.value).collect::<Vec<_>>(),
+            vec!["ask", "on", "off"]
+        );
+        assert_eq!(setting_of(Field::WslClaudeLauncher, "off"), ("paddock.wsl.claudeLauncher", "off".into()));
+        assert_eq!(Row::MemoryNotice.label(), "Memory notice");
+        assert_eq!(Row::MemoryNoticeMinimumMb.label(), "Memory notice limit");
+    }
+
     #[test]
     fn test_c_d41_choosing_writes_the_shared_key_in_the_old_apps_value_format() {
         let (key, value) = setting_of(Field::TerminalFont, "Fira Code");

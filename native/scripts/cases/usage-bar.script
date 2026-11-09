@@ -1,0 +1,52 @@
+# 상태 줄 사용량(덩어리 29): 기본 Claude·등록 계정·Codex(가짜 app-server)의 값이 도구별 게이지로 보이고, 선택은 보고 있는 터미널의 범위를 따른다.
+# 임시 홈 자료는 scripts/assets/usage-fixture.sh가 만든다(기본 Claude 5h 23·week 61, 계정 Main 5h 12·week 34, Codex 5h 40, 지난 실행의 Codex 선택).
+waittabs 1 @30000
+waitstate cwd=C: @30000
+# 지난 실행에서 고른 Codex 기본 CLI가 시작하자마자 보이고, 값은 가짜 `codex app-server`가 실시간으로 답한 40%다. Claude는 고른 적이 없어 묶음이 없다.
+waitstate codex=Default:5h=40 @30000
+waitnostate claude= @3000
+state initial
+shot 01-initial
+# 터미널에서 claude를 실행하면 Claude 기본 CLI가 도구별 선택에 들어온다: 기본 기록의 5h 23·week 61, Codex 선택은 그대로.
+send claude.exe -n 600 127.0.0.1\r
+waitstate program=claude @20000
+waitstate claude=Default:5h=23,week=61 @15000
+waitstate codex=Default:5h=40 @3000
+waitstate usage-tip claude 5h: Claude · Default · 5-hour: 23% used @3000
+state claude-default
+shot 02-claude-default
+# 등록 계정 Main의 터미널을 열면 Claude 묶음이 Main의 자기 폴더 값(5h 12·week 34)으로 바뀐다. 기본 CLI의 값을 빌려 오지 않는다.
+act plusmenu
+waitstate menu: new-terminal @5000
+act menuitem Claude · Main
+waittabs 2 @30000
+waitstate claude=Main:5h=12,week=34 @15000
+state claude-main
+shot 03-claude-main
+# Main의 기록이 이미 초기화된 시각(과거)으로 바뀌면 5h는 0%가 되고 말풍선은 다음 요청 때 새 창이 시작된다고 말한다.
+sendto 2 $f = "$env:USERPROFILE\\.paddock\\config\\agent-profiles\\11111111-1111-4111-8111-111111111111\\claude\\paddock-usage\\claude.json"; Set-Content $f '{"rate_limits":{"five_hour":{"used_percentage":90,"resets_at":1000},"seven_day":{"used_percentage":34,"resets_at":9999999999}},"updated_at":1}'\r
+wait 800
+act usagerefresh
+waitstate claude=Main:5h=0,week=34 @15000
+waitstate usage-tip claude 5h: Claude · Main · 5-hour: 0% used · 100% left · reset — a new window starts with your next request @3000
+state claude-reset
+shot 04-claude-reset
+# 처음 터미널로 돌아가면 다시 기본 CLI다.
+act selecttab 1
+waitstate claude=Default:5h=23,week=61 @15000
+# 빠른 설정 Status bar: Claude usage를 끄면 Claude 묶음만 사라지고 Codex는 남으며 설정 키는 false다. 다시 켜면 돌아온다.
+act quick open
+waitstate quick=open @5000
+shot 05-quick-settings
+act quick statusbar claude off
+waitstate items=claude:off,codex:on,memory:on @5000
+waitnostate claude=Default @3000
+waitstate codex=Default:5h=40 @3000
+files claude-off
+shot 06-claude-off
+act quick statusbar claude on
+waitstate items=claude:on,codex:on,memory:on @5000
+waitstate claude=Default:5h=23,week=61 @15000
+files claude-on
+act quick close
+quit

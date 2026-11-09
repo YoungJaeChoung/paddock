@@ -2,6 +2,8 @@
 //!
 //! 항목·문구를 정하는 순수 규칙(`menu_model`, `empty_model`)은 항상 빌드되고, 그리기는 `gui` 기능일 때만 빌드된다.
 
+#[cfg(feature = "gui")]
+pub mod actions;
 pub mod empty_model;
 #[cfg(feature = "gui")]
 pub mod empty_state;
@@ -14,5 +16,7 @@ pub mod menu;
 pub mod menu_model;
 #[cfg(feature = "gui")]
 pub mod rename_dialog;
+#[cfg(all(feature = "gui", feature = "automation"))]
+pub mod sync_automation;
 #[cfg(feature = "gui")]
 pub mod terminal_row;

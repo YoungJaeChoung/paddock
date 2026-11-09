@@ -1,0 +1,52 @@
+# 키 갈래(덩어리 25): Ctrl+S·Ctrl+G·Ctrl+F·Ctrl+H는 파일 탭이 활성일 때만 앱·편집기가 받고, 터미널이 활성이면 그대로 셸로 간다(바이트 19·7·6·8).
+# 기본 셸은 WSL이다. 둘째 터미널이 키 바이트를 한 개씩 `BYTE-<십진수>` 줄로 찍는다. 파일 탭이 활성인 동안은 그런 줄이 하나도 늘지 않아야 한다.
+waittabs 1 @30000
+send unset HISTFILE; rm -rf /tmp/pdk-keys && mkdir -p /tmp/pdk-keys/proj && for i in $(seq 1 30); do echo line $i; done > /tmp/pdk-keys/proj/a.txt && ln -sf /bin/bash /tmp/pdk-keys/claude && export PATH=/tmp/pdk-keys:$PATH && cd /tmp/pdk-keys/proj\r
+send echo READY-KEYS\r
+waitline READY-KEYS @20000
+send claude -c 'for i in $(seq 1 600); do echo work $i; sleep 0.5; done'\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+send echo READY-KEYS2\r
+waitline READY-KEYS2 @20000
+send stty -icanon -echo -ixon min 1; while true; do b=$(dd bs=1 count=1 2>/dev/null | od -An -tu1 | tr -d ' '); echo "BYTE-$b"; done\r
+wait 1500
+# --- 파일 탭이 활성: Ctrl+S는 저장(고친 게 없으니 무동작), Ctrl+G는 줄로 가기 창, Ctrl+F는 찾기 패널을 연다. 셸로는 아무것도 가지 않는다.
+act openpath //wsl.localhost/Ubuntu/tmp/pdk-keys/proj/a.txt
+waitstate kind=text state=text lines=30 @10000
+key ctrl-s
+wait 300
+key ctrl-g
+waitoverlay goto-line @3000
+key escape
+waitoverlay none @3000
+act focusfile
+key ctrl-f
+waitstate find-open=yes @3000
+key escape
+wait 500
+act focusfile
+key ctrl-h
+wait 500
+state file-active
+dumptab 2 pty-file-active
+nolinestart 2 BYTE-#
+# --- 터미널이 활성: 네 키 모두 셸로 간다.
+act selecttab 2
+wait 800
+key ctrl-s
+waitline BYTE-19 @5000
+key ctrl-g
+waitline BYTE-7 @5000
+key ctrl-f
+waitline BYTE-6 @5000
+key ctrl-h
+waitline BYTE-8 @5000
+dumptab 2 pty-terminal-active
+state terminal-active
+send rm -rf /tmp/pdk-keys\r
+quit

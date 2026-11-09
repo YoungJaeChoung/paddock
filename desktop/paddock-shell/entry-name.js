@@ -14,6 +14,8 @@
  * | `` / `  `     | `false`                                |
  * | `a/b`, `a\b`  | 이름에 `/`·`\`를 쓸 수 없다는 경고     |
  * | `.`, `..`     | 예약된 이름이라는 경고                 |
+ * | ` a`, `a `    | 앞뒤 빈칸 경고                         |
+ * | `a.`          | 끝 마침표 경고                         |
  */
 function validateEntryName(
     value,
@@ -23,6 +25,9 @@ function validateEntryName(
     else if (/[\\/]/.test(value)) result = 'A name can’t contain / or \\. Create one level at a time.';
     else if (value === '.' || value === '..') result = '“.” and “..” are reserved. Choose another name.';
     else if (/[\x00-\x1f]/.test(value)) result = 'Remove control characters from the name.';
+    // Windows는 앞뒤 빈칸·끝 마침표를 떼고 만들어 디스크 이름이 입력과 달라진다. 모든 운영체제에서 같은 규칙으로 막는다.
+    else if (value !== value.trim()) result = 'A name can’t start or end with a space.';
+    else if (value.endsWith('.')) result = 'A name can’t end with a period.';
     return result;
 }
 

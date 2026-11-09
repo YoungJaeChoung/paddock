@@ -1,0 +1,60 @@
+# 동기화 ② 파일 목록 붙여넣기(C-D69). **사용자 클립보드를 바꾸므로 야간에만 돌린다**(plan 열린 질문 ⑧) — 끝에서 클립보드 글자를 되돌린다.
+# PowerShell로 클립보드에 파일(`Set-Clipboard -Path`, CF_HDROP)·비트맵(CF_DIB)·PNG·글자를 올리고 `act filespaste`로 받는다. 원본은 그대로이고 같은 이름은 `copy`로 받는다.
+# 이 대본은 실행 이름이 files-paste일 때 임시 홈 경로(C:/Temp/pdk-run/home-files-paste)를 쓴다. 기본 셸은 PowerShell이다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send Add-Type -AssemblyName System.Windows.Forms, System.Drawing; $p = "$env:USERPROFILE\\proj-paste"; mkdir "$p\\src", "$env:USERPROFILE\\bin" -Force | Out-Null; Set-Content "$p\\a.txt" mine; Set-Content "$p\\src\\s.txt" ess; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; $saved = Get-Clipboard -Raw; cd $p\r
+send echo READY-PASTE\r
+waitline READY-PASTE @20000
+send claude.exe -n 900 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+# 행: 1 src · 2 a.txt. 파일(a.txt)을 클립보드에 올리고 src 행을 선택해 붙인다.
+key ctrl-shift-t
+waittabs 2 @20000
+wait 1500
+send Set-Clipboard -Path "$env:USERPROFILE\\proj-paste\\a.txt"\r
+wait 800
+act clipboard
+waitstate clipboard=files:1 @5000
+act selectrow 1
+waitstate files-focus=yes @3000
+act filespaste
+waitstate Copied 1 item into src @8000
+act files 1
+waitstate file-row 1 file a.txt @8000
+state pasted-file
+act filespaste
+waitstate file-row 1 file a copy.txt @8000
+state pasted-again
+# 비트맵(CF_DIB) → image.png, 다시 → image copy.png
+send [Windows.Forms.Clipboard]::SetImage((New-Object System.Drawing.Bitmap 20, 10))\r
+wait 800
+act clipboard
+waitstate clipboard=image: @5000
+state clipboard-bitmap
+act selectrow 1
+act filespaste
+waitstate file-row 1 file image.png @8000
+act selectrow 1
+act filespaste
+waitstate file-row 1 file image copy.png @8000
+state pasted-bitmap
+# 글자만 → 안내
+send Set-Clipboard -Value "just text"\r
+wait 800
+act selectrow 1
+act filespaste
+waitstate The clipboard has no files or images @5000
+state text-only
+# 파일 행을 선택하고 붙이면 그 파일이 있는 폴더(src)에 받는다.
+send Set-Clipboard -Path "$env:USERPROFILE\\proj-paste\\a.txt"\r
+wait 800
+act selectrow 2
+act filespaste
+waitstate file-row 1 file a copy 2.txt @8000
+state parent-folder
+send Set-Clipboard -Value $saved\r
+wait 500
+quit

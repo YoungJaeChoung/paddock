@@ -152,6 +152,8 @@ pub fn is_enabled() -> bool {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgentSeen {
     pub pid: u32,
+    /// 그 프로세스의 시작 표지(`Reading.start_mark`). 알 수 없으면 None. `STOP_AGENT`가 같은 프로세스인지 확인하는 표지다.
+    pub start_mark: Option<u64>,
     pub conversation: AgentConversation,
 }
 
@@ -222,7 +224,7 @@ pub fn resolve_agent(
         None if reading.runtime == Runtime::Wsl => wsl_conversation(reading, name, pid),
         None => native_conversation(reading, name, pid, context),
     };
-    found.map(|conversation| AgentSeen { pid, conversation })
+    found.map(|conversation| AgentSeen { pid, start_mark: reading.start_mark, conversation })
 }
 
 /// WSL 안에서 읽어 온 Claude sessions 기록 본문으로 대화를 찾는다.
@@ -392,6 +394,7 @@ mod tests {
             distribution: String::new(),
             pid,
             started_at: None,
+            start_mark: None,
             session_record: None,
         }
     }
@@ -411,6 +414,7 @@ mod tests {
     #[test]
     fn test_c_d40_a_conversation_found_for_a_process_is_kept_while_the_process_runs() {
         let known = AgentSeen {
+            start_mark: None,
             pid: 42,
             conversation: AgentConversation {
                 provider: "claude".into(),

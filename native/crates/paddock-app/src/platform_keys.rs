@@ -75,6 +75,73 @@ pub fn complete_composition(window: &gpui_kit::Window) {
 #[cfg(all(not(windows), feature = "gui"))]
 pub fn complete_composition(_window: &gpui_kit::Window) {}
 
+/// 창의 운영체제 핸들 숫자(Windows HWND). Windows가 아니거나 핸들을 얻지 못하면 None이다.
+#[cfg(all(windows, feature = "gui"))]
+pub fn window_hwnd(window: &gpui_kit::Window) -> Option<isize> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    match HasWindowHandle::window_handle(window).ok().map(|handle| handle.as_raw()) {
+        Some(RawWindowHandle::Win32(win32)) => Some(win32.hwnd.get()),
+        _ => None,
+    }
+}
+
+/// Windows가 아니면 핸들 숫자가 없다.
+#[cfg(all(not(windows), feature = "gui"))]
+pub fn window_hwnd(_window: &gpui_kit::Window) -> Option<isize> {
+    None
+}
+
+/// 자동 점검: `window`의 핸들을 `hwnd-NAME.txt`에 남겨, 바깥 실행기가 이 창을 캡처할 수 있게 한다.
+#[cfg(all(feature = "automation", feature = "gui"))]
+pub fn note_window_handle(
+    name: &str,
+    window: &gpui_kit::Window,
+) {
+    crate::automation::note_window_handle(name, window_hwnd(window));
+}
+
+/// 자동 점검: `window`의 위치·크기를 GPUI 값과 운영체제 값으로 나란히 `events.log`에 남긴다(Windows만).
+#[cfg(all(feature = "automation", feature = "gui"))]
+pub fn log_geometry(
+    label: &str,
+    window: &gpui_kit::Window,
+) {
+    #[cfg(windows)]
+    if let Some(hwnd) = window_hwnd(window) {
+        let bounds = window.bounds();
+        let viewport = window.viewport_size();
+        crate::automation::log_window_geometry(
+            label,
+            hwnd,
+            (
+                f32::from(bounds.origin.x),
+                f32::from(bounds.origin.y),
+                f32::from(bounds.size.width),
+                f32::from(bounds.size.height),
+            ),
+            (f32::from(viewport.width), f32::from(viewport.height)),
+            window.scale_factor(),
+        );
+    }
+    #[cfg(not(windows))]
+    let _ = (label, window);
+}
+
+/// 자동 점검: `window`에 사람이 창 닫기를 누른 것과 같은 닫기 메시지를 보낸다. 메시지는 창의 이벤트 루프가 나중에 처리하므로 창이 닫기를
+/// 거부하거나 되돌리기를 거치는 길(`on_window_should_close`)을 그대로 탄다.
+#[cfg(all(windows, feature = "automation", feature = "gui"))]
+pub fn post_window_close(window: &gpui_kit::Window) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_CLOSE};
+
+    if let Some(hwnd) = window_hwnd(window) {
+        // SAFETY: 핸들은 방금 GPUI 창에서 얻은 것이고, 메시지는 인자 값만 가진다.
+        unsafe {
+            PostMessageW(hwnd as *mut std::ffi::c_void, WM_CLOSE, 0, 0);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     /// 입력칸을 여는 모든 곳은 그 앞에서 터미널의 한글 조합을 확정해야 한다(`settle_composition`). 새 입력칸이 한 곳이라도 빠지면 조합이 입력칸에 끼어든다.
