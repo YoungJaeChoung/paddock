@@ -8,12 +8,12 @@
 # 교체는 묶음 폴더 통째로 한다. 새 묶음을 같은 폴더의 임시 이름에 완성해 두고, 옛 묶음을 옆으로 옮긴 뒤(rename)
 # 새 묶음을 제자리로 옮긴다(rename). 파일을 제자리에서 덮어쓰지 않는 이유: macOS는 실행 중인 파일이 바뀌면
 # 코드 서명이 맞지 않아 그 프로세스를 죽인다. 옮기거나 지운 파일은 실행 중 프로세스가 원래 내용 그대로 계속 쓴다.
-# 설치 폴더는 PADDOCK_MAC_INSTALL_DIR로 바꿀 수 있다(기본 ~/Applications).
+# 설치 폴더는 PADDOCK_MAC_INSTALL_DIR로 바꿀 수 있다(기본 /Applications — dmg로 설치하는 자리와 같게 둔다).
 set -euo pipefail
 
 native_dir="$(cd "$(dirname "$0")/.." && pwd)"
 source_bundle="$native_dir/target/mac/Paddock Native.app"
-install_dir="${PADDOCK_MAC_INSTALL_DIR:-$HOME/Applications}"
+install_dir="${PADDOCK_MAC_INSTALL_DIR:-/Applications}"
 
 # 설치 폴더를 심볼릭 링크를 푼 실제 경로로 바꾼다. 실행 중인 앱의 실제 경로와 비교하려면 같은 꼴이어야 한다.
 # 폴더가 아직 없으면(첫 설치) 그대로 둔다.

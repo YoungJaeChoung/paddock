@@ -1,4 +1,4 @@
-.PHONY: package-mac package-win release native-dev native-win native-lint native-release-win native-installer native-mac native-mac-install
+.PHONY: package-mac package-win release native-dev native-win native-lint native-release-win native-installer native-mac native-mac-install native-mac-dmg
 
 # 설치 파일은 desktop/dist/에 생긴다. 각 운영체제에서 실행한다(맥 → .dmg, Windows → .exe).
 # setup은 의존성 설치와 네이티브 모듈의 Electron용 컴파일을 맡는다. 이미 끝났으면 빠르게 지나간다.
@@ -61,7 +61,7 @@ native-release-win:
 
 # 맥용 앱 묶음. native-mac은 release 실행 파일 세 개(앱·데몬·pen-mcp)를 macOS에서 빌드해
 # native/target/mac/Paddock Native.app에 담고 임시 서명한다(native/scripts/build-mac-app.sh). 자동 점검 기능은 켜지 않는다.
-# native-mac-install은 그 묶음을 ~/Applications/Paddock Native.app에 설치한다(있으면 교체, native/scripts/install-mac-app.sh).
+# native-mac-install은 그 묶음을 /Applications/Paddock Native.app에 설치한다(있으면 교체, native/scripts/install-mac-app.sh).
 # 설치할 자리의 앱이 실행 중이면 빌드 전에 멈춘다 — 실행 중인 데몬은 끝내지 않고, 새 앱이 이어 쓴다.
 # Finder·Dock으로 연 앱은 앱이 시작할 때 로그인 셸의 PATH를 읽어 쓴다(claude·git 등을 찾게 한다).
 native-mac:
@@ -72,6 +72,11 @@ native-mac-install:
 	native/scripts/install-mac-app.sh --check
 	$(MAKE) native-mac
 	native/scripts/install-mac-app.sh
+
+# 맥 설치 파일. native-mac으로 묶음을 만든 뒤 native/target/mac/PaddockNative-<버전>-<아키텍처>.dmg에 담는다
+# (native/scripts/build-mac-dmg.sh). dmg를 열어 Paddock Native를 Applications로 끌어 놓으면 설치된다.
+native-mac-dmg: native-mac
+	native/scripts/build-mac-dmg.sh
 
 # 네이티브 앱 설치 파일(NSIS). 결과는 native/target/installer/PaddockNative-Setup-<버전>-x64.exe에 생긴다.
 # NATIVE_EXE_DIR을 주지 않으면 native-release-win으로 release 실행 파일을 먼저 만든다(WSL).
