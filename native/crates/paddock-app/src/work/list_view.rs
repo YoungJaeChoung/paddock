@@ -17,7 +17,7 @@ use super::empty_state::empty_state;
 use super::folder_row::{FolderRowSpec, folder_row};
 use super::menu_model::{MenuKind, more_label, row_label};
 use super::terminal_row::{RowTarget, TerminalRowSpec, terminal_row};
-use crate::agent_view::{meta_text, need_input_text, needs_input, status_of};
+use crate::agent_view::{self, meta_text, status_of};
 use crate::chrome::zpx;
 use crate::look::colors;
 use crate::scm::SidebarView;
@@ -57,38 +57,34 @@ pub(crate) fn terminal_state(
     window_view.workspace.tab(id).and_then(|tab| tab.content.session.grid.shared.state.lock().unwrap().clone())
 }
 
-/// 작업 폴더 행의 도움말: 폴더 경로, 읽지 않은 완료 알림, 입력을 기다리는 에이전트 수(`N need input`)를 ` · `로 잇는다.
-/// 접힌 폴더 안의 터미널 상태도 이 도움말이 알린다.
+/// 작업 폴더 행의 도움말: 보이는 폴더 경로, 읽지 않은 완료 알림, 입력을 기다리는 에이전트 수(`N need input`)를 ` · `로 잇는다.
+/// 접힌 폴더 안의 터미널 상태도 이 도움말이 알린다. 글의 규칙은 `agent_view::folder_tip`이 정한다.
 pub(crate) fn folder_tip(
     window_view: &WorkWindow,
     key: &str,
 ) -> String {
     let ids = window_view.workspace.work().terminals_of(key);
-    let n_waiting = ids.iter().filter(|id| needs_input(terminal_state(window_view, **id).as_ref())).count();
+    let states: Vec<Option<TerminalState>> = ids.iter().map(|id| terminal_state(window_view, *id)).collect();
     let unseen = ids.iter().any(|id| window_view.done.is_unseen(*id));
-    [Some(key.to_string()), unseen.then(|| "Unseen activity".to_string()), need_input_text(n_waiting)]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
-        .join(" \u{b7} ")
+    agent_view::folder_tip(key, user_home().as_deref(), unseen, &states)
 }
 
 /// Unassigned 묶음 행의 도움말: 앞쪽 프로그램·폴더, 읽지 않은 완료 알림, 입력을 기다리는 에이전트 수를 ` · `로 잇고 이름 바꾸기 방법을 붙인다.
+/// 글의 규칙은 `agent_view::group_tip`이 정한다.
 pub(crate) fn group_tip(
     window_view: &WorkWindow,
     group: &Group,
 ) -> String {
-    let state = terminal_state(window_view, group.root);
-    let n_waiting =
-        group.members.iter().filter(|member| needs_input(terminal_state(window_view, member.id).as_ref())).count();
+    let root = terminal_state(window_view, group.root);
+    let members: Vec<Option<TerminalState>> =
+        group.members.iter().map(|member| terminal_state(window_view, member.id)).collect();
     let unseen = group.members.iter().any(|member| window_view.done.is_unseen(member.id));
-    let parts = [
-        state.as_ref().and_then(|state| state.program.clone()),
-        state.as_ref().and_then(|state| state.cwd.clone()),
-        unseen.then(|| "Unseen activity in this group".to_string()),
-        need_input_text(n_waiting),
-    ];
-    format!("{} \u{2014} double-click to rename", parts.into_iter().flatten().collect::<Vec<_>>().join(" \u{b7} "))
+    agent_view::group_tip(root.as_ref(), user_home().as_deref(), unseen, &members)
+}
+
+/// 이 컴퓨터 사용자의 홈 폴더. 도움말의 경로를 `~`로 줄이는 데 쓴다.
+fn user_home() -> Option<String> {
+    std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).ok()
 }
 
 /// 터미널 하나의 행 모양(요약·상태·미확인)을 정하는 값.
