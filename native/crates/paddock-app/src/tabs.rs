@@ -19,7 +19,6 @@ use paddock_core::theme::{
     sidebar_toggle, split_buttons, tab, tab_detached, tab_overflow, text,
 };
 
-use crate::agent_view::status_of;
 use crate::chrome::{unseen_dot, zpx};
 use crate::look::{colors, scaled};
 use crate::tab_drag::{DragFileTab, DragTab};
@@ -71,23 +70,15 @@ fn tab_label(
     row_label(name, &suffix)
 }
 
-/// 터미널 탭의 도움말: `이름 · 프로그램 · 에이전트가 알린 상태`. 추정(Sent·Output·Quiet)은 목록 행에서만 보이고 탭에는 알린 상태만 나온다.
+/// 터미널 탭의 도움말: `이름 · 프로그램 · 에이전트가 알린 상태`, 다른 창으로 옮긴 탭은 `이름 · Open in another window`.
+/// 추정(Sent·Output·Quiet)은 목록 행에서만 보이고 탭에는 알린 상태만 나온다. 글의 규칙은 `agent_view::tab_tip`이 정한다.
 fn tab_tip(
     window_view: &WorkWindow,
     id: u32,
     label: &str,
 ) -> String {
     let state = terminal_state(window_view, id);
-    let reported = state.as_ref().filter(|state| state.signal.is_some()).and_then(|state| status_of(Some(state)));
-    [
-        Some(label.to_string()),
-        state.as_ref().and_then(|state| state.program.clone()),
-        reported.map(|status| status.label.to_string()),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>()
-    .join(" \u{b7} ")
+    crate::agent_view::tab_tip(label, state.as_ref(), window_view.workspace.is_detached(id))
 }
 
 /// 탭 줄에 초점이 있을 때 고른 탭에 둘리는 초점 테두리. 탭 위에 겹쳐 그려 탭 크기를 바꾸지 않고 누름도 막지 않는다.

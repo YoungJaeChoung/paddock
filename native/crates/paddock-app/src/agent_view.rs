@@ -1,6 +1,7 @@
 //! Work 목록 행에 보이는 에이전트 정보의 글: 오른쪽 프로그램 요약과 상태 글자. 화면 그리기를 모르는 순수 규칙이다.
 use paddock_core::agent_account::scope_name;
 use paddock_core::agent_model::{ActivityState, StatusState, is_shell};
+use paddock_core::paths::display_path;
 use paddock_protocol::message::TerminalState;
 
 /// 상태 칸의 색을 고르는 구분. 점·글자가 같은 색이다.
@@ -119,33 +120,92 @@ pub fn need_input_text(n_waiting: usize) -> Option<String> {
     }
 }
 
-/// 작업 폴더 행의 도움말.
+/// 작업 폴더 행의 도움말: 보이는 폴더 경로, 읽지 않은 완료 알림, 입력을 기다리는 에이전트 수를 ` · `로 잇는다.
+///
+/// 접힌 폴더 안 터미널의 상태도 이 도움말이 알린다. 경로는 `display_path` 모양(홈은 `~`, WSL 공유는 리눅스 경로)이다.
+/// `states`는 그 폴더 터미널들의 상태이고, 상태를 아직 모르는 터미널은 None이다.
+///
+/// Examples
+/// --------
+/// | key                         | 미확인 | 입력 대기 | 결과                                            |
+/// |-----------------------------|--------|-----------|-------------------------------------------------|
+/// | `/home/me/app`(홈 `/home/me`) | 아니오 | 0         | `~/app`                                         |
+/// | `/srv/data`                 | 예     | 1         | `/srv/data · Unseen activity · 1 needs input`   |
+/// | `/srv/data`                 | 아니오 | 2         | `/srv/data · 2 need input`                      |
 pub fn folder_tip(
-    _key: &str,
-    _home: Option<&str>,
-    _unseen: bool,
-    _states: &[Option<TerminalState>],
+    key: &str,
+    home: Option<&str>,
+    unseen: bool,
+    states: &[Option<TerminalState>],
 ) -> String {
-    String::new()
+    let n_waiting = states.iter().filter(|state| needs_input(state.as_ref())).count();
+    [Some(display_path(key, home)), unseen.then(|| "Unseen activity".to_string()), need_input_text(n_waiting)]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" \u{b7} ")
 }
 
-/// Unassigned 묶음 행의 도움말.
+/// Unassigned 묶음 행의 도움말: 앞쪽 터미널의 프로그램·폴더, 읽지 않은 완료 알림, 입력을 기다리는 에이전트 수를 ` · `로 잇고
+/// 이름 바꾸기 방법을 붙인다.
+///
+/// `root`는 묶음 맨 앞 터미널의 상태, `members`는 묶음 안 모든 터미널의 상태다. 아무것도 모르면 이름 바꾸기 안내만 남는다.
+///
+/// Examples
+/// --------
+/// | 앞 터미널                | 미확인 | 입력 대기 | 결과                                                         |
+/// |--------------------------|--------|-----------|--------------------------------------------------------------|
+/// | claude, WSL `~/app`      | 아니오 | 1         | `claude · ~/app · 1 needs input — double-click to rename`    |
+/// | 모름                     | 아니오 | 0         | `double-click to rename`                                     |
 pub fn group_tip(
-    _root: Option<&TerminalState>,
-    _home: Option<&str>,
-    _unseen: bool,
-    _members: &[Option<TerminalState>],
+    root: Option<&TerminalState>,
+    home: Option<&str>,
+    unseen: bool,
+    members: &[Option<TerminalState>],
 ) -> String {
-    String::new()
+    let n_waiting = members.iter().filter(|state| needs_input(state.as_ref())).count();
+    let parts: Vec<String> = [
+        root.and_then(|state| state.program.clone()),
+        root.and_then(|state| state.cwd.as_deref()).map(|cwd| display_path(cwd, home)),
+        unseen.then(|| "Unseen activity in this group".to_string()),
+        need_input_text(n_waiting),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let rename = "double-click to rename";
+    if parts.is_empty() { rename.to_string() } else { format!("{} \u{2014} {rename}", parts.join(" \u{b7} ")) }
 }
 
-/// 터미널 탭의 도움말.
+/// 터미널 탭의 도움말: `이름 · 프로그램 · 에이전트가 알린 상태`.
+///
+/// 추정 상태(Sent·Output·Quiet)는 목록 행에서만 보이고 탭에는 알린 상태만 나온다. 다른 창으로 옮긴 탭은 상태 대신
+/// 그 사실만 말한다 — 그 탭의 화면과 입력은 다른 창에 있다.
+///
+/// Examples
+/// --------
+/// | 이름     | 상태                     | 다른 창 | 결과                              |
+/// |----------|--------------------------|---------|-----------------------------------|
+/// | `claude` | claude, 알린 `blocked`   | 아니오  | `claude · claude · Needs input`   |
+/// | `build`  | claude, 알린 상태 없음   | 아니오  | `build · claude`                  |
+/// | `build`  | 모름                     | 아니오  | `build`                           |
+/// | `build`  | 아무거나                 | 예      | `build · Open in another window`  |
 pub fn tab_tip(
-    _label: &str,
-    _state: Option<&TerminalState>,
-    _detached: bool,
+    label: &str,
+    state: Option<&TerminalState>,
+    detached: bool,
 ) -> String {
-    String::new()
+    let parts = if detached {
+        vec![Some(label.to_string()), Some("Open in another window".to_string())]
+    } else {
+        let reported = state.filter(|state| state.signal.is_some()).and_then(|state| status_of(Some(state)));
+        vec![
+            Some(label.to_string()),
+            state.and_then(|state| state.program.clone()),
+            reported.map(|status| status.label.to_string()),
+        ]
+    };
+    parts.into_iter().flatten().collect::<Vec<_>>().join(" \u{b7} ")
 }
 
 /// 행 이름 옆에 보이는 요약: `프로그램 · 계정 이름`.
