@@ -154,11 +154,14 @@ impl Side {
     }
 }
 
-/// 이 앱 옆의 `paddock-pen-mcp.exe`. Windows 앱만 동봉하므로 다른 운영체제와 옆에 없는 경우(개발 빌드 등)는 None이다.
+/// 이 앱 옆의 `paddock-pen-mcp` 실행 파일(Windows는 `.exe`). Windows·macOS 앱만 동봉하고, macOS에서는 열기(`pen_open`)만 동작한다.
+/// Linux와 옆에 없는 경우(개발 빌드 등)는 None이다.
 fn find_pen_mcp_exe() -> Option<String> {
-    let beside =
-        std::env::current_exe().ok().and_then(|exe| exe.parent().map(|folder| folder.join("paddock-pen-mcp.exe")));
-    beside.filter(|exe| cfg!(windows) && exe.is_file()).map(|exe| exe.to_string_lossy().into_owned())
+    let name = format!("paddock-pen-mcp{}", std::env::consts::EXE_SUFFIX);
+    let beside = std::env::current_exe().ok().and_then(|exe| exe.parent().map(|folder| folder.join(name)));
+    beside
+        .filter(|exe| cfg!(any(windows, target_os = "macos")) && exe.is_file())
+        .map(|exe| exe.to_string_lossy().into_owned())
 }
 
 /// 설치된 Pen의 Pencil MCP 프로그램(`Program Files`, 사용자 `Programs` 순). Pen이 없거나 그 프로그램이 없으면 None이다.
