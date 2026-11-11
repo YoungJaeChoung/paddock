@@ -598,7 +598,7 @@ mod tests {
     }
 
     fn folder(key: &str) -> Folder {
-        Folder { key: key.to_string(), expanded: true, label: None }
+        Folder { key: key.to_string(), expanded: true, label: None, repo: None }
     }
 
     #[test]

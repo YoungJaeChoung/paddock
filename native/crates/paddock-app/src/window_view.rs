@@ -89,6 +89,7 @@ use crate::usage::data::{StatusItems, UsageData};
 use crate::work::list_view::work_list;
 use crate::work::menu::menu_panel;
 use crate::work::menu_model::{ContextMenu, MenuAction, MenuKind, clamped_position, panel_height};
+use crate::work::repo_read::RepoReader;
 use crate::work::terminal_row::RowTarget;
 use crate::workspace::{TabRef, Workspace};
 
@@ -343,6 +344,8 @@ pub struct WorkWindow {
     usage_observed: Cell<Option<(Option<u32>, u32, bool)>>,
     /// `Show N more`를 눌러 한도 없이 보이는 작업 폴더.
     pub(crate) show_all: HashSet<String>,
+    /// 작업 폴더의 `.git`을 읽어 저장소 묶음의 입력(`Folder::repo`)을 채우는 도구.
+    repo_reader: RepoReader,
     /// 종료 묻기의 "Don't ask again" 선택.
     pub(crate) remember_choice: bool,
     /// 데몬이 앱의 작업 개체에서 분리되지 못해 앱을 닫으면 터미널도 끝난다.
@@ -496,6 +499,7 @@ impl WorkWindow {
             bar_cache: RefCell::new(None),
             usage_observed: Cell::new(None),
             show_all: HashSet::new(),
+            repo_reader: RepoReader::new(),
             remember_choice: false,
             breakaway_denied: false,
             daemon_outdated: false,
@@ -738,12 +742,32 @@ impl WorkWindow {
             crate::automation::count_changed(crate::automation::Cause::Setup);
             changed = true;
         }
+        if self.pump_repos() {
+            changed = true;
+        }
         if changed && self.promote_agents() {
             self.persist();
         }
         if changed {
             cx.notify();
         }
+    }
+
+    /// 작업 폴더의 `.git` 읽기 결과를 폴더의 저장소 key로 기록하고, 아직 읽지 못한 폴더의 읽기를 시작한다.
+    /// 같은 저장소의 폴더가 한 묶음으로 보이게 하는 입력이다. 기록이 바뀌어 다시 그려야 하면 true다.
+    fn pump_repos(&mut self) -> bool {
+        let mut changed = false;
+        for (folder, repo) in self.repo_reader.finished(self.workspace.work()) {
+            if self.workspace.work().folder_repo(&folder) != repo.as_deref() {
+                self.workspace.work_mut().set_folder_repo(&folder, repo.as_deref());
+                changed = true;
+            }
+        }
+        self.repo_reader.request(self.workspace.work());
+        if changed {
+            self.persist();
+        }
+        changed
     }
 
     /// 상태 줄 사용량을 갱신한다: 보고 있는 터미널의 범위로 선택을 바꾸고, 끝난 읽기를 반영하고, 주기가 되면 새로 읽는다.
@@ -1773,6 +1797,20 @@ impl WorkWindow {
             self.focus_selected(window, cx);
             cx.notify();
         }
+    }
+
+    /// 저장소 묶음 행을 접고 펼친다. 저장된 펼침을 뒤집는다 — 현재 터미널 때문에 억지로 펼쳐 보이는 상태가 아니라 저장된 값 기준이다.
+    pub(crate) fn toggle_repo(
+        &mut self,
+        repo: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let expanded = self.workspace.work().repo_expanded(repo);
+        self.workspace.work_mut().set_repo_expanded(repo, !expanded);
+        self.persist();
+        self.focus_selected(window, cx);
+        cx.notify();
     }
 
     /// `Show N more`: 그 폴더의 터미널을 한도 없이 모두 보인다.
@@ -2889,11 +2927,15 @@ impl WorkWindow {
         }
         for row in work.visible_rows(self.workspace.selected(), &self.show_all) {
             rows.push(match row {
-                Row::Folder { key, expanded, n_terminals, current } => {
+                Row::Repo { key, name, expanded, n_folders, current } => {
+                    let tip = crate::work::list_view::repo_tip(self, &key).replace(' ', "_");
+                    format!("repo key={key} name={name} expanded={expanded} n={n_folders} current={current} tip={tip}")
+                }
+                Row::Folder { key, expanded, n_terminals, current, in_repo } => {
                     let name = folder_name(&key, work.folder_label(&key), None);
                     let tip = crate::work::list_view::folder_tip(self, &key).replace(' ', "_");
                     format!(
-                        "folder key={key} name={name} expanded={expanded} n={n_terminals} current={current} tip={tip}"
+                        "folder key={key} name={name} expanded={expanded} n={n_terminals} current={current} in_repo={in_repo} tip={tip}"
                     )
                 }
                 Row::Terminal(terminal) => {
@@ -3270,10 +3312,18 @@ impl WorkWindow {
             gpui_kit::px(crate::automation::menu_anchor::X),
             gpui_kit::px(crate::automation::menu_anchor::Y),
         );
+        // N번째 폴더는 화면에 보이는 순서(저장소 묶음 아래로 모인 순서)의 N번째 폴더 행이다.
         let folder_key = |n: Option<usize>| {
-            n.and_then(|n| n.checked_sub(1))
-                .and_then(|index| self.workspace.work().folders.get(index))
-                .map(|folder| folder.key.clone())
+            n.and_then(|n| n.checked_sub(1)).and_then(|index| {
+                self.workspace
+                    .work()
+                    .visible_rows(self.workspace.selected(), &self.show_all)
+                    .into_iter()
+                    .filter_map(|row| {
+                        if let paddock_core::work_model::Row::Folder { key, .. } = row { Some(key) } else { None }
+                    })
+                    .nth(index)
+            })
         };
         let group_root = |n: Option<usize>| {
             n.and_then(|n| n.checked_sub(1))
@@ -3392,6 +3442,21 @@ impl WorkWindow {
                 });
                 if let Some(action) = action {
                     self.run_menu_action(action, window, cx);
+                }
+            }
+            ["repotoggle", _] => {
+                let repo = number(1).and_then(|n| n.checked_sub(1)).and_then(|index| {
+                    self.workspace
+                        .work()
+                        .visible_rows(self.workspace.selected(), &self.show_all)
+                        .into_iter()
+                        .filter_map(|row| {
+                            if let paddock_core::work_model::Row::Repo { key, .. } = row { Some(key) } else { None }
+                        })
+                        .nth(index)
+                });
+                if let Some(key) = repo {
+                    self.toggle_repo(&key, window, cx);
                 }
             }
             ["foldertoggle", _] => {
