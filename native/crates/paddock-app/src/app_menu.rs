@@ -1,4 +1,4 @@
-//! macOS 상단 메뉴 막대와 앱 종료 키(Cmd+Q). 앱 이름 메뉴의 Quit, Edit의 Cut·Copy·Paste·Select All, View의 Toggle Sidebar, Window의 Minimize가 있다.
+//! macOS 상단 메뉴 막대와 앱 종료 키(Cmd+Q). 앱 이름 메뉴의 Quit, Hide·Hide Others·Show All, Edit의 Cut·Copy·Paste·Select All, View의 Toggle Sidebar, Window의 Minimize가 있다. 항목의 키(Cmd+Q·Cmd+B·Cmd+M·Cmd+H·Cmd+Option+H)는 키 연결과 묶여 메뉴에 표시된다.
 //!
 //! macOS 앱은 메뉴 막대가 있어야 Cmd+Q·Cmd+C 같은 표준 키가 시스템 규칙대로 동작한다. 이 메뉴는 표준 항목의 최소 묶음이다.
 //! Edit의 항목은 입력칸·편집기가 받는 동작이라 그것들에 포커스가 있을 때만 켜진다. 터미널의 복사·붙여넣기는 키(Cmd+C·Cmd+V)로 한다.
@@ -9,7 +9,7 @@ use gpui_kit::{
 
 use crate::window_view::WorkWindow;
 
-actions!(paddock_app, [Quit, ToggleSidebar, MinimizeWindow]);
+actions!(paddock_app, [Quit, ToggleSidebar, MinimizeWindow, HideApp, HideOtherApps, ShowAllApps]);
 
 /// 메뉴 동작이 향할 본 창. 본 창을 열 때 한 번 정해진다.
 struct MainWindow {
@@ -41,10 +41,24 @@ pub fn install(cx: &mut App) {
             window.update(cx, |_, window, _| window.minimize_window()).ok();
         }
     });
-    cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
+    cx.on_action(|_: &HideApp, cx| cx.hide());
+    cx.on_action(|_: &HideOtherApps, cx| cx.hide_other_apps());
+    cx.on_action(|_: &ShowAllApps, cx| cx.unhide_other_apps());
+    // 메뉴 항목에 키가 표시되도록 키 연결과 묶는다. Cmd+B는 앱 단축키 처리(`app_shortcut`)와 같은 동작이다.
+    cx.bind_keys([
+        KeyBinding::new("cmd-q", Quit, None),
+        KeyBinding::new("cmd-b", ToggleSidebar, None),
+        KeyBinding::new("cmd-m", MinimizeWindow, None),
+        KeyBinding::new("cmd-h", HideApp, None),
+        KeyBinding::new("cmd-alt-h", HideOtherApps, None),
+    ]);
     cx.set_menus(vec![
         Menu::new("Paddock Native").items([
             MenuItem::os_submenu("Services", SystemMenuType::Services),
+            MenuItem::separator(),
+            MenuItem::action("Hide Paddock Native", HideApp),
+            MenuItem::action("Hide Others", HideOtherApps),
+            MenuItem::action("Show All", ShowAllApps),
             MenuItem::separator(),
             MenuItem::action("Quit Paddock Native", Quit),
         ]),

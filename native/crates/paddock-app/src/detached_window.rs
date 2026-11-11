@@ -492,6 +492,7 @@ impl DetachedWindow {
             }
             cx.stop_propagation();
         } else if let DetachedBody::File { key } = &self.body
+            && ShortcutScheme::NATIVE.accepts_command_key(modifiers.platform)
             && let Some(shortcut) = file_shortcut(
                 &KeyInput {
                     key: &key_name,
@@ -514,17 +515,19 @@ impl DetachedWindow {
             if handled {
                 cx.stop_propagation();
             }
-        } else if let Some(shortcut) = app_shortcut(
-            &KeyInput {
-                key: &key_name,
-                key_char: event.keystroke.key_char.as_deref(),
-                control: modifiers.control,
-                shift: modifiers.shift,
-                alt: modifiers.alt,
-                command: modifiers.platform,
-            },
-            ShortcutScheme::NATIVE,
-        ) {
+        } else if ShortcutScheme::NATIVE.accepts_command_key(modifiers.platform)
+            && let Some(shortcut) = app_shortcut(
+                &KeyInput {
+                    key: &key_name,
+                    key_char: event.keystroke.key_char.as_deref(),
+                    control: modifiers.control,
+                    shift: modifiers.shift,
+                    alt: modifiers.alt,
+                    command: modifiers.platform,
+                },
+                ShortcutScheme::NATIVE,
+            )
+        {
             match shortcut {
                 // 이 창의 터미널을 닫는다(확인 창은 본 창에 열린다).
                 AppShortcut::CloseActiveTab => self.request_close(cx),

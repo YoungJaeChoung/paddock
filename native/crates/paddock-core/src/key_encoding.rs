@@ -29,6 +29,14 @@ impl ShortcutScheme {
     /// 이 실행 파일이 도는 운영체제의 체계.
     pub const NATIVE: Self = if cfg!(target_os = "macos") { Self::Command } else { Self::Ctrl };
 
+    /// Cmd(Win) 키가 든 키 누름을 앱이 처리하는지. Cmd 체계는 처리하고, Ctrl 체계(Windows·Linux)는 Win 키 조합을 시스템 몫으로 보고 건드리지 않는다.
+    pub fn accepts_command_key(
+        self,
+        command: bool,
+    ) -> bool {
+        self == Self::Command || !command
+    }
+
     /// 이 체계의 수식 키만 눌렸는지. Ctrl 체계는 Ctrl이 있고 Cmd·Win이 없을 때, Cmd 체계는 Cmd가 있고 Ctrl이 없을 때 참이다. Shift·Alt는 보지 않는다.
     pub fn primary(
         self,
@@ -110,14 +118,21 @@ pub fn encode_key(
     let key = input.key.as_bytes();
     let mut result = named.map(String::into_bytes);
     if result.is_none() && input.control && key.len() == 1 {
-        // Ctrl+글자는 0x01~0x1a, Ctrl+[ \\ ] ^ _ / 는 0x1b~0x1f 제어 바이트다.
+        // Ctrl+글자는 0x01~0x1a, Ctrl+[ \\ ] ^ _ / 와 Ctrl+숫자·기호는 0x1b~0x1f·0x00·0x7f 제어 바이트다.
         let control_byte = match key[0] {
             letter if letter.is_ascii_alphabetic() => Some(letter.to_ascii_lowercase() - b'a' + 1),
             b'[' => Some(0x1b),
             b'\\' => Some(0x1c),
             b']' => Some(0x1d),
             b'^' => Some(0x1e),
-            b'_' | b'/' => Some(0x1f),
+            b'_' | b'/' | b'7' | b'-' => Some(0x1f),
+            // xterm 관례: Ctrl+2·Ctrl+@는 NUL, Ctrl+3~6은 ESC·FS·GS·RS, Ctrl+8·Ctrl+?는 DEL이다.
+            b'2' | b'@' => Some(0x00),
+            b'3' => Some(0x1b),
+            b'4' => Some(0x1c),
+            b'5' => Some(0x1d),
+            b'6' => Some(0x1e),
+            b'8' | b'?' => Some(0x7f),
             _ => None,
         };
         result = control_byte.map(|byte| {
@@ -322,6 +337,29 @@ mod tests {
         assert_eq!(bytes(&KeyInput { control: true, ..key("c") }, false), Some(vec![0x03]));
         assert_eq!(bytes(&KeyInput { control: true, ..key("a") }, false), Some(vec![0x01]));
         assert_eq!(bytes(&KeyInput { control: true, ..key("space") }, false), Some(vec![0]));
+    }
+
+    #[test]
+    fn test_control_digits_and_symbols_follow_xterm() {
+        for (name, byte) in [
+            ("2", 0x00),
+            ("@", 0x00),
+            ("3", 0x1b),
+            ("4", 0x1c),
+            ("5", 0x1d),
+            ("6", 0x1e),
+            ("7", 0x1f),
+            ("-", 0x1f),
+            ("8", 0x7f),
+            ("?", 0x7f),
+        ] {
+            let input = KeyInput { control: true, ..key(name) };
+            assert_eq!(bytes(&input, false), Some(vec![byte]), "ctrl+{name}");
+        }
+        let alt = KeyInput { control: true, alt: true, ..key("3") };
+        assert_eq!(bytes(&alt, false), Some(vec![0x1b, 0x1b]));
+        // Ctrl 없이 누른 숫자는 제어 바이트가 아니다.
+        assert_eq!(bytes(&key("5"), false), None);
     }
 
     #[test]

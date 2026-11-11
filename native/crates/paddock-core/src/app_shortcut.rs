@@ -41,6 +41,9 @@ pub enum AppShortcut {
     LastTab,
     /// 탭 줄의 `index`번째(0부터) 탭으로 간다. 그 자리에 탭이 없으면 아무 일 없다(macOS의 Cmd+1~8).
     TabAt(usize),
+    /// 터미널 글꼴을 한 단계 키우거나 줄인다(macOS의 Cmd+= · Cmd+-). 설정의 터미널 글꼴 크기 단계와 같다.
+    FontLarger,
+    FontSmaller,
     ToggleSidebar,
     /// 폴더 검색을 열거나 닫는다(Ctrl+Shift+F).
     SearchInFolder,
@@ -131,6 +134,8 @@ fn command_shortcut(input: &KeyInput<'_>) -> Option<AppShortcut> {
             ("f", true) => Some(AppShortcut::SearchInFolder),
             ("f", false) => Some(AppShortcut::FindInTerminal),
             ("p", false) => Some(AppShortcut::QuickOpen),
+            ("=" | "+", _) => Some(AppShortcut::FontLarger),
+            ("-", _) => Some(AppShortcut::FontSmaller),
             _ => None,
         }
     } else {
@@ -202,7 +207,8 @@ pub fn file_shortcut(
 ///
 /// 터미널 보기의 키 처리는 `encode_key`가 아니라 이 함수만 불러, 단축키가 어떤 경로로도 PTY에 닿지 않게 한다.
 /// macOS(`Command` 체계)에서는 Cmd가 든 키가 단축키가 아니어도 보내지 않고(Terminal·iTerm처럼 글자가 입력되지 않는다),
-/// Option+←/→는 단어 이동(`ESC b`·`ESC f`)으로 보낸다(Terminal.app 기본). 그 밖의 키는 Windows·Linux와 같다.
+/// Option+←/→는 단어 이동(`ESC b`·`ESC f`)으로 보낸다(Terminal.app 기본). Cmd+←/→·Cmd+Backspace는 줄 처음·끝·앞부분 지우기(`0x01`·`0x05`·`0x15`, iTerm 기본)다.
+/// Windows·Linux는 Win 키가 든 키를 보내지 않는다. 그 밖의 키는 두 체계가 같다.
 ///
 /// Examples
 /// --------
@@ -213,21 +219,33 @@ pub fn file_shortcut(
 /// | Command | Cmd+Z            | None(Cmd는 보내지 않음) |
 /// | Command | Option+←         | `ESC b`             |
 /// | Command | Option+→         | `ESC f`             |
+/// | Command | Cmd+← · Cmd+→    | `0x01` · `0x05`     |
+/// | Command | Cmd+Backspace    | `0x15`              |
+/// | Ctrl    | Win+키·Ctrl+Win+키 | None              |
 /// | Ctrl    | Alt+←            | `ESC [ 1 ; 3 D`     |
 pub fn terminal_key_bytes(
     input: &KeyInput<'_>,
     app_cursor: bool,
     scheme: ShortcutScheme,
 ) -> Option<Vec<u8>> {
+    // 맥 터미널 앱(iTerm 기본)처럼 Cmd+←/→는 줄 처음·끝(Ctrl+A·Ctrl+E), Cmd+Backspace는 줄 앞부분 지우기(Ctrl+U)다.
+    let plain_modifiers = !input.control && !input.shift && !input.alt;
+    let mac_edit = match (scheme, input.key, plain_modifiers && input.command) {
+        (ShortcutScheme::Command, "left", true) => Some(vec![0x01]),
+        (ShortcutScheme::Command, "right", true) => Some(vec![0x05]),
+        (ShortcutScheme::Command, "backspace", true) => Some(vec![0x15]),
+        _ => None,
+    };
     let word_move = match (scheme, input.key, input.alt && !input.control && !input.shift && !input.command) {
         (ShortcutScheme::Command, "left", true) => Some(b"\x1bb".to_vec()),
         (ShortcutScheme::Command, "right", true) => Some(b"\x1bf".to_vec()),
         _ => None,
     };
-    if app_shortcut(input, scheme).is_some() || (scheme == ShortcutScheme::Command && input.command) {
+    if app_shortcut(input, scheme).is_some() || input.command && mac_edit.is_none() {
+        // 앱 단축키이거나 Cmd(Win)가 든 다른 키: 맥은 아무것도 보내지 않고(Terminal·iTerm처럼), Windows·Linux는 Win 키 조합을 시스템 몫으로 둔다.
         None
     } else {
-        word_move.or_else(|| encode_key(input, app_cursor))
+        mac_edit.or(word_move).or_else(|| encode_key(input, app_cursor))
     }
 }
 
@@ -558,6 +576,42 @@ mod tests {
         let typed = KeyInput { key_char: Some("z"), ..cmd("z", false) };
         assert_eq!(terminal_key_bytes(&typed, false, MAC), None);
         assert_eq!(terminal_key_bytes(&cmd("c", false), false, MAC), None);
+    }
+
+    #[test]
+    fn test_macos_cmd_arrows_and_backspace_edit_the_shell_line() {
+        assert_eq!(terminal_key_bytes(&cmd("left", false), false, MAC), Some(vec![0x01]));
+        assert_eq!(terminal_key_bytes(&cmd("right", false), true, MAC), Some(vec![0x05]));
+        assert_eq!(terminal_key_bytes(&cmd("backspace", false), false, MAC), Some(vec![0x15]));
+        // Shift가 더해지면 줄 편집 키가 아니다.
+        assert_eq!(terminal_key_bytes(&cmd("left", true), false, MAC), None);
+        // Windows·Linux는 Win 키가 든 키를 터미널로 보내지 않고, Ctrl+Win 조합도 마찬가지다.
+        let ctrl = ShortcutScheme::Ctrl;
+        assert_eq!(terminal_key_bytes(&cmd("left", false), false, ctrl), None);
+        let ctrl_win = KeyInput { control: true, ..cmd("c", false) };
+        assert_eq!(terminal_key_bytes(&ctrl_win, false, ctrl), None);
+        let ctrl_win_v = KeyInput { control: true, ..cmd("v", false) };
+        assert_eq!(terminal_key_bytes(&ctrl_win_v, false, ctrl), None);
+    }
+
+    #[test]
+    fn test_macos_cmd_plus_and_minus_resize_the_terminal_font() {
+        assert_eq!(app_shortcut(&cmd("=", false), MAC), Some(AppShortcut::FontLarger));
+        assert_eq!(app_shortcut(&cmd("+", true), MAC), Some(AppShortcut::FontLarger));
+        assert_eq!(app_shortcut(&cmd("-", false), MAC), Some(AppShortcut::FontSmaller));
+        assert_eq!(app_shortcut(&press("=", true, false), ShortcutScheme::Ctrl), None);
+    }
+
+    #[test]
+    fn test_ctrl_scheme_ignores_win_key_combinations_in_every_decision() {
+        let ctrl = ShortcutScheme::Ctrl;
+        assert!(ctrl.accepts_command_key(false));
+        assert!(!ctrl.accepts_command_key(true));
+        assert!(MAC.accepts_command_key(true));
+        for input in [KeyInput { control: true, ..cmd("t", true) }, KeyInput { control: true, ..cmd("b", false) }] {
+            assert_eq!(app_shortcut(&input, ctrl), None);
+            assert_eq!(file_shortcut(&input, ctrl), None);
+        }
     }
 
     #[test]

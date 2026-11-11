@@ -93,21 +93,29 @@ use crate::work::repo_read::RepoReader;
 use crate::work::terminal_row::RowTarget;
 use crate::workspace::{TabRef, Workspace};
 
-gpui_kit::actions!(paddock_window, [StepPreviousTab, StepNextTab]);
+gpui_kit::actions!(paddock_window, [StepPreviousTab, StepNextTab, SearchInFolderFromEditor]);
 
 /// 텍스트 보기 편집기가 쥔 `Ctrl+←/→`(단어 이동)를 앱의 탭 이동으로 되돌리는 키 연결을 등록한다. 앱 시작 때 한 번 부른다.
 ///
 /// 키 연결은 키 누름 처리기보다 먼저 실행되므로, 편집기에 포커스가 있으면 `capture_key_down`의 앱 단축키가 이 두 키를 받지 못한다.
 /// 읽기 전용 보기에서는 글자 단위 이동이 필요 없고 탭 이동은 터미널과 같은 키여야 하므로 편집기 문맥에서만 앱 동작으로 덮는다.
 ///
-/// macOS는 탭 이동이 Cmd+Shift+[ / ]이고 편집기 부품이 그 키를 쓰지 않아 덮을 키 연결이 없다(Ctrl+←/→는 앱이 가로채지 않는다).
-/// 대신 앱 종료(Cmd+Q)와 메뉴 막대를 등록한다.
+/// macOS는 탭 이동(Cmd+Shift+[ / ])을 편집기 부품이 쓰지 않아 덮을 키 연결이 없고 Ctrl+←/→는 앱이 가로채지 않는다.
+/// 대신 편집기 부품이 쥔 Cmd+Shift+F(찾아 바꾸기)를 앱의 폴더 검색으로 덮고, 찾아 바꾸기는 Cmd+Option+F로 옮긴다(VS Code 맥 관례).
 pub fn bind_keys(cx: &mut gpui_kit::App) {
-    if ShortcutScheme::NATIVE == ShortcutScheme::Ctrl {
-        cx.bind_keys([
+    match ShortcutScheme::NATIVE {
+        ShortcutScheme::Ctrl => cx.bind_keys([
             gpui_kit::KeyBinding::new("ctrl-left", StepPreviousTab, Some("Input && mode == editor")),
             gpui_kit::KeyBinding::new("ctrl-right", StepNextTab, Some("Input && mode == editor")),
-        ]);
+        ]),
+        ShortcutScheme::Command => cx.bind_keys([
+            gpui_kit::KeyBinding::new("cmd-shift-f", SearchInFolderFromEditor, Some("Input && mode == editor")),
+            gpui_kit::KeyBinding::new(
+                "cmd-alt-f",
+                gpui_kit::component::input::Replace,
+                Some("Input && mode == editor"),
+            ),
+        ]),
     }
 }
 
@@ -2426,6 +2434,9 @@ impl WorkWindow {
     ) {
         if self.on_close_requested(window, cx) {
             window.remove_window();
+        } else {
+            // 묻기 창은 본 창에 뜨므로, 분리 창이나 다른 앱에서 눌렀어도 본 창을 앞으로 가져와 보이게 한다.
+            self.activate_main(window);
         }
     }
 
@@ -2519,7 +2530,7 @@ impl WorkWindow {
             // 검색 입력칸에서 Esc: 검색 보기를 닫고 키 입력을 선택한 탭으로 돌린다.
             self.close_search(window, cx);
             cx.stop_propagation();
-        } else {
+        } else if ShortcutScheme::NATIVE.accepts_command_key(modifiers.platform) {
             let scheme = ShortcutScheme::NATIVE;
             let input = KeyInput {
                 key,
@@ -2556,6 +2567,8 @@ impl WorkWindow {
             AppShortcut::FirstTab => self.step_tab(TabTarget::First, window, cx),
             AppShortcut::LastTab => self.step_tab(TabTarget::Last, window, cx),
             AppShortcut::TabAt(index) => self.step_tab(TabTarget::Index(index), window, cx),
+            AppShortcut::FontLarger => self.quick_step(Row::FontSize, 1, window, cx),
+            AppShortcut::FontSmaller => self.quick_step(Row::FontSize, -1, window, cx),
             AppShortcut::NewTerminalHere => self.new_terminal_here(window, cx),
             AppShortcut::SplitRight => self.split_selected(Orientation::Horizontal, window, cx),
             AppShortcut::SplitDown => self.split_selected(Orientation::Vertical, window, cx),
@@ -4247,6 +4260,7 @@ impl Render for WorkWindow {
                 cx.listener(|this, _: &StepPreviousTab, window, cx| this.step_tab(TabTarget::Previous, window, cx)),
             )
             .on_action(cx.listener(|this, _: &StepNextTab, window, cx| this.step_tab(TabTarget::Next, window, cx)))
+            .on_action(cx.listener(|this, _: &SearchInFolderFromEditor, window, cx| this.toggle_search(window, cx)))
             .capture_key_down(cx.listener(Self::on_capture_key))
             .capture_any_mouse_down(
                 cx.listener(|this, _event: &MouseDownEvent, window, cx| this.reset_tab_drag(window, cx)),
