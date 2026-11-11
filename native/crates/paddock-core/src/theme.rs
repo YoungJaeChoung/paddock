@@ -421,6 +421,8 @@ pub mod folder_row {
     pub const ACTION_MARGIN_LEFT: f32 = 4.0;
     /// 현재 폴더 이름의 굵기(CSS 600).
     pub const CURRENT_WEIGHT: f32 = 600.0;
+    /// 저장소 묶음 행 아래의 폴더 행과 그 터미널 행이 묶음 행보다 더 들여 쓰는 크기.
+    pub const REPO_MEMBER_INDENT: f32 = 12.0;
 }
 
 /// 파일 목록 머리줄(`<폴더> FILES`): 접기 표지·제목과 오른쪽의 새 파일·새 폴더·새로 고침·검색 단추.

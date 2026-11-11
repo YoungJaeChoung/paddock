@@ -8,7 +8,7 @@ use gpui_kit::{
     Context, FontWeight, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement,
     StatefulInteractiveElement, Styled, div,
 };
-use paddock_core::theme::{more_row as more_size, row_remote_meta, sidebar, text};
+use paddock_core::theme::{folder_row, more_row as more_size, row_remote_meta, sidebar, text};
 
 use paddock_core::work_model::{Group, Row, folder_name};
 use paddock_protocol::message::TerminalState;
@@ -16,6 +16,7 @@ use paddock_protocol::message::TerminalState;
 use super::empty_state::empty_state;
 use super::folder_row::{FolderRowSpec, folder_row};
 use super::menu_model::{MenuKind, more_label, row_label};
+use super::repo_row::{RepoRowSpec, repo_row};
 use super::terminal_row::{RowTarget, TerminalRowSpec, terminal_row};
 use crate::agent_view::{meta_text, need_input_text, needs_input, status_of};
 use crate::chrome::zpx;
@@ -64,6 +65,23 @@ pub(crate) fn folder_tip(
     key: &str,
 ) -> String {
     let ids = window_view.workspace.work().terminals_of(key);
+    let n_waiting = ids.iter().filter(|id| needs_input(terminal_state(window_view, **id).as_ref())).count();
+    let unseen = ids.iter().any(|id| window_view.done.is_unseen(*id));
+    [Some(key.to_string()), unseen.then(|| "Unseen activity".to_string()), need_input_text(n_waiting)]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" \u{b7} ")
+}
+
+/// 저장소 묶음 행의 도움말: 저장소 경로, 묶음 안 폴더의 읽지 않은 완료 알림, 입력을 기다리는 에이전트 수를 ` · `로 잇는다.
+/// 접힌 묶음 안의 터미널 상태도 이 도움말이 알린다.
+pub(crate) fn repo_tip(
+    window_view: &WorkWindow,
+    key: &str,
+) -> String {
+    let work = window_view.workspace.work();
+    let ids: Vec<u32> = work.repo_folders(key).into_iter().flat_map(|folder| work.terminals_of(folder)).collect();
     let n_waiting = ids.iter().filter(|id| needs_input(terminal_state(window_view, **id).as_ref())).count();
     let unseen = ids.iter().any(|id| window_view.done.is_unseen(*id));
     [Some(key.to_string()), unseen.then(|| "Unseen activity".to_string()), need_input_text(n_waiting)]
@@ -205,14 +223,42 @@ fn work_sidebar(
     }
     let home = home_dir();
     let mut folder_index = 0;
+    let mut repo_index = 0;
+    // 지금 그리는 폴더가 저장소 묶음 행 아래의 구성원이다. 그 폴더의 터미널·`Show N more` 행도 같이 들여 쓴다.
+    let mut nested = false;
     for row in work.visible_rows(selected, &window_view.show_all) {
         match row {
-            Row::Folder { key, expanded, n_terminals, current } => {
+            Row::Repo { key, name, expanded, n_folders, current } => {
+                let unseen = work
+                    .repo_folders(&key)
+                    .into_iter()
+                    .flat_map(|folder| work.terminals_of(folder))
+                    .any(|id| window_view.done.is_unseen(id));
+                let tip = repo_tip(window_view, &key);
+                list = list.child(repo_row(
+                    RepoRowSpec { index: repo_index, key, name, expanded, n_folders, current, unseen, tip },
+                    cx,
+                ));
+                repo_index += 1;
+                nested = false;
+            }
+            Row::Folder { key, expanded, n_terminals, current, in_repo } => {
+                nested = in_repo;
                 let name = folder_name(&key, work.folder_label(&key), home.as_deref());
                 let unseen = work.terminals_of(&key).into_iter().any(|id| window_view.done.is_unseen(id));
                 let tip = folder_tip(window_view, &key);
                 list = list.child(folder_row(
-                    FolderRowSpec { index: folder_index, key, name, expanded, n_terminals, current, unseen, tip },
+                    FolderRowSpec {
+                        index: folder_index,
+                        key,
+                        name,
+                        expanded,
+                        n_terminals,
+                        current,
+                        unseen,
+                        tip,
+                        nested,
+                    },
                     cx,
                 ));
                 folder_index += 1;
@@ -232,6 +278,7 @@ fn work_sidebar(
                         status: look.status,
                         tip: None,
                         drop: window_view.row_drop_marker(terminal.id, cx),
+                        nested,
                     },
                     cx,
                 ));
@@ -241,7 +288,9 @@ fn work_sidebar(
                     div()
                         .id(("work-more", folder_index))
                         .h(zpx(sidebar::ROW_HEIGHT))
-                        .pl(zpx(sidebar::TERMINAL_ROW_PADDING_BASE + crate::look::sidebar_indent()))
+                        .pl(zpx(sidebar::TERMINAL_ROW_PADDING_BASE
+                            + crate::look::sidebar_indent()
+                            + if nested { folder_row::REPO_MEMBER_INDENT } else { 0.0 }))
                         .flex()
                         .flex_row()
                         .items_center()
@@ -289,6 +338,7 @@ fn work_sidebar(
                     status: look.status,
                     tip: Some(group_tip(window_view, group)),
                     drop: None,
+                    nested: false,
                 },
                 cx,
             ));

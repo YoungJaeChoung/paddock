@@ -6,7 +6,7 @@ use gpui_kit::{
     AppContext, ClickEvent, Context, DragMoveEvent, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
     ParentElement, Render, StatefulInteractiveElement, Styled, Window, div,
 };
-use paddock_core::theme::{agent_row, drop_marker, row_remote_meta, sidebar, text};
+use paddock_core::theme::{agent_row, drop_marker, folder_row, row_remote_meta, sidebar, text};
 use paddock_core::work_model::{DropPosition, drop_position};
 
 use super::menu_model::{MenuKind, count_label};
@@ -97,6 +97,8 @@ pub struct TerminalRowSpec {
     pub tip: Option<String>,
     /// 끌어 온 행을 이 행에 놓을 자리를 알리는 선: 행 위(`Before`) 또는 아래(`After`)의 가로 전체 선이다.
     pub drop: Option<DropPosition>,
+    /// 저장소 묶음 행 아래 폴더의 터미널이라 한 단계 더 들여 쓴다.
+    pub nested: bool,
 }
 
 /// 터미널 행을 만든다. 왼쪽 누름은 선택, 오른쪽 누름은 메뉴, ×는 묶음 닫기다.
@@ -119,7 +121,9 @@ pub fn terminal_row(
         .id(target.element_id())
         .relative()
         .h(zpx(sidebar::ROW_HEIGHT))
-        .pl(zpx(sidebar::TERMINAL_ROW_PADDING_BASE + crate::look::sidebar_indent()))
+        .pl(zpx(sidebar::TERMINAL_ROW_PADDING_BASE
+            + crate::look::sidebar_indent()
+            + if spec.nested { folder_row::REPO_MEMBER_INDENT } else { 0.0 }))
         .pr(zpx(sidebar::ROW_PADDING_RIGHT))
         .flex()
         .flex_row()

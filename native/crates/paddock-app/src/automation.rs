@@ -68,7 +68,7 @@
 //!
 //! `act`의 동작: `workadd`(Work ＋), `envmenu`(▾ 환경 목록), `menu terminal N`(N번째 탭의 우클릭 메뉴),
 //! `menu group N`(N번째 Unassigned 묶음 행), `menu folder N`(N번째 폴더 행), `menuitem 이름`(열린 메뉴의 항목),
-//! `foldertoggle N`(폴더 행 누름), `folderadd N`(폴더 행 ＋), `showmore N`(`Show N more`), `selectgroup N`(묶음 행 누름),
+//! `foldertoggle N`(폴더 행 누름), `repotoggle N`(N번째 저장소 묶음 행 누름), `folderadd N`(폴더 행 ＋), `showmore N`(`Show N more`), `selectgroup N`(묶음 행 누름),
 //! `closegroup N`(묶음 행 ×), `selecttab N`(N번째 탭의 터미널 행 누름), `tabadd`(탭 줄 ＋), `confirm`·`cancel`(묻기 창 버튼), `quitstop`(종료 묻기의 Stop all and quit),
 //! `plusmenu`(탭 ＋: 등록 계정이 있으면 메뉴, 없으면 바로 새 터미널)·`pickermenu`(탭 줄 오른쪽 계정 고르기 메뉴),
 //! `accounts`(Accounts 창 열기)와 그 창 안의 `acct provider claude|codex`·`acct name 글자`·`acct add`·`acct showform`·
@@ -642,7 +642,7 @@ pub struct Probe {
     pub view: Vec<u32>,
     /// 열려 있는 메뉴 이름: `none`·`terminal`·`group`·`folder`·`environments`.
     pub menu: &'static str,
-    /// 사이드바 행 요약(위에서 아래로). 폴더·터미널·`more`·묶음 행과 첫 실행 안내 표시다.
+    /// 사이드바 행 요약(위에서 아래로). 저장소 묶음(`repo`)·폴더·터미널·`more`·Unassigned 묶음 행과 첫 실행 안내 표시다.
     pub rows: Vec<String>,
     /// Accounts 창이 보이는 계정·양식·오류 요약(창이 닫혀 있으면 비어 있다). 계정 폴더 경로나 로그인 값은 싣지 않는다.
     pub accounts: Vec<String>,

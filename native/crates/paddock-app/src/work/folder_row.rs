@@ -25,6 +25,8 @@ pub struct FolderRowSpec {
     pub unseen: bool,
     /// 마우스를 올리면 뜨는 설명(경로·읽지 않은 알림·입력을 기다리는 에이전트 수).
     pub tip: String,
+    /// 저장소 묶음 행 아래의 폴더라 한 단계 더 들여 쓴다.
+    pub nested: bool,
 }
 
 /// 몸통과 귀를 가진 작은 폴더 그림. 아이콘 글꼴을 싣지 않으므로 도형으로 그린다.
@@ -90,7 +92,7 @@ pub fn folder_row(
         .id(("work-folder-row", spec.index))
         .group("work-folder-row")
         .h(zpx(sidebar::ROW_HEIGHT))
-        .pl(zpx(size::PADDING_LEFT))
+        .pl(zpx(size::PADDING_LEFT + if spec.nested { size::REPO_MEMBER_INDENT } else { 0.0 }))
         .pr(zpx(sidebar::ROW_PADDING_RIGHT))
         .flex()
         .flex_row()

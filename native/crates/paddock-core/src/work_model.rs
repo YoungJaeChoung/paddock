@@ -3,7 +3,7 @@
 //!
 //! 터미널은 작업 폴더 하나 아니면 Unassigned 묶음 하나에 속한다. 작업 폴더는 사용자가 등록하지 않고, 터미널에서
 //! 폴더로 이동한 뒤 에이전트를 실행하면 그 폴더가 목록에 생긴다(`WorkState::promote_agent_terminals`).
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 // 경로 판정은 `paths`에 있다. 호출처가 `work_model::…`으로 쓰던 이름을 그대로 받도록 다시 내보낸다.
 pub use crate::paths::{folder_identity, folder_key, is_inside, same_folder};
@@ -195,6 +195,9 @@ pub struct Folder {
     pub key: String,
     pub expanded: bool,
     pub label: Option<String>,
+    /// 폴더가 속한 git 저장소의 key(`worktree::repo_key_of`). 같은 저장소의 폴더가 둘 이상이면 목록에서 한 묶음으로 보인다.
+    /// 아직 `.git`을 읽지 못했거나 저장소가 아니면 None이다. 폴더가 디스크에서 지워져도 저장된 값이 남아 묶음 아래에 있게 한다.
+    pub repo: Option<String>,
 }
 
 /// 작업 폴더에 속한 터미널. 폴더 안 목록 순서는 `WorkState::terminals`의 순서다.
@@ -244,11 +247,24 @@ pub struct TerminalRow {
 /// Work 목록의 작업 폴더 구획 행.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Row {
+    /// 같은 git 저장소의 작업 폴더 둘 이상을 한 줄로 묶는 행. 첫 구성원 폴더의 자리에 서고 구성원 폴더 행이 그 아래에 모인다.
+    Repo {
+        /// 첫 구성원 폴더가 저장한 저장소 key.
+        key: String,
+        /// 저장소 루트 폴더의 이름.
+        name: String,
+        expanded: bool,
+        n_folders: usize,
+        /// 선택한 터미널이 묶음 안 폴더에 있다.
+        current: bool,
+    },
     Folder {
         key: String,
         expanded: bool,
         n_terminals: usize,
         current: bool,
+        /// 저장소 묶음 행 아래의 구성원 폴더다.
+        in_repo: bool,
     },
     Terminal(TerminalRow),
     /// 한도(8줄) 때문에 가려진 터미널 수.
@@ -321,6 +337,9 @@ pub struct WorkState {
     /// 폴더에 배정된 터미널. 폴더 안 목록 순서이기도 하다.
     pub terminals: Vec<Member>,
     pub groups: Vec<Group>,
+    /// 저장소 묶음의 펼침. 저장소를 가리키는 `folder_identity` 글자가 열쇠이고, 없으면 펼친 것이다.
+    /// 묶음 행이 사라졌다 다시 생겨도 펼침이 이어지도록 폴더와 따로 둔다.
+    pub repos: BTreeMap<String, bool>,
 }
 
 impl WorkState {
@@ -331,7 +350,7 @@ impl WorkState {
     ) {
         let key = self.resolve_key(key);
         if !self.folders.iter().any(|folder| folder.key == key) {
-            self.folders.push(Folder { key, expanded: true, label: None });
+            self.folders.push(Folder { key, expanded: true, label: None, repo: None });
         }
     }
 
@@ -496,6 +515,55 @@ impl WorkState {
     ) -> Option<&str> {
         let key = self.resolve_key(key);
         self.folders.iter().find(|folder| folder.key == key).and_then(|folder| folder.label.as_deref())
+    }
+
+    /// 폴더가 속한 저장소 key를 기록한다. None이면 지운다. 저장소를 모르는 폴더 key는 무시한다.
+    pub fn set_folder_repo(
+        &mut self,
+        key: &str,
+        repo: Option<&str>,
+    ) {
+        let key = self.resolve_key(key);
+        if let Some(folder) = self.folders.iter_mut().find(|folder| folder.key == key) {
+            folder.repo = repo.map(folder_key);
+        }
+    }
+
+    pub fn folder_repo(
+        &self,
+        key: &str,
+    ) -> Option<&str> {
+        let key = self.resolve_key(key);
+        self.folders.iter().find(|folder| folder.key == key).and_then(|folder| folder.repo.as_deref())
+    }
+
+    /// 저장소 묶음의 저장된 펼침. 기록이 없으면 펼친 것이다. 현재 터미널이 든 묶음은 이 값과 무관하게 `visible_rows`가 펼친다.
+    pub fn repo_expanded(
+        &self,
+        repo: &str,
+    ) -> bool {
+        self.repos.get(&folder_identity(repo)).copied().unwrap_or(true)
+    }
+
+    pub fn set_repo_expanded(
+        &mut self,
+        repo: &str,
+        expanded: bool,
+    ) {
+        self.repos.insert(folder_identity(repo), expanded);
+    }
+
+    /// 같은 저장소에 속한 작업 폴더의 key. 목록 순서다.
+    pub fn repo_folders(
+        &self,
+        repo: &str,
+    ) -> Vec<&str> {
+        let id = folder_identity(repo);
+        self.folders
+            .iter()
+            .filter(|folder| folder.repo.as_deref().is_some_and(|other| folder_identity(other) == id))
+            .map(|folder| folder.key.as_str())
+            .collect()
     }
 
     /// 새 Unassigned 묶음을 목록 끝에 만든다. `root`가 첫 터미널이다.
@@ -766,7 +834,10 @@ impl WorkState {
 
     /// 사이드바 Work 목록의 작업 폴더 구획 행.
     ///
-    /// 현재 터미널(`current`)이 속한 폴더는 접혀 있어도 펼치고, 8개 한도 밖이어도 현재 터미널은 보인다.
+    /// 같은 저장소(`Folder::repo`)의 폴더가 둘 이상이면 첫 구성원 폴더의 자리에 저장소 묶음 행(`Row::Repo`)을 세우고
+    /// 구성원 폴더를 그 아래에 모은다. 폴더 하나뿐인 저장소는 묶지 않는다. 저장된 폴더 순서는 그대로이고 보이는 자리만 모인다.
+    /// 묶음을 접으면 구성원 폴더와 터미널이 모두 숨지만, 현재 터미널(`current`)이 든 묶음은 접혀 있어도 펼친다.
+    /// 현재 터미널이 속한 폴더는 접혀 있어도 펼치고, 8개 한도 밖이어도 현재 터미널은 보인다.
     /// `show_all`에 든 폴더는 한도 없이 모두 보인다.
     ///
     /// Examples
@@ -775,6 +846,11 @@ impl WorkState {
     /// |-------------|---------|----------------------------------------|
     /// | 20개        | 없음    | 터미널 8줄 + `More` 12                  |
     /// | 20개        | 15번째  | 터미널 9줄(15번째 포함) + `More` 11     |
+    ///
+    /// | 폴더(저장소)           | 결과                                              |
+    /// |------------------------|---------------------------------------------------|
+    /// | a(r), b, c(r)          | `Repo`(r, 폴더 2), a, c, b                         |
+    /// | a(r), b(s)             | a, b (저장소마다 폴더 하나라 묶지 않는다)           |
     pub fn visible_rows(
         &self,
         current: Option<u32>,
@@ -782,30 +858,73 @@ impl WorkState {
     ) -> Vec<Row> {
         let mut rows = Vec::new();
         let current_folder = current.and_then(|id| self.folder_of(id));
+        let repo_id = |folder: &Folder| folder.repo.as_deref().map(folder_identity);
+        let mut members: HashMap<String, Vec<&Folder>> = HashMap::new();
         for folder in &self.folders {
-            let n_terminals = self.terminals_of(&folder.key).len();
-            let is_current = current_folder == Some(folder.key.as_str());
-            let expanded = folder.expanded || is_current;
-            rows.push(Row::Folder { key: folder.key.clone(), expanded, n_terminals, current: is_current });
-            if expanded {
-                let named = self.terminal_rows(&folder.key);
-                let n_all = named.len();
-                let shown: Vec<TerminalRow> = named
-                    .into_iter()
-                    .enumerate()
-                    .filter(|(index, row)| {
-                        show_all.contains(&folder.key) || *index < N_VISIBLE_TERMINALS || Some(row.id) == current
-                    })
-                    .map(|(_, row)| row)
-                    .collect();
-                let n_shown = shown.len();
-                rows.extend(shown.into_iter().map(Row::Terminal));
-                if n_shown < n_all {
-                    rows.push(Row::More { folder: folder.key.clone(), n_hidden: n_all - n_shown });
+            if let Some(id) = repo_id(folder) {
+                members.entry(id).or_default().push(folder);
+            }
+        }
+        let mut emitted: HashSet<String> = HashSet::new();
+        for folder in &self.folders {
+            let group =
+                repo_id(folder).and_then(|id| members.get(&id).filter(|list| list.len() >= 2).map(|list| (id, list)));
+            match group {
+                None => self.push_folder_rows(&mut rows, folder, false, current, show_all),
+                Some((id, list)) => {
+                    if emitted.insert(id.clone()) {
+                        let is_current = list.iter().any(|member| current_folder == Some(member.key.as_str()));
+                        let expanded = self.repos.get(&id).copied().unwrap_or(true) || is_current;
+                        let key = folder.repo.clone().unwrap_or_default();
+                        rows.push(Row::Repo {
+                            name: folder_name(&key, None, None),
+                            key,
+                            expanded,
+                            n_folders: list.len(),
+                            current: is_current,
+                        });
+                        if expanded {
+                            for member in list {
+                                self.push_folder_rows(&mut rows, member, true, current, show_all);
+                            }
+                        }
+                    }
                 }
             }
         }
         rows
+    }
+
+    /// 폴더 행 하나와, 펼쳐져 있으면 그 아래 터미널 행·`More` 행을 `rows`에 더한다. `in_repo`는 저장소 묶음 행 아래의 구성원이라는 뜻이다.
+    fn push_folder_rows(
+        &self,
+        rows: &mut Vec<Row>,
+        folder: &Folder,
+        in_repo: bool,
+        current: Option<u32>,
+        show_all: &HashSet<String>,
+    ) {
+        let is_current = current.and_then(|id| self.folder_of(id)) == Some(folder.key.as_str());
+        let n_terminals = self.terminals_of(&folder.key).len();
+        let expanded = folder.expanded || is_current;
+        rows.push(Row::Folder { key: folder.key.clone(), expanded, n_terminals, current: is_current, in_repo });
+        if expanded {
+            let named = self.terminal_rows(&folder.key);
+            let n_all = named.len();
+            let shown: Vec<TerminalRow> = named
+                .into_iter()
+                .enumerate()
+                .filter(|(index, row)| {
+                    show_all.contains(&folder.key) || *index < N_VISIBLE_TERMINALS || Some(row.id) == current
+                })
+                .map(|(_, row)| row)
+                .collect();
+            let n_shown = shown.len();
+            rows.extend(shown.into_iter().map(Row::Terminal));
+            if n_shown < n_all {
+                rows.push(Row::More { folder: folder.key.clone(), n_hidden: n_all - n_shown });
+            }
+        }
     }
 
     /// 새 터미널의 기본 이름(`terminal N`). 번호는 작업 폴더와 Unassigned 묶음 전체에서 겹치지 않게 고른다.
@@ -1296,5 +1415,133 @@ mod tests {
         assert!(!state.can_reorder(1, 9), "unknown terminal");
         state.move_terminal(2, 1, false);
         assert_eq!(state.terminals_of("/a"), vec![2, 1]);
+    }
+
+    // -- 같은 저장소의 작업 폴더 묶음 --
+
+    /// 폴더들을 저장소 key와 함께 만든다. 폴더마다 터미널을 하나씩 두고 id는 1부터 순서대로다.
+    fn with_repos(folders: &[(&str, Option<&str>)]) -> WorkState {
+        let mut state = WorkState::default();
+        for (index, (key, repo)) in folders.iter().enumerate() {
+            state.assign_terminal(index as u32 + 1, key, "claude");
+            state.set_folder_repo(key, *repo);
+        }
+        state
+    }
+
+    /// 행 목록을 한 줄 글로 줄인다: 묶음 `repo:이름:폴더수:펼침`, 폴더 `folder:key`(묶음 아래면 `+`), 터미널 `#id`.
+    fn row_texts(
+        state: &WorkState,
+        current: Option<u32>,
+    ) -> Vec<String> {
+        state
+            .visible_rows(current, &HashSet::new())
+            .into_iter()
+            .map(|row| match row {
+                Row::Repo { name, n_folders, expanded, .. } => format!("repo:{name}:{n_folders}:{expanded}"),
+                Row::Folder { key, in_repo, .. } => format!("{}folder:{key}", if in_repo { "+" } else { "" }),
+                Row::Terminal(terminal) => format!("#{}", terminal.id),
+                Row::More { folder, n_hidden } => format!("more:{folder}:{n_hidden}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_c_repo_1_folders_of_one_repository_get_a_group_row_at_the_first_member_and_the_members_gather_below_it() {
+        let state = with_repos(&[("/r/main", Some("/r/main")), ("/x", None), ("/r/wt1", Some("/r/main"))]);
+        assert_eq!(
+            row_texts(&state, None),
+            ["repo:main:2:true", "+folder:/r/main", "#1", "+folder:/r/wt1", "#3", "folder:/x", "#2"]
+        );
+        // 저장된 폴더 순서는 그대로다. 보이는 자리만 모인다.
+        assert_eq!(
+            state.folders.iter().map(|folder| folder.key.as_str()).collect::<Vec<_>>(),
+            ["/r/main", "/x", "/r/wt1"]
+        );
+    }
+
+    #[test]
+    fn test_c_repo_2_a_repository_with_one_folder_or_an_unknown_repository_is_not_grouped() {
+        let state = with_repos(&[("/a", Some("/r/main")), ("/b", Some("/r/other")), ("/c", None)]);
+        assert_eq!(row_texts(&state, None), ["folder:/a", "#1", "folder:/b", "#2", "folder:/c", "#3"]);
+    }
+
+    #[test]
+    fn test_c_repo_3_the_group_row_is_named_after_the_repository_root_folder() {
+        let state = with_repos(&[("/w/wt", Some("/r/shop")), ("/r/shop", Some("/r/shop"))]);
+        assert!(
+            matches!(&state.visible_rows(None, &HashSet::new())[0], Row::Repo { name, key, .. } if name == "shop" && key == "/r/shop")
+        );
+    }
+
+    #[test]
+    fn test_c_repo_4_collapsing_a_group_hides_its_member_folders_and_terminals() {
+        let mut state = with_repos(&[("/r/main", Some("/r/main")), ("/r/wt1", Some("/r/main")), ("/x", None)]);
+        state.set_repo_expanded("/r/main", false);
+        assert_eq!(row_texts(&state, None), ["repo:main:2:false", "folder:/x", "#3"]);
+        state.set_repo_expanded("/r/main", true);
+        assert_eq!(
+            row_texts(&state, None),
+            ["repo:main:2:true", "+folder:/r/main", "#1", "+folder:/r/wt1", "#2", "folder:/x", "#3"]
+        );
+    }
+
+    #[test]
+    fn test_c_repo_5_a_group_holding_the_current_terminal_is_open_even_when_collapsed_and_the_saved_value_stays() {
+        let mut state = with_repos(&[("/r/main", Some("/r/main")), ("/r/wt1", Some("/r/main")), ("/x", None)]);
+        state.set_repo_expanded("/r/main", false);
+        let rows = row_texts(&state, Some(2));
+        assert_eq!(rows[0], "repo:main:2:true");
+        assert!(rows.contains(&"#2".to_string()));
+        assert!(!state.repo_expanded("/r/main"), "the stored value is not changed by showing it open");
+        // 묶음 밖의 터미널이 현재면 접힌 그대로다.
+        assert_eq!(row_texts(&state, Some(3))[0], "repo:main:2:false");
+    }
+
+    #[test]
+    fn test_c_repo_6_the_group_opens_by_default_and_the_saved_value_survives_the_group_row_disappearing() {
+        let mut state = with_repos(&[("/r/main", Some("/r/main")), ("/r/wt1", Some("/r/main"))]);
+        assert!(state.repo_expanded("/r/main"));
+        state.set_repo_expanded("/r/main", false);
+        state.remove_folder("/r/wt1", None);
+        assert_eq!(row_texts(&state, None), ["folder:/r/main", "#1"], "one folder left, so no group row");
+        state.assign_terminal(5, "/r/wt2", "claude");
+        state.set_folder_repo("/r/wt2", Some("/r/main"));
+        assert_eq!(row_texts(&state, None)[0], "repo:main:2:false");
+    }
+
+    #[test]
+    fn test_c_repo_7_repository_keys_that_differ_only_by_windows_spelling_are_one_repository() {
+        let state = with_repos(&[("C:/Dev/main", Some("C:/Dev/main")), ("C:/Dev/wt", Some("c:\\dev\\main"))]);
+        assert_eq!(row_texts(&state, None)[0], "repo:main:2:true");
+        // 펼침도 철자와 무관하게 같은 묶음의 것이다.
+        let mut state = state;
+        state.set_repo_expanded("c:/dev/main", false);
+        assert!(!state.repo_expanded("C:/Dev/main"));
+    }
+
+    #[test]
+    fn test_c_repo_8_the_repository_key_is_kept_when_the_folder_is_added_again_and_cleared_with_none() {
+        let mut state = with_repos(&[("/r/wt1", Some("/r/main"))]);
+        state.ensure_folder("/r/wt1/");
+        assert_eq!(state.folder_repo("/r/wt1"), Some("/r/main"));
+        state.set_folder_repo("/r/wt1", None);
+        assert_eq!(state.folder_repo("/r/wt1"), None);
+        // 목록에 없는 폴더는 기록하지 않는다.
+        state.set_folder_repo("/nowhere", Some("/r/main"));
+        assert_eq!(state.folders.len(), 1);
+    }
+
+    #[test]
+    fn test_c_repo_9_a_member_folder_keeps_its_terminal_limit_and_more_row_inside_the_group() {
+        let mut state = WorkState::default();
+        state.ensure_folder("/r/main");
+        state.set_folder_repo("/r/main", Some("/r/main"));
+        for id in 0..10 {
+            state.assign_terminal(id, "/r/wt1", "t");
+        }
+        state.set_folder_repo("/r/wt1", Some("/r/main"));
+        let rows = row_texts(&state, None);
+        assert!(rows.contains(&"more:/r/wt1:2".to_string()), "{rows:?}");
     }
 }

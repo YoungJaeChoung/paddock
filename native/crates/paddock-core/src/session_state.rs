@@ -4,10 +4,14 @@
 //! 저장한 데몬과 지금 데몬이 다르면 저장 내용을 잇지 않는다. 파일이 깨져도 앱이 시작되도록 읽기는 실패하지 않으며,
 //! 모양이 틀린 항목은 그 항목만 버린다.
 //!
-//! 형식(버전 3): `{version, daemon, work: {folders, terminals}, groups, selected_terminal, layouts, sidebar_collapsed, files_collapsed, usage_selection}`.
+//! 형식(버전 3): `{version, daemon, work: {folders, terminals, repos}, groups, selected_terminal, layouts, sidebar_collapsed, files_collapsed, usage_selection}`.
 //! `usage_selection`(상태 줄에 도구별로 마지막에 고른 사용량 범위)은 터미널 번호와 무관해 데몬이 바뀌어도 남고, 없는 옛 파일은 빈 선택으로 읽는다.
 //! `layouts`는 칸 배치(분할) 목록이다. 배치는 묶음 이름이 아니라 든 터미널 번호로 묶음을 찾으므로, 묶음의 시작 터미널이
 //! 바뀌어도 배치가 이어진다. 버전 1(평평한 `terminals` 목록)은 폴더·묶음이 없는 파일이라 빈 목록으로 읽는다.
+//!
+//! 같은 git 저장소의 폴더 묶음은 선택 키 두 개로 저장한다(버전은 그대로 3): 폴더 항목의 `repo`(그 폴더가 속한 저장소 key)와
+//! `work.repos`(`{저장소 key: {expanded}}`, 저장소 묶음의 펼침). 둘 다 없는 옛 파일은 묶음 없이, 모두 펼친 채로 읽고,
+//! 모양이 틀린 항목은 그 항목만 버린다. 저장소 key는 터미널 번호와 무관해 데몬이 바뀌어도 남는다.
 //!
 //! 파일 칸(`files`: `{tabs: [{path}], selected, ratio}`)은 최상위 목록이 아니라 그 칸이 속한 폴더 항목과 묶음 항목 안에 둔다.
 //! 묶음의 시작 터미널이 되살아나지 못해 시작 터미널이 바뀌어도 칸이 묶음 항목과 함께 이어지고, 묶음이 사라지면 칸도 함께 사라진다.
@@ -69,6 +73,9 @@ impl SessionState {
             .iter()
             .map(|folder| {
                 let mut entry = json!({"key": folder.key, "expanded": folder.expanded, "label": folder.label});
+                if let Some(repo) = &folder.repo {
+                    entry["repo"] = json!(repo);
+                }
                 if let Some(pane) = self.files.get(&GroupKey::Folder(folder.key.clone())) {
                     entry["files"] = serialize_pane(pane);
                 }
@@ -95,10 +102,16 @@ impl SessionState {
                 entry
             })
             .collect();
+        let mut work = json!({"folders": folders, "terminals": terminals});
+        if !self.work.repos.is_empty() {
+            let repos: serde_json::Map<String, Value> =
+                self.work.repos.iter().map(|(repo, expanded)| (repo.clone(), json!({"expanded": expanded}))).collect();
+            work["repos"] = Value::Object(repos);
+        }
         let document = json!({
             "version": VERSION,
             "daemon": self.daemon,
-            "work": {"folders": folders, "terminals": terminals},
+            "work": work,
             "groups": groups,
             "selected_terminal": self.selected,
             "layouts": self.layouts.iter().map(|layout| Layout::serialize(Some(layout))).collect::<Vec<_>>(),
@@ -198,7 +211,8 @@ impl SessionState {
         daemon: &str,
     ) -> Self {
         let new_id = |id: u32| new_ids.get(&id).copied();
-        let mut work = WorkState { folders: self.work.folders.clone(), ..WorkState::default() };
+        let mut work =
+            WorkState { folders: self.work.folders.clone(), repos: self.work.repos.clone(), ..WorkState::default() };
         work.terminals = self
             .work
             .terminals
@@ -329,11 +343,21 @@ fn restore_work(
             if let Some(label) = entry.get("label").and_then(Value::as_str) {
                 work.set_folder_label(key, label);
             }
+            if let Some(repo) = entry.get("repo").and_then(Value::as_str).filter(|repo| !repo.is_empty()) {
+                work.set_folder_repo(key, Some(repo));
+            }
             let owner =
                 work.folders.iter().find(|folder| same_folder(&folder.key, key)).map(|folder| folder.key.clone());
             if let (Some(owner), Some(pane)) = (owner, restore_pane(entry.get("files"))) {
                 files.insert(&GroupKey::Folder(owner), pane);
             }
+        }
+    }
+    // 저장소 묶음의 펼침. 옛 파일에는 없고, 모양이 틀린 항목은 그 항목만 버린다.
+    for (repo, entry) in saved_work.and_then(|work| work.get("repos")).and_then(Value::as_object).into_iter().flatten()
+    {
+        if let Some(expanded) = entry.get("expanded").and_then(Value::as_bool) {
+            work.set_repo_expanded(repo, expanded);
         }
     }
     for entry in saved_work.and_then(|work| work.get("terminals")).and_then(Value::as_array).into_iter().flatten() {
@@ -796,5 +820,78 @@ mod tests {
         let text = r#"{"version":3,"daemon":"7@t0","usage_selection":{"claude":7,"codex":{"provider":"codex"}}}"#;
         let restored = SessionState::restore(text, &HashSet::new(), "7@t0").usage_selection;
         assert_eq!((restored.claude, restored.codex), (None, Some(Scope::provider("codex"))));
+    }
+
+    // -- 같은 저장소의 폴더 묶음 --
+
+    fn repos_sample() -> SessionState {
+        let mut state = sample();
+        state.work.set_folder_repo("/home/me/app", Some("/home/me/app"));
+        state.work.ensure_folder("/home/me/app-wt");
+        state.work.set_folder_repo("/home/me/app-wt", Some("/home/me/app"));
+        state.work.set_repo_expanded("/home/me/app", false);
+        state
+    }
+
+    #[test]
+    fn test_c_repo_state_1_the_repository_of_a_folder_and_the_group_fold_roundtrip_in_version_3() {
+        let state = repos_sample();
+        let text = state.serialize();
+        let saved: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(saved["version"], 3);
+        assert_eq!(saved["work"]["folders"][0]["repo"], "/home/me/app");
+        assert_eq!(saved["work"]["repos"]["/home/me/app"]["expanded"], false);
+        assert_eq!(SessionState::restore(&text, &live(&[1, 2, 3, 5]), "7@t0"), state);
+    }
+
+    #[test]
+    fn test_c_repo_state_2_a_version_3_file_written_before_groups_existed_reads_without_groups_and_all_open() {
+        // `repo`·`repos` 키가 없는 옛 파일. 묶음 없이 읽고 다시 저장해도 두 키를 쓰지 않는다.
+        let old = r#"{"version":3,"daemon":"7@t0","work":{"folders":[{"key":"/a","expanded":true,"label":null},
+            {"key":"/b","expanded":false,"label":"B"}],"terminals":[{"id":1,"folder":"/a","name":"claude"}]},
+            "groups":[],"selected_terminal":1,"layouts":[],"sidebar_collapsed":false,"files_collapsed":false}"#;
+        let restored = SessionState::restore(old, &live(&[1]), "7@t0");
+        assert_eq!(restored.work.folders.len(), 2);
+        assert!(restored.work.folders.iter().all(|folder| folder.repo.is_none()));
+        assert!(restored.work.repos.is_empty());
+        assert!(restored.work.repo_expanded("/anything"));
+        let again: Value = serde_json::from_str(&restored.serialize()).unwrap();
+        assert!(again["work"].get("repos").is_none());
+        assert!(again["work"]["folders"].as_array().unwrap().iter().all(|folder| folder.get("repo").is_none()));
+        // 버전 2 파일도 같다.
+        let v2 = old.replace("\"version\":3", "\"version\":2");
+        assert_eq!(SessionState::restore(&v2, &live(&[1]), "7@t0").work, restored.work);
+    }
+
+    #[test]
+    fn test_c_repo_state_3_malformed_repository_entries_are_dropped_one_by_one() {
+        let text = r#"{"version":3,"daemon":"7@t0","work":{"folders":[
+            {"key":"/a","expanded":true,"repo":"/r"},{"key":"/b","expanded":true,"repo":7},{"key":"/c","expanded":true,"repo":""}],
+            "terminals":[],"repos":{"/r":{"expanded":false},"/s":{"expanded":"no"},"/t":5}},"groups":[]}"#;
+        let restored = SessionState::restore(text, &live(&[]), "7@t0");
+        let repos: Vec<Option<&str>> = restored.work.folders.iter().map(|folder| folder.repo.as_deref()).collect();
+        assert_eq!(repos, [Some("/r"), None, None]);
+        assert_eq!(restored.work.repos.len(), 1);
+        assert!(!restored.work.repo_expanded("/r"));
+        assert!(restored.work.repo_expanded("/s"));
+    }
+
+    #[test]
+    fn test_c_repo_state_4_repositories_survive_a_daemon_change_and_renumbering() {
+        let saved = repos_sample();
+        let other_daemon = SessionState::restore(&saved.serialize(), &live(&[1, 2, 3]), "8@t1");
+        assert_eq!(other_daemon.work.folders, saved.work.folders);
+        assert_eq!(other_daemon.work.repos, saved.work.repos);
+        let renumbered = saved.renumbered(&BTreeMap::from([(3, 30)]), "8@t1");
+        assert_eq!(renumbered.work.folders, saved.work.folders);
+        assert_eq!(renumbered.work.repos, saved.work.repos);
+    }
+
+    #[test]
+    fn test_c_repo_state_5_a_folder_missing_from_disk_keeps_its_saved_repository_after_restore() {
+        // 디스크에서 지운 워크트리 폴더도 저장된 값으로 목록과 묶음에 남는다(읽기 실패는 저장값을 지우지 않는다).
+        let state = repos_sample();
+        let restored = SessionState::restore(&state.serialize(), &live(&[1, 2, 3, 5]), "7@t0");
+        assert_eq!(restored.work.folder_repo("/home/me/app-wt"), Some("/home/me/app"));
     }
 }
