@@ -36,7 +36,7 @@ fn line_and_column(
 }
 
 /// `value`에서 `line`번째(0부터) 줄이 시작하는 바이트 위치. 줄이 모자라면 글 끝이다.
-#[cfg(any(test, feature = "automation"))]
+#[cfg(feature = "automation")]
 fn line_start(
     value: &str,
     line: usize,

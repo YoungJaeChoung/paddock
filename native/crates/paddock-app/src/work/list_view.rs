@@ -71,20 +71,16 @@ pub(crate) fn folder_tip(
 }
 
 /// 저장소 묶음 행의 도움말: 저장소 경로, 묶음 안 폴더의 읽지 않은 완료 알림, 입력을 기다리는 에이전트 수를 ` · `로 잇는다.
-/// 접힌 묶음 안의 터미널 상태도 이 도움말이 알린다.
+/// 접힌 묶음 안의 터미널 상태도 이 도움말이 알린다. 글의 규칙은 폴더 행과 같아 `agent_view::folder_tip`이 정한다.
 pub(crate) fn repo_tip(
     window_view: &WorkWindow,
     key: &str,
 ) -> String {
     let work = window_view.workspace.work();
     let ids: Vec<u32> = work.repo_folders(key).into_iter().flat_map(|folder| work.terminals_of(folder)).collect();
-    let n_waiting = ids.iter().filter(|id| needs_input(terminal_state(window_view, **id).as_ref())).count();
+    let states: Vec<Option<TerminalState>> = ids.iter().map(|id| terminal_state(window_view, *id)).collect();
     let unseen = ids.iter().any(|id| window_view.done.is_unseen(*id));
-    [Some(key.to_string()), unseen.then(|| "Unseen activity".to_string()), need_input_text(n_waiting)]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
-        .join(" \u{b7} ")
+    agent_view::folder_tip(key, user_home().as_deref(), unseen, &states)
 }
 
 /// Unassigned 묶음 행의 도움말: 앞쪽 프로그램·폴더, 읽지 않은 완료 알림, 입력을 기다리는 에이전트 수를 ` · `로 잇고 이름 바꾸기 방법을 붙인다.

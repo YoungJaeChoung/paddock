@@ -112,7 +112,7 @@ impl WorkWindow {
         cx.notify();
     }
 
-    #[cfg(any(test, feature = "automation"))]
+    #[cfg(feature = "automation")]
     pub(crate) fn scm_stage_all(
         &mut self,
         _window: &mut Window,
