@@ -133,7 +133,7 @@ pub fn folder_want(
 
 /// 이 컴퓨터에서 열 수 있는 실행 환경 목록(Work 머리의 ⌄ 메뉴).
 ///
-/// Windows는 PowerShell·Command Prompt·(설치돼 있으면) Git Bash와 설치된 WSL 배포판마다 한 줄이고, 그 밖의 OS는 `bash` 하나다.
+/// Windows는 PowerShell·Command Prompt·(설치돼 있으면) Git Bash와 설치된 WSL 배포판마다 한 줄이고, Linux는 `bash`, macOS는 로그인 셸(`zsh` 등) 하나다.
 /// 컨테이너 도구의 내부 배포판은 셸을 쓸 수 없어 뺀다. 기본 환경(`default`)에는 `is_default`가 붙는다.
 ///
 /// Examples
@@ -141,6 +141,7 @@ pub fn folder_want(
 /// | OS      | 배포판          | 결과 이름                                              |
 /// |---------|-----------------|--------------------------------------------------------|
 /// | Linux   | -               | `bash`                                                 |
+/// | macOS   | -               | `zsh`(로그인 셸)                                       |
 /// | Windows | Ubuntu, Debian  | `PowerShell`, `Command Prompt`, `WSL · Ubuntu`, `WSL · Debian` |
 pub fn environment_list(
     is_windows: bool,
@@ -169,9 +170,16 @@ pub fn environment_list(
             push(&format!("WSL \u{b7} {name}"), "Linux", "wsl", Some(name));
         }
     } else {
-        push("bash", "Linux", "bash", None);
+        // Windows 밖은 기본 셸 하나다: Linux는 `bash`, macOS는 로그인 셸(경로의 마지막 이름을 보인다).
+        let shell = default.shell;
+        push(shell.rsplit('/').next().unwrap_or(shell), native_place(), shell, None);
     }
     list
+}
+
+/// 이 앱이 도는 운영체제에서 Windows 밖 셸이 보이는 이름 옆 글자(`Linux`·`macOS`).
+fn native_place() -> &'static str {
+    if cfg!(target_os = "macos") { "macOS" } else { "Linux" }
 }
 
 /// 이 컴퓨터에서 열 수 있는 실행 환경 목록. 기본 환경(`default`)에 `is_default`가 붙는다.
@@ -312,6 +320,19 @@ mod tests {
         let linux = environment_list(false, &[], false, &DefaultShell { shell: "bash", wsl_distribution: None });
         assert_eq!(names(&linux), vec!["bash"]);
         assert!(linux[0].is_default);
+        assert_eq!(linux[0].place, native_place());
+        // 로그인 셸은 경로의 마지막 이름으로 보이고, 데몬에는 경로 그대로 넘어간다.
+        let mac = environment_list(false, &[], false, &DefaultShell { shell: "/bin/zsh", wsl_distribution: None });
+        assert_eq!((mac[0].label.as_str(), mac[0].shell), ("zsh", "/bin/zsh"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_on_macos_the_new_terminal_shell_is_the_login_shell_labelled_macos() {
+        let shell = default_shell_with(&Settings::default());
+        assert!(shell.shell.starts_with('/'), "{shell:?}");
+        let list = environment_list(false, &[], false, &shell);
+        assert_eq!(list[0].place, "macOS");
     }
 
     #[test]

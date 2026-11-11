@@ -25,7 +25,7 @@ release:
 	git tag v$$version && \
 	git push origin v$$version
 
-# 네이티브(GPUI) 앱. native-dev는 Linux에서 빌드·테스트하고, native-win은 WSL에서
+# 네이티브(GPUI) 앱. native-dev는 Linux·macOS에서 빌드·테스트하고, native-win은 WSL에서
 # Windows용 exe를 만든다(cargo-xwin, clang 18 필요). Windows 실행 전 셰이더 원본을
 # C: 쪽 같은 경로로 복사한다 — 크로스 빌드는 셰이더를 미리 컴파일하지 못한다.
 # 개발용 Windows 빌드에는 자동 점검 대본(automation 기능)과 데몬의 시험 훅(test-hooks 기능)을 켠다. release 빌드에는 넣지 않는다.

@@ -633,6 +633,8 @@ mod tests {
     #[test]
     fn test_observe_attributes_the_account_of_a_native_agent_from_its_environment() {
         // Windows 네이티브는 프로세스 환경을 읽지 않으므로 이 판정은 Unix에서만 쓰인다.
+        // 계정 폴더가 홈 폴더 아래라서, 홈을 바꾸는 다른 시험과 겹치지 않게 홈을 쥔다.
+        let _home = crate::test_home::TempHome::new();
         let profile = claude_profile();
         let directory = paddock_protocol::shared_config::native_profile_directory(&profile);
         let account = account_of(Runtime::Native, &directory, &profile);

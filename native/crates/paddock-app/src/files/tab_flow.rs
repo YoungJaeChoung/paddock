@@ -15,6 +15,7 @@ use paddock_core::text_file::Encoded;
 use paddock_core::unsaved::{DiskChange, disk_change_effect};
 use paddock_core::work_model::GroupKey;
 
+#[cfg(windows)]
 use crate::app_log;
 use crate::files::image_view::ImageView;
 use crate::files::images::render_image;

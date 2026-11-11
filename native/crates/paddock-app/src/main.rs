@@ -75,6 +75,12 @@ fn open_main_window(cx: &mut App) {
             size(px(window_size::WIDTH), px(window_size::HEIGHT)),
         )));
     }
+    // 터미널·파일 관리자에서 실행한 macOS 앱은 활성 앱이 되지 못해 창이 다른 앱 창 뒤에 생긴다. 시작 때 앱을 활성화한다.
+    // 화면 밖 자동 점검은 사용자의 포커스를 가리지 않도록 활성화하지 않는다.
+    #[cfg(feature = "automation")]
+    let should_activate = !args.offscreen;
+    #[cfg(not(feature = "automation"))]
+    let should_activate = true;
     #[cfg(feature = "automation")]
     let hooks = args.script.and_then(|path| {
         let daemon_exe = paddock_app::daemon_launch::sibling_daemon_exe().ok()?;
@@ -91,6 +97,9 @@ fn open_main_window(cx: &mut App) {
         view
     })
     .expect("Failed to open window");
+    if should_activate {
+        cx.activate(true);
+    }
 }
 
 /// 자동 점검 대본을 켜는 실행 인자. `automation` 기능으로 빌드한 개발용 실행 파일만 읽는다.

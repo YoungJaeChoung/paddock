@@ -669,10 +669,13 @@ mod tests {
         let folder = dir.path().to_string_lossy().to_string();
         std::fs::write(dir.path().join("a.txt"), "lower").unwrap();
         std::fs::write(dir.path().join("A.txt"), "UPPER").unwrap();
-        let refused = rename_entry(&child_path(&folder, "a.txt"), "A.txt").unwrap_err();
-        assert!(refused.contains("already exists"), "{refused}");
-        assert_eq!(text(&dir.path().join("A.txt")), "UPPER", "the other file is untouched");
-        assert_eq!(text(&dir.path().join("a.txt")), "lower");
+        // macOS의 기본 파일 시스템은 대소문자를 가리지 않아 두 이름이 한 파일이다. 이 시험은 두 파일이 따로 있을 때만 성립한다.
+        if std::fs::read_dir(dir.path()).unwrap().count() == 2 {
+            let refused = rename_entry(&child_path(&folder, "a.txt"), "A.txt").unwrap_err();
+            assert!(refused.contains("already exists"), "{refused}");
+            assert_eq!(text(&dir.path().join("A.txt")), "UPPER", "the other file is untouched");
+            assert_eq!(text(&dir.path().join("a.txt")), "lower");
+        }
     }
 
     #[test]

@@ -32,6 +32,7 @@ pub struct ShellSpec {
 /// | powershell | `C:\work`  | -                | `powershell.exe` | `-NoLogo` (작업 폴더 `C:\work`) |
 /// | wsl        | `/home/a`  | `Debian`         | `wsl.exe`        | `-d Debian --cd /home/a`        |
 /// | fish       | -          | -                | `fish`           | (없음)                          |
+/// | /bin/zsh   | -          | -                | `/bin/zsh`       | `-l`                            |
 pub fn shell_spec(
     name: &str,
     cwd: Option<&str>,
@@ -43,6 +44,8 @@ pub fn shell_spec(
         "wsl" => ("wsl.exe", Vec::new()),
         "gitbash" => (r"C:\Program Files\Git\bin\bash.exe", vec!["--login".to_string(), "-i".to_string()]),
         "bash" => ("bash", vec!["-i".to_string()]),
+        // 절대 경로로 준 셸(macOS의 로그인 셸 `/bin/zsh` 등)은 로그인 셸로 띄운다. Terminal.app·iTerm과 같은 방식이다.
+        path if path.starts_with('/') => (path, vec!["-l".to_string()]),
         other => (other, Vec::new()),
     };
     let mut working_directory = cwd.map(str::to_string);
@@ -65,15 +68,17 @@ pub fn shell_spec(
     ShellSpec { program: program.to_string(), args, working_directory, env }
 }
 
-/// 설정이 없을 때 새 터미널이 쓰는 셸 이름. Windows는 기본 WSL 배포판이 있으면 `wsl`, 없으면 `powershell`이고 그 밖의 OS는 `bash`다.
+/// 설정이 없을 때 새 터미널이 쓰는 셸 이름. Windows는 기본 WSL 배포판이 있으면 `wsl`, 없으면 `powershell`이다.
+/// Linux는 `bash`이고, macOS는 사용자의 로그인 셸 경로(`/bin/zsh` 등)다.
 ///
 /// Examples
 /// --------
-/// | is_windows | has_wsl_distribution | 결과         |
-/// |------------|----------------------|--------------|
-/// | true       | true                 | `wsl`        |
-/// | true       | false                | `powershell` |
-/// | false      | (무관)               | `bash`       |
+/// | OS      | has_wsl_distribution | 결과                    |
+/// |---------|----------------------|-------------------------|
+/// | Windows | true                 | `wsl`                   |
+/// | Windows | false                | `powershell`            |
+/// | Linux   | (무관)               | `bash`                  |
+/// | macOS   | (무관)               | `/bin/zsh`(로그인 셸)   |
 pub fn default_shell_name(
     is_windows: bool,
     has_wsl_distribution: bool,
@@ -81,8 +86,59 @@ pub fn default_shell_name(
     match (is_windows, has_wsl_distribution) {
         (true, true) => "wsl",
         (true, false) => "powershell",
-        (false, _) => "bash",
+        (false, _) => native_default_shell(),
     }
+}
+
+/// Windows 밖에서 기본이 되는 셸. macOS는 로그인 셸이고, 그 밖의 OS는 `bash`다.
+fn native_default_shell() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        static LOGIN_SHELL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        LOGIN_SHELL.get_or_init(read_login_shell).as_str()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "bash"
+    }
+}
+
+/// 이 사용자의 로그인 셸 경로를 환경 변수와 계정 정보에서 읽는다(`login_shell_path`가 고른다).
+#[cfg(target_os = "macos")]
+fn read_login_shell() -> String {
+    // SAFETY: `getpwuid`는 호출 스레드에서 바로 읽을 정적 구조체를 돌려주고, 여기서는 셸 경로만 복사한다.
+    let passwd_shell = unsafe {
+        let entry = libc::getpwuid(libc::getuid());
+        (!entry.is_null() && !(*entry).pw_shell.is_null())
+            .then(|| std::ffi::CStr::from_ptr((*entry).pw_shell).to_string_lossy().into_owned())
+    };
+    login_shell_path(std::env::var("SHELL").ok().as_deref(), passwd_shell.as_deref(), |path| {
+        std::path::Path::new(path).is_file()
+    })
+}
+
+/// 로그인 셸 경로를 고른다: `$SHELL`, 계정 정보의 셸 순서로 첫 번째 "절대 경로이면서 실제로 있는 파일"이고, 없으면 `/bin/zsh`다.
+///
+/// Examples
+/// --------
+/// | `$SHELL`        | 계정 정보의 셸   | 있는 파일          | 결과          |
+/// |-----------------|------------------|--------------------|---------------|
+/// | `/opt/homebrew/bin/fish` | `/bin/zsh` | 둘 다            | `/opt/homebrew/bin/fish` |
+/// | `/gone/fish`    | `/bin/bash`      | `/bin/bash`만      | `/bin/bash`   |
+/// | `zsh`(상대 경로) | (없음)          | -                  | `/bin/zsh`    |
+/// | (없음)          | (없음)           | -                  | `/bin/zsh`    |
+pub fn login_shell_path(
+    env_shell: Option<&str>,
+    passwd_shell: Option<&str>,
+    exists: impl Fn(&str) -> bool,
+) -> String {
+    [env_shell, passwd_shell]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|path| path.starts_with('/') && exists(path))
+        .unwrap_or("/bin/zsh")
+        .to_string()
 }
 
 /// 터미널을 연 셸 설정 중 실행 환경 이름에 쓰는 부분.
@@ -183,6 +239,7 @@ pub fn with_distribution(
 /// | `powershell.exe`         | `Windows` | `PowerShell · Windows`  |
 /// | `…\Git\bin\bash.exe`     | `Windows` | `Git Bash · Windows`    |
 /// | `/bin/bash`              | `Linux`   | `bash · Linux`          |
+/// | `/bin/zsh`               | `macOS`   | `zsh · macOS`           |
 pub fn environment_label(
     options: &TerminalOptions,
     cwd: &str,
@@ -299,11 +356,41 @@ mod tests {
     }
 
     #[test]
+    fn test_login_shell_is_the_env_shell_then_the_passwd_shell_then_zsh() {
+        let present = |present: &'static [&'static str]| move |path: &str| present.contains(&path);
+        let both = present(&["/opt/homebrew/bin/fish", "/bin/zsh"]);
+        assert_eq!(login_shell_path(Some("/opt/homebrew/bin/fish"), Some("/bin/zsh"), both), "/opt/homebrew/bin/fish");
+        assert_eq!(login_shell_path(Some("/gone/fish"), Some("/bin/bash"), present(&["/bin/bash"])), "/bin/bash");
+        assert_eq!(login_shell_path(Some("zsh"), None, present(&["zsh"])), "/bin/zsh");
+        assert_eq!(login_shell_path(None, None, present(&[])), "/bin/zsh");
+    }
+
+    #[test]
+    fn test_a_shell_given_by_absolute_path_starts_as_a_login_shell() {
+        let spec = shell_spec("/bin/zsh", Some("/tmp"), None);
+        assert_eq!((spec.program.as_str(), spec.args), ("/bin/zsh", vec!["-l".to_string()]));
+        assert_eq!(spec.working_directory.as_deref(), Some("/tmp"));
+        // 이름만 준 셸은 그대로 띄운다.
+        assert!(shell_spec("fish", None, None).args.is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_on_macos_the_default_shell_is_the_login_shell_not_bash() {
+        let shell = default_shell_name(false, false);
+        assert!(shell.starts_with('/') && std::path::Path::new(shell).is_file(), "{shell}");
+    }
+
+    #[test]
     fn test_default_shell_name() {
         assert_eq!(default_shell_name(true, true), "wsl");
         assert_eq!(default_shell_name(true, false), "powershell");
-        assert_eq!(default_shell_name(false, true), "bash");
-        assert_eq!(default_shell_name(false, false), "bash");
+        // Windows 밖의 기본 셸은 OS마다 다르다(macOS는 로그인 셸).
+        #[cfg(not(target_os = "macos"))]
+        {
+            assert_eq!(default_shell_name(false, true), "bash");
+            assert_eq!(default_shell_name(false, false), "bash");
+        }
     }
 
     fn strings(items: &[&str]) -> Vec<String> {

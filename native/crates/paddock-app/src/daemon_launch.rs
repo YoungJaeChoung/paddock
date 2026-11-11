@@ -167,12 +167,64 @@ mod unix {
 
     use super::LaunchedDaemon;
 
+    /// 프로세스의 실행 파일 경로. Linux는 `/proc/<pid>/exe`, macOS는 `proc_pidpath`로 읽는다.
+    ///
+    /// macOS에서 실행 중 실행 파일이 지워지면 `proc_pidpath`가 `NotFound`로 실패한다(Linux는 ` (deleted)`가 붙은 경로를 준다).
+    /// 그때는 커널이 아는 프로세스 이름(`pbi_name`, 최대 31바이트)을 파일 이름만 있는 경로로 돌려줘 이름 비교가 되게 한다.
+    #[cfg(target_os = "macos")]
+    pub(super) fn image_of(pid: u32) -> std::io::Result<std::path::PathBuf> {
+        use std::os::unix::ffi::OsStringExt;
+        let mut buffer = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+        // SAFETY: 버퍼는 `buffer.len()` 바이트이고 커널은 그 크기까지만 쓴다.
+        let n_bytes =
+            unsafe { libc::proc_pidpath(pid as libc::c_int, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
+        if n_bytes > 0 {
+            buffer.truncate(n_bytes as usize);
+            Ok(std::path::PathBuf::from(std::ffi::OsString::from_vec(buffer)))
+        } else {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::NotFound {
+                process_name_of(pid).map(std::path::PathBuf::from).ok_or(error)
+            } else {
+                Err(error)
+            }
+        }
+    }
+
+    /// 커널이 아는 프로세스 이름. 읽지 못하면 None이다.
+    #[cfg(target_os = "macos")]
+    fn process_name_of(pid: u32) -> Option<std::ffi::OsString> {
+        use std::os::unix::ffi::OsStringExt;
+        // SAFETY: `proc_bsdinfo`는 정수·바이트 배열뿐인 구조체라 0으로 채운 값이 유효하다.
+        let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+        let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+        // SAFETY: 버퍼는 `size` 바이트의 살아 있는 구조체이고, 커널은 그 크기까지만 쓴다.
+        let written = unsafe {
+            libc::proc_pidinfo(
+                pid as libc::c_int,
+                libc::PROC_PIDTBSDINFO,
+                0,
+                (&mut info as *mut libc::proc_bsdinfo).cast(),
+                size,
+            )
+        };
+        (written == size).then(|| {
+            let bytes: Vec<u8> = info.pbi_name.iter().take_while(|byte| **byte != 0).map(|byte| *byte as u8).collect();
+            std::ffi::OsString::from_vec(bytes)
+        })
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub(super) fn image_of(pid: u32) -> std::io::Result<std::path::PathBuf> {
+        std::fs::read_link(format!("/proc/{pid}/exe"))
+    }
+
     /// `pid` 프로세스가 `exe`와 같은 이름의 실행 파일이면 끝낸다.
     pub fn terminate(
         pid: u32,
         exe: &Path,
     ) -> std::io::Result<()> {
-        let image = std::fs::read_link(format!("/proc/{pid}/exe"));
+        let image = image_of(pid);
         match image {
             Ok(image) if super::same_file_name(&image, exe) => {
                 // SAFETY: 프로세스 번호와 신호만 넘기며 메모리를 건드리지 않는다.
@@ -406,6 +458,36 @@ mod tests {
         // 이 시험 프로세스 자신은 데몬 실행 파일이 아니므로 끝내지 않고 오류다.
         let error = terminate_daemon(std::process::id(), Path::new("paddock-daemon")).expect_err("must refuse");
         assert_eq!(error.to_string(), "The process is not the terminal daemon");
+    }
+
+    /// 실행 중 실행 파일이 지워진 프로세스도 이름이 같으면 끝낸다(macOS는 `proc_pidpath`가 실패해 프로세스 이름으로 비교한다).
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_terminate_ends_a_daemon_whose_executable_was_deleted_while_running() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("paddock-daemon");
+        std::fs::copy("/bin/sleep", &exe).unwrap();
+        // 보호 표시가 붙은 사본은 실행 직후 끝나므로 임시 서명(ad-hoc)으로 다시 서명한다.
+        let signed = Command::new("codesign").args(["--force", "-s", "-"]).arg(&exe).output().unwrap();
+        assert!(signed.status.success(), "{}", String::from_utf8_lossy(&signed.stderr));
+        let mut child = Command::new(&exe).arg("30").spawn().unwrap();
+        // 실행 이미지가 이 사본으로 바뀔 때까지 기다린다(`proc_pidpath`가 사본 경로를 줄 때).
+        let end = Instant::now() + Duration::from_secs(5);
+        while !matches!(super::unix::image_of(child.id()), Ok(image) if super::same_file_name(&image, &exe)) {
+            assert!(Instant::now() < end, "the child never showed its image");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        std::fs::remove_file(&exe).unwrap();
+        let outcome = terminate_daemon(child.id(), &exe);
+        let status = child.wait().unwrap();
+        assert!(outcome.is_ok(), "{outcome:?}");
+        assert!(!status.success());
+        // 이름이 다른 프로세스는 지워진 뒤에도 건드리지 않는다.
+        let mut other = Command::new("/bin/sleep").arg("30").spawn().unwrap();
+        let refused = terminate_daemon(other.id(), &exe).expect_err("must refuse");
+        assert_eq!(refused.to_string(), "The process is not the terminal daemon");
+        let _ = other.kill();
+        let _ = other.wait();
     }
 
     #[test]

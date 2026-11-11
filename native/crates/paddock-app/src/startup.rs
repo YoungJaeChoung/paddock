@@ -458,7 +458,13 @@ mod tests {
         wait_for_screen(back, "the old screen", |line| line == "BACKMARK");
         wait_for_screen(back, "the notice", |line| line.contains("Previous shell ended. Screen restored"));
         back.grid.input(PRINT_FOLDER.as_bytes().to_vec());
-        wait_for_screen(back, "the restored folder", |line| paddock_core::work_model::same_folder(line, &folder));
+        // 셸이 찍는 폴더는 실제 경로다(macOS의 임시 폴더는 `/var`가 `/private/var`로 이어져 있다).
+        let real_folder =
+            std::fs::canonicalize(&folder).map_or_else(|_| folder.clone(), |real| real.to_string_lossy().into_owned());
+        wait_for_screen(back, "the restored folder", |line| {
+            paddock_core::work_model::same_folder(line, &folder)
+                || paddock_core::work_model::same_folder(line, &real_folder)
+        });
         // 옛 데몬의 기록 폴더는 되살린 뒤 지워진다.
         let old = paddock_protocol::shared_config::history_dir(&daemon_id_of_state());
         assert!(!old.exists(), "{old:?}");

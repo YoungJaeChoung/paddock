@@ -13,3 +13,7 @@ chrono.workspace = true
 # 폴더 검색·바꾸기가 같은 질의 해석(`build_matcher`)을 쓰도록 검색 엔진의 일치 규칙을 core에 둔다.
 grep-regex.workspace = true
 grep-matcher.workspace = true
+
+# macOS의 기본 셸은 사용자의 로그인 셸이라 계정 정보(passwd)에서도 읽는다.
+[target.'cfg(target_os = "macos")'.dependencies]
+libc.workspace = true

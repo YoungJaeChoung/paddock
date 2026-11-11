@@ -318,18 +318,25 @@ impl Colors {
 /// 글꼴.
 pub mod font {
     /// 터미널 글꼴 순서: 앞쪽이 주 글꼴, 한글·기호는 뒤쪽 대체 글꼴이 맡는다. 플랫폼에 없는 글꼴은 건너뛴다.
+    /// macOS는 모든 맥에 있는 Menlo를 쓴다(Consolas·DejaVu Sans Mono가 없어 대체 글꼴로 그려지면 글자 간격이 넓어진다).
     #[cfg(windows)]
     pub const TERMINAL_FAMILY: &str = "Consolas";
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    pub const TERMINAL_FAMILY: &str = "Menlo";
+    #[cfg(not(any(windows, target_os = "macos")))]
     pub const TERMINAL_FAMILY: &str = "DejaVu Sans Mono";
     #[cfg(windows)]
     pub const TERMINAL_FALLBACK_FAMILY: &str = "Malgun Gothic";
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    pub const TERMINAL_FALLBACK_FAMILY: &str = "Apple SD Gothic Neo";
+    #[cfg(not(any(windows, target_os = "macos")))]
     pub const TERMINAL_FALLBACK_FAMILY: &str = "Noto Sans CJK KR";
     /// 창 틀 글꼴. 없는 플랫폼은 시스템 기본 글꼴로 대신한다.
     #[cfg(windows)]
     pub const UI_FAMILY: &str = "Segoe UI";
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    pub const UI_FAMILY: &str = "Helvetica Neue";
+    #[cfg(not(any(windows, target_os = "macos")))]
     pub const UI_FAMILY: &str = "Noto Sans";
     /// 창 버튼 그림 글꼴(Windows 기본 포함).
     pub const CONTROL_ICON_FAMILY: &str = "Segoe MDL2 Assets";
