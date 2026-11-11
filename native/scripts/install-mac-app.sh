@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# build-mac-app.sh가 만든 Paddock Native.app을 ~/Applications에 설치한다(있으면 교체). bash 3.2(macOS 기본)에서 돈다.
+# build-mac-app.sh가 만든 Paddock Native.app을 /Applications에 설치한다(있으면 교체). bash 3.2(macOS 기본)에서 돈다.
 #
 #   install-mac-app.sh --check   설치할 자리의 앱이 실행 중인지만 확인한다(실행 중이면 종료 코드 3).
 #   install-mac-app.sh           확인한 뒤 묶음을 교체한다.
