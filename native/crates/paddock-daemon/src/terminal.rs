@@ -122,6 +122,28 @@ fn launch_spec(launch: &Launch) -> ShellSpec {
     ShellSpec { program, args, working_directory: launch.cwd.clone(), env }
 }
 
+/// 시작 폴더가 정해지지 않은 터미널의 시작 폴더를 사용자 홈으로 정한다(Terminal.app·Windows Terminal과 같다).
+///
+/// 정하지 않으면 셸은 데몬의 작업 폴더를 물려받는다. Finder·Dock·시작 메뉴로 연 앱의 작업 폴더는 `/`나 설치 폴더라
+/// 첫 터미널이 엉뚱한 곳에서 시작한다. WSL 셸은 `wsl.exe`가 자기 홈에서 시작하므로 건드리지 않고, 홈을 모르면 그대로 둔다.
+///
+/// Examples
+/// --------
+/// | shell  | 정해진 폴더 | 홈        | 결과 폴더    |
+/// |--------|-------------|-----------|--------------|
+/// | `/bin/zsh` | (없음)  | `/Users/me` | `/Users/me` |
+/// | `/bin/zsh` | `/work` | `/Users/me` | `/work`     |
+/// | `wsl`  | (없음)      | `C:\Users\me` | (없음)  |
+fn with_default_directory(
+    spec: &mut ShellSpec,
+    shell: &str,
+    home: Option<std::path::PathBuf>,
+) {
+    if spec.working_directory.is_none() && shell != "wsl" {
+        spec.working_directory = home.map(|home| home.to_string_lossy().into_owned());
+    }
+}
+
 /// 설정 폴더의 Claude 래퍼 폴더(`~/.paddock/config/bin`). 폴더가 있을 때만 돌려준다.
 fn wrapper_directory() -> Option<String> {
     let directory = config_dir().join("bin");
@@ -183,6 +205,7 @@ impl Terminal {
             Some(launch) => launch_spec(launch),
             None => shell_spec(&request.shell, request.cwd.as_deref(), request.wsl_distribution.as_deref()),
         };
+        with_default_directory(&mut spec, &request.shell, std::env::home_dir());
         // 앱이 보낸 최신 환경(PATH·계정 폴더 등)을 앞에 둔다 — 데몬은 앱보다 오래 살아 자기 환경이 낡았을 수 있다.
         // `launch.env`처럼 명세가 직접 정한 값은 뒤에 있어 앱 값보다 앞선다.
         spec.env.splice(0..0, request.env.iter().cloned());
@@ -784,6 +807,23 @@ impl Registry {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn test_a_terminal_without_a_folder_starts_in_the_home_folder_except_wsl() {
+        let home = || Some(std::path::PathBuf::from("/Users/me"));
+        let mut unset = shell_spec("/bin/zsh", None, None);
+        with_default_directory(&mut unset, "/bin/zsh", home());
+        assert_eq!(unset.working_directory.as_deref(), Some("/Users/me"));
+        let mut chosen = shell_spec("/bin/zsh", Some("/work"), None);
+        with_default_directory(&mut chosen, "/bin/zsh", home());
+        assert_eq!(chosen.working_directory.as_deref(), Some("/work"));
+        let mut wsl = shell_spec("wsl", None, None);
+        with_default_directory(&mut wsl, "wsl", home());
+        assert_eq!(wsl.working_directory, None);
+        let mut unknown_home = shell_spec("/bin/zsh", None, None);
+        with_default_directory(&mut unknown_home, "/bin/zsh", None);
+        assert_eq!(unknown_home.working_directory, None);
+    }
+
     #[test]
     fn test_c_d76_a_marker_names_the_terminal_only_for_this_daemon() {
         assert_eq!(super::marker_id(&super::marker_of(7)), Some(7));

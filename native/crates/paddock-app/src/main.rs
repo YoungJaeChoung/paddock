@@ -49,7 +49,14 @@ fn main() {
 }
 
 fn window_options(cx: &App) -> WindowOptions {
-    let bounds = WindowBounds::centered(size(px(window_size::WIDTH), px(window_size::HEIGHT)), cx);
+    // 화면 배율(설정의 확대 단계)이 크면 사이드바·탭 줄 같은 고정 요소도 같이 커지므로 처음 창 크기도 같은 배율로 키운다.
+    // 화면(주 모니터)의 90%를 넘지는 않는다.
+    let zoom = paddock_app::look::zoom();
+    let limit = |wanted: f32, available: Option<f32>| available.map_or(wanted, |available| wanted.min(available * 0.9));
+    let display = cx.primary_display().map(|display| display.bounds().size);
+    let width = limit(window_size::WIDTH * zoom, display.map(|size| f32::from(size.width)));
+    let height = limit(window_size::HEIGHT * zoom, display.map(|size| f32::from(size.height)));
+    let bounds = WindowBounds::centered(size(px(width), px(height)), cx);
     // Windows는 제목줄을 앱이 직접 그린다(`titlebar`). 다른 OS는 시스템 제목줄을 그대로 쓴다.
     WindowOptions {
         window_bounds: Some(bounds),

@@ -857,7 +857,9 @@ pub fn tab_bar(
             + view_actions_width
             + branch_width,
     );
-    let strip_width = (geometry.width + geometry.file_width - strip_left - right_width).max(0.0);
+    // 창이 좁아도 탭 하나(최소 폭)와 ＋ 단추는 놓일 폭을 남긴다. 0으로 줄면 탭 이름이 통째로 사라진다.
+    let strip_floor = scaled(tab::MIN_WIDTH + tab::GAP + tab::ADD_WIDTH);
+    let strip_width = (geometry.width + geometry.file_width - strip_left - right_width).max(strip_floor);
     // 다른 창에 있는 탭: 칸이 하나뿐인 줄의 끝에 흐린 탭으로 남는다(칸을 나눈 줄에서는 빠진다).
     let faded: Vec<(TabRef, TabLook)> = window_view
         .workspace
@@ -921,6 +923,8 @@ pub fn tab_bar(
                 looks.extend(faded.iter().copied());
             }
             let handle = window_view.tab_scroll(index);
+            // 칸이 하나여도 구간이 탭 하나와 ＋ 단추보다 좁으면 탭이 줄어들게 한다. 줄지 않으면 하나뿐인 탭이 잘려 넘침 단추(›)만 남는다.
+            let narrow = span.width < scaled(tab::WIDTH + tab::GAP + tab::ADD_WIDTH);
             strip = strip.child(
                 div()
                     .absolute()
@@ -932,7 +936,7 @@ pub fn tab_bar(
                     .flex_row()
                     .items_end()
                     .gap(zpx(tab::GAP))
-                    .child(scrolling_tabs(window_view, index, &handle, &looks, shrinks, cx))
+                    .child(scrolling_tabs(window_view, index, &handle, &looks, shrinks || narrow, cx))
                     .child(add_button(("tab-add", index), current, cx)),
             );
         }
