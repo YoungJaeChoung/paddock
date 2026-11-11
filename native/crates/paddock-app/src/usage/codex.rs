@@ -458,7 +458,9 @@ mod tests {
         let pid_file = work.join("pid");
         let silent = format!("#!/bin/bash\necho $$ > '{}'\nsleep 60\n", pid_file.display());
         let _fake = FakeCodex::install(&silent);
-        let reader = CodexReader::with_timing(Duration::from_millis(400), Duration::from_millis(200));
+        // 제한 시간은 가짜 CLI가 뜰 만큼은 줘야 한다. macOS는 대화형 bash(`bash -ic`)가 뜨는 데만 0.5초 넘게 걸려
+        // 400ms로는 가짜 CLI가 pid를 쓰기 전에 끝나 버렸다. 2초여도 60초 sleep을 기다리지 않는다는 판정은 그대로다.
+        let reader = CodexReader::with_timing(Duration::from_millis(2000), Duration::from_millis(200));
         let started = Instant::now();
         assert_eq!(reader.read(&env(&work)), Err(LookupFailed));
         assert!(started.elapsed() < Duration::from_secs(5), "it did not wait for the sleep");
