@@ -3,7 +3,7 @@
 //! Work 목록이 같은 저장소의 워크트리 폴더를 한 묶음으로 보이려면 폴더마다 "같은 저장소"를 가리키는 키가 필요하다.
 //! git 프로세스를 띄우지 않고 `.git`이 디렉터리인지, 파일이면 `gitdir:` 한 줄이 무엇을 가리키는지로 판정한다.
 //! 결과 키는 폴더 key와 같은 철자 규칙(`paths::folder_key`)을 따라, 주 워크트리 폴더의 key와 그대로 같아진다.
-//! `.git`을 읽는 일은 호출자가 하고, 여기서는 읽은 결과를 해석하고 읽기를 몇 번 다시 시도할지만 정한다.
+//! `.git`을 읽는 일은 호출자가 하고, 여기서는 읽은 결과를 해석하고 읽기를 몇 번 다시 시도할지만 정한다(파일 시스템은 모른다).
 use std::collections::{HashMap, HashSet};
 
 use crate::git_paths::parse_wsl_path;
@@ -13,7 +13,8 @@ use crate::paths::folder_key;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DotGit {
     /// `.git`이 디렉터리다. 이 폴더가 주 워크트리(저장소 루트)다.
-    Directory,
+    /// 값은 호출자가 심볼릭 링크를 풀어 알아낸 폴더의 실제 경로이고, 알아내지 못했으면 None이다.
+    Directory(Option<String>),
     /// `.git`이 파일이다. 값은 파일의 앞부분 글이다.
     Content(String),
     /// 폴더는 있는데 `.git`이 없다.
@@ -91,6 +92,14 @@ fn linked_root(text: &str) -> Option<String> {
     Some(root.to_string())
 }
 
+/// 두 접두(`split_prefix`의 앞부분)가 같은 뿌리를 가리키는지. 대소문자는 가리지 않는다.
+fn same_prefix(
+    left: &str,
+    right: &str,
+) -> bool {
+    left.eq_ignore_ascii_case(right)
+}
+
 /// 폴더의 `.git` 읽기 결과로 저장소 key를 정한다. 같은 저장소의 폴더는 같은 key를 얻어 한 묶음이 된다.
 /// 묶지 않는 경우(서브모듈·`.git` 없음·읽기 실패·알 수 없는 모양)는 None이다.
 ///
@@ -98,11 +107,16 @@ fn linked_root(text: &str) -> Option<String> {
 /// 드라이브 폴더에서 WSL의 git이 만든 워크트리는 gitdir가 `/mnt/<문자>/…`라서 드라이브 경로로 되돌린다.
 /// 상대 gitdir는 폴더 경로(WSL이면 배포판 안의 경로) 기준으로 푼다.
 ///
+/// 연결된 워크트리의 key는 git이 `.git` 파일에 적은 실제 경로다. 폴더가 심볼릭 링크를 거쳐 열렸으면(맥의 `/tmp`→`/private/tmp`)
+/// 주 워크트리도 같은 철자여야 한 묶음이 되므로, `Directory`에 실린 실제 경로를 key로 쓴다. 실제 경로의 접두(드라이브·공유·배포판)가
+/// 폴더와 다르면 믿지 않고 폴더 key를 쓴다.
+///
 /// Examples
 /// --------
 /// | 폴더                           | .git                                              | 결과                           |
 /// |--------------------------------|---------------------------------------------------|--------------------------------|
 /// | `/r/main`                      | 디렉터리                                          | `/r/main`                      |
+/// | `/tmp/m`(실제 `/private/tmp/m`)| 디렉터리                                          | `/private/tmp/m`               |
 /// | `/r/wt`                        | `gitdir: /r/main/.git/worktrees/wt`               | `/r/main`                      |
 /// | `/r/wt`                        | `gitdir: ../main/.git/worktrees/wt`               | `/r/main`                      |
 /// | `\\wsl.localhost\Ubuntu\h\wt`  | `gitdir: /h/main/.git/worktrees/wt`               | `\\wsl.localhost\Ubuntu\h\main`|
@@ -115,7 +129,10 @@ pub fn repo_key_of(
 ) -> Option<String> {
     let folder = folder_key(folder);
     match dot_git {
-        DotGit::Directory => Some(folder),
+        DotGit::Directory(real) => {
+            let real_key = real.as_deref().filter(|real| !real.is_empty()).map(folder_key);
+            Some(real_key.filter(|real| same_prefix(&split_prefix(real).0, &split_prefix(&folder).0)).unwrap_or(folder))
+        }
         DotGit::Content(text) => linked_root(text).map(|root| {
             let (prefix, path) = split_prefix(&folder);
             let mount = root.strip_prefix("/mnt/").filter(|_| is_drive_path(&prefix)).and_then(|rest| {
@@ -143,6 +160,8 @@ pub fn repo_key_of(
 ///
 /// 읽은 폴더는 한 번으로 끝난다. 읽지 못한 폴더(앱 시작 직후 WSL 경로 지연·연결 끊김·디스크에서 지운 워크트리)는 다시 읽되
 /// `N_MAX_LOOKUPS`번까지만 읽는다. 지운 워크트리처럼 저장된 저장소 key가 이미 있으면 더 읽지 않는다 — 그래야 폴더를 지워도 묶음 아래에 남는다.
+///
+/// 한계: 한 번 읽은 폴더는 이번 실행 동안 다시 읽지 않는다. 폴더를 연 뒤 `git init`이나 `git worktree repair`로 `.git`이 바뀌면 다음 실행에야 반영된다.
 #[derive(Debug, Default)]
 pub struct RepoLookups {
     attempts: HashMap<String, u32>,
@@ -194,8 +213,8 @@ mod tests {
 
     #[test]
     fn test_c_wt_1_a_git_directory_makes_the_folder_the_repository_root_and_the_trailing_slash_is_dropped() {
-        assert_eq!(repo_key_of("/tmp/main", &DotGit::Directory).as_deref(), Some("/tmp/main"));
-        assert_eq!(repo_key_of("/tmp/main/", &DotGit::Directory).as_deref(), Some("/tmp/main"));
+        assert_eq!(repo_key_of("/tmp/main", &DotGit::Directory(None)).as_deref(), Some("/tmp/main"));
+        assert_eq!(repo_key_of("/tmp/main/", &DotGit::Directory(None)).as_deref(), Some("/tmp/main"));
     }
 
     #[test]
@@ -239,7 +258,7 @@ mod tests {
         let folder = "\\\\wsl.localhost\\Ubuntu\\home\\me\\wt1";
         let main = Some("\\\\wsl.localhost\\Ubuntu\\home\\me\\main");
         assert_eq!(repo_key_of(folder, &file("gitdir: /home/me/main/.git/worktrees/wt1")).as_deref(), main);
-        assert_eq!(repo_key_of("\\\\wsl.localhost\\Ubuntu\\home\\me\\main", &DotGit::Directory).as_deref(), main);
+        assert_eq!(repo_key_of("\\\\wsl.localhost\\Ubuntu\\home\\me\\main", &DotGit::Directory(None)).as_deref(), main);
         // 상대 경로는 배포판 안의 경로에서 푼다. 배포판 접두를 넘어가지 않는다.
         assert_eq!(repo_key_of(folder, &file("gitdir: ../main/.git/worktrees/wt1")).as_deref(), main);
         assert_eq!(
@@ -267,7 +286,7 @@ mod tests {
         assert_eq!(repo_key_of("C:/dev/wt", &file("gitdir: ../main/.git/worktrees/wt")).as_deref(), main);
         // 드라이브 글자는 대소문자가 달라도 폴더 key처럼 대문자로 쓴다.
         assert_eq!(repo_key_of("c:\\dev\\wt", &file("gitdir: c:/dev/main/.git/worktrees/wt")).as_deref(), main);
-        assert_eq!(repo_key_of("C:/dev/main", &DotGit::Directory).as_deref(), main);
+        assert_eq!(repo_key_of("C:/dev/main", &DotGit::Directory(None)).as_deref(), main);
         // 공백이 든 경로도 그대로다.
         assert_eq!(
             repo_key_of("/home/me/my wt", &file("gitdir: /home/me/my main/.git/worktrees/my wt")).as_deref(),
@@ -281,7 +300,7 @@ mod tests {
         let main = Some("\\\\wsl$\\Ubuntu\\home\\me\\main");
         assert_eq!(repo_key_of(folder, &file("gitdir: /home/me/main/.git/worktrees/wt1")).as_deref(), main);
         assert_eq!(repo_key_of(folder, &file("gitdir: ../main/.git/worktrees/wt1")).as_deref(), main);
-        assert_eq!(repo_key_of("\\\\wsl$\\Ubuntu\\home\\me\\main", &DotGit::Directory).as_deref(), main);
+        assert_eq!(repo_key_of("\\\\wsl$\\Ubuntu\\home\\me\\main", &DotGit::Directory(None)).as_deref(), main);
     }
 
     #[test]
@@ -332,9 +351,40 @@ mod tests {
     #[test]
     fn test_c_wt_12_folders_removed_from_the_list_are_forgotten_and_asked_again_when_they_return() {
         let mut lookups = RepoLookups::default();
-        lookups.record("/r/wt", &DotGit::Directory, None);
+        lookups.record("/r/wt", &DotGit::Directory(None), None);
         assert!(lookups.pending(&["/r/wt"]).is_empty());
         assert!(lookups.pending(&[]).is_empty());
         assert_eq!(lookups.pending(&["/r/wt"]), vec!["/r/wt"]);
+    }
+
+    #[test]
+    fn test_c_wt_13_a_main_folder_opened_through_a_symlink_uses_its_real_path_like_the_linked_worktrees() {
+        // 맥에서 `/tmp/r/main`으로 연 폴더의 실제 경로는 `/private/tmp/r/main`이고, 연결 워크트리의 .git 파일도 실제 경로를 적는다.
+        let main = repo_key_of("/tmp/r/main", &DotGit::Directory(Some("/private/tmp/r/main".to_string())));
+        let linked = repo_key_of("/tmp/r/wt", &file("gitdir: /private/tmp/r/main/.git/worktrees/wt"));
+        assert_eq!(main.as_deref(), Some("/private/tmp/r/main"));
+        assert_eq!(main, linked);
+    }
+
+    #[test]
+    fn test_c_wt_14_a_real_path_with_another_prefix_is_not_trusted_and_the_folder_key_is_used() {
+        for (folder, real) in [
+            ("\\\\wsl.localhost\\Ubuntu\\home\\me\\main", "/home/me/main"),
+            ("\\\\wsl.localhost\\Ubuntu\\home\\me\\main", "\\\\wsl.localhost\\Debian\\home\\me\\main"),
+            ("C:/dev/main", "D:/dev/main"),
+            ("/tmp/main", "C:/dev/main"),
+            ("/tmp/main", ""),
+        ] {
+            assert_eq!(
+                repo_key_of(folder, &DotGit::Directory(Some(real.to_string()))),
+                repo_key_of(folder, &DotGit::Directory(None)),
+                "{folder} {real}"
+            );
+        }
+        // 접두가 같으면 대소문자만 다른 드라이브 경로도 실제 경로를 따른다.
+        assert_eq!(
+            repo_key_of("c:/dev/main", &DotGit::Directory(Some("C:/Dev/main".to_string()))).as_deref(),
+            Some("C:/Dev/main")
+        );
     }
 }

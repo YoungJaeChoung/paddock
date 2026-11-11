@@ -3310,10 +3310,18 @@ impl WorkWindow {
             gpui_kit::px(crate::automation::menu_anchor::X),
             gpui_kit::px(crate::automation::menu_anchor::Y),
         );
+        // N번째 폴더는 화면에 보이는 순서(저장소 묶음 아래로 모인 순서)의 N번째 폴더 행이다.
         let folder_key = |n: Option<usize>| {
-            n.and_then(|n| n.checked_sub(1))
-                .and_then(|index| self.workspace.work().folders.get(index))
-                .map(|folder| folder.key.clone())
+            n.and_then(|n| n.checked_sub(1)).and_then(|index| {
+                self.workspace
+                    .work()
+                    .visible_rows(self.workspace.selected(), &self.show_all)
+                    .into_iter()
+                    .filter_map(|row| {
+                        if let paddock_core::work_model::Row::Folder { key, .. } = row { Some(key) } else { None }
+                    })
+                    .nth(index)
+            })
         };
         let group_root = |n: Option<usize>| {
             n.and_then(|n| n.checked_sub(1))

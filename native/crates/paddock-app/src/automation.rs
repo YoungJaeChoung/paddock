@@ -67,7 +67,7 @@
 //! 추적하지 않는 새 파일 탭의 `file-view`에는 ` untracked=yes`, 비교 탭에는 `kind=diff state=diff files= added= removed=`가 붙는다.
 //!
 //! `act`의 동작: `workadd`(Work ＋), `envmenu`(▾ 환경 목록), `menu terminal N`(N번째 탭의 우클릭 메뉴),
-//! `menu group N`(N번째 Unassigned 묶음 행), `menu folder N`(N번째 폴더 행), `menuitem 이름`(열린 메뉴의 항목),
+//! `menu group N`(N번째 Unassigned 묶음 행), `menu folder N`(N번째 폴더 행; 폴더 N은 모두 화면에 보이는 순서로 센다 — 저장소 묶음 아래로 모인 순서이고 접힌 묶음 안의 폴더는 세지 않는다), `menuitem 이름`(열린 메뉴의 항목),
 //! `foldertoggle N`(폴더 행 누름), `repotoggle N`(N번째 저장소 묶음 행 누름), `folderadd N`(폴더 행 ＋), `showmore N`(`Show N more`), `selectgroup N`(묶음 행 누름),
 //! `closegroup N`(묶음 행 ×), `selecttab N`(N번째 탭의 터미널 행 누름), `tabadd`(탭 줄 ＋), `confirm`·`cancel`(묻기 창 버튼), `quitstop`(종료 묻기의 Stop all and quit),
 //! `plusmenu`(탭 ＋: 등록 계정이 있으면 메뉴, 없으면 바로 새 터미널)·`pickermenu`(탭 줄 오른쪽 계정 고르기 메뉴),
