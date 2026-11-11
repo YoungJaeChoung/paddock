@@ -129,13 +129,20 @@ mod tests {
     #[test]
     fn test_c_d71_find_in_terminal_keys_never_reach_the_pty() {
         use paddock_core::app_shortcut::{AppShortcut, app_shortcut, terminal_key_bytes};
-        use paddock_core::key_encoding::KeyInput;
+        use paddock_core::key_encoding::{KeyInput, ShortcutScheme};
 
-        let press = |key: &'static str, shift: bool| KeyInput { key, key_char: None, control: true, shift, alt: false };
+        let press = |key: &'static str, shift: bool| KeyInput {
+            key,
+            key_char: None,
+            control: true,
+            shift,
+            alt: false,
+            command: false,
+        };
         // 찾기 키(Ctrl+Shift+H)는 앱 단축키라 PTY로 나가지 않고, 평 Ctrl+H만 셸의 백스페이스로 간다.
-        assert_eq!(app_shortcut(&press("h", true)), Some(AppShortcut::FindInTerminal));
-        assert_eq!(terminal_key_bytes(&press("h", true), false), None);
-        assert_eq!(terminal_key_bytes(&press("h", false), false), Some(vec![0x08]));
+        assert_eq!(app_shortcut(&press("h", true), ShortcutScheme::Ctrl), Some(AppShortcut::FindInTerminal));
+        assert_eq!(terminal_key_bytes(&press("h", true), false, ShortcutScheme::Ctrl), None);
+        assert_eq!(terminal_key_bytes(&press("h", false), false, ShortcutScheme::Ctrl), Some(vec![0x08]));
         // 찾고 강조하고 스크롤하는 일 자체도 PTY에 아무것도 쓰지 않는다.
         let sent = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
         let recorded = sent.clone();
