@@ -6,6 +6,7 @@
 //! - 명령줄·환경: `sysctl(KERN_PROCARGS2)`. `ps`의 명령줄은 인자 사이 공백과 인자 안 공백을 구별하지 못해, 읽을 수 있으면 이쪽을 쓴다.
 //!
 //! 다른 사용자로 실행된 프로그램(sudo 등)은 `KERN_PROCARGS2`가 거부된다. 그때 명령줄은 `ps` 것을 쓰고 환경(계정)은 모름으로 둔다.
+//! 운영체제가 보호하는 프로그램(`/bin/bash` 등)은 호출이 성공해도 환경이 비어 오는데, 이것도 모름으로 둔다.
 use std::collections::BTreeMap;
 use std::process::Command;
 
@@ -17,7 +18,7 @@ use super::{ProbeTarget, Reading};
 pub fn read(targets: &[ProbeTarget]) -> BTreeMap<u32, Reading> {
     let shell_pids: Vec<u32> = targets.iter().map(|target| target.shell_pid).collect();
     let mut run = |args: &[&str]| {
-        Command::new("ps")
+        Command::new("/bin/ps")
             .args(args)
             .output()
             .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
@@ -39,7 +40,10 @@ fn reading_of(
 ) -> Reading {
     let args = process_args(foreground.pid);
     let argv = args.as_ref().map(|args| args.argv.clone()).filter(|argv| !argv.is_empty());
-    let env: Option<AccountEnv> = args.map(|args| parse_environ(&args.environ, '\0'));
+    // 환경 구간이 통째로 비면 읽지 못한 것이다: 운영체제가 보호하는 프로그램은 호출이 성공해도 환경을 비워 준다.
+    // 그것을 빈 환경(= 기본 계정)으로 읽지 않고 모름으로 둔다.
+    let env: Option<AccountEnv> =
+        args.filter(|args| !args.environ.is_empty()).map(|args| parse_environ(&args.environ, '\0'));
     let started_at = started_at_of(foreground.pid);
     Reading {
         cwd: cwd_of(shell_pid),
@@ -130,12 +134,15 @@ fn process_args(pid: u32) -> Option<ProcessArgs> {
 /// `KERN_PROCARGS2` 원문을 명령줄과 환경으로 나눈다. 모양이 맞지 않으면 None이다.
 ///
 /// 원문은 `argc`(4바이트) → 실행 파일 경로 → NUL 여백 → 인자 `argc`개(각각 NUL로 끝) → 환경 변수들(각각 NUL로 끝) 순서다.
+/// 프로세스 제목을 바꾼 프로그램의 빈 인자는 Linux처럼 거른다. 첫 인자(argv[0])가 일부러 빈 글자인 프로세스는
+/// 여백 건너뛰기와 구별되지 않아 인자가 한 칸 밀린다(`ps`도 같아 감수한다).
 ///
 /// Examples
 /// --------
 /// | 원문(NUL은 `\0`)                                         | 결과                                         |
 /// |----------------------------------------------------------|----------------------------------------------|
 /// | `2` `/bin/sh\0\0\0` `sh\0-c\0` `HOME=/h\0A=b\0`          | argv `["sh", "-c"]`, environ `HOME=/h\0A=b`  |
+/// | `3` `/x\0\0` `claude\0\0\0`(제목을 바꿔 빈 인자가 뒤따름)   | argv `["claude"]`                            |
 /// | `argc`보다 짧은 원문                                     | None                                         |
 fn parse_process_args(bytes: &[u8]) -> Option<ProcessArgs> {
     let n_args = usize::try_from(i32::from_ne_bytes(bytes.get(..4)?.try_into().ok()?)).ok()?;
@@ -146,10 +153,13 @@ fn parse_process_args(bytes: &[u8]) -> Option<ProcessArgs> {
     // 경로 뒤 NUL 여백을 건너뛴다.
     let start = rest.iter().position(|byte| *byte != 0)?;
     rest = &rest[start..];
-    let mut argv = Vec::with_capacity(n_args);
+    // `argc`는 원문이 준 값이라 그대로 믿고 미리 잡지 않는다.
+    let mut argv = Vec::with_capacity(n_args.min(rest.len()));
     for _ in 0..n_args {
         let end = rest.iter().position(|byte| *byte == 0)?;
-        argv.push(String::from_utf8_lossy(&rest[..end]).into_owned());
+        if end > 0 {
+            argv.push(String::from_utf8_lossy(&rest[..end]).into_owned());
+        }
         rest = &rest[end + 1..];
     }
     let environ = String::from_utf8_lossy(rest).trim_end_matches('\0').to_string();
@@ -187,12 +197,43 @@ mod tests {
     }
 
     #[test]
+    fn test_empty_arguments_left_by_a_changed_process_title_are_dropped() {
+        let mut bytes = 3i32.to_ne_bytes().to_vec();
+        bytes.extend_from_slice(b"/x\0\0claude\0\0\0HOME=/h\0");
+        let args = parse_process_args(&bytes).expect("well formed");
+        assert_eq!(args.argv, vec!["claude"]);
+        assert_eq!(args.environ, "HOME=/h");
+    }
+
+    #[test]
+    fn test_a_huge_argument_count_does_not_reserve_memory_and_is_rejected() {
+        let mut bytes = i32::MAX.to_ne_bytes().to_vec();
+        bytes.extend_from_slice(b"/x\0\0a\0");
+        assert!(parse_process_args(&bytes).is_none());
+    }
+
+    #[test]
+    fn test_a_protected_system_program_has_unknown_environment_not_an_empty_one() {
+        // `/bin/sleep`은 운영체제가 보호해 환경이 비어 온다. 빈 환경은 기본 계정으로 오판되므로 모름(None)이어야 한다.
+        let mut child = Command::new("/bin/sleep").arg("30").stdout(Stdio::null()).spawn().expect("sleep starts");
+        let target = ProbeTarget { id: 1, shell_pid: child.id(), wsl: None };
+        let reading = read(&[target]).remove(&1);
+        let _ = child.kill();
+        let _ = child.wait();
+        let reading = reading.expect("readable");
+        assert_eq!(reading.argv.last().map(String::as_str), Some("30"));
+        assert!(reading.env.is_none(), "{:?}", reading.env);
+    }
+
+    #[test]
     fn test_the_real_process_args_keep_spaces_inside_an_argument_and_the_account_environment() {
-        // 운영체제 기본 프로그램(`/bin/sleep` 등)은 보호되어 환경을 읽을 수 없다. 사본을 띄우면 일반 프로그램처럼 읽힌다.
-        // (`sleep`은 보호 표시가 붙은 채 복사해도 실행되지만, bash 같은 일부는 다시 서명해야 한다.)
+        // 운영체제 기본 프로그램(`/bin/sleep` 등)은 보호되어 환경을 읽을 수 없다. 사본을 만들어 임시 서명(ad-hoc)으로 다시 서명하면
+        // 일반 프로그램처럼 읽힌다. 서명하지 않은 사본은 보호 표시가 붙은 채 복사되어 실행 직후 운영체제가 끝낸다.
         let dir = tempfile::tempdir().expect("temp dir");
         let copy = dir.path().join("sleep");
         std::fs::copy("/bin/sleep", &copy).expect("copy sleep");
+        let signed = Command::new("codesign").args(["--force", "-s", "-"]).arg(&copy).output().expect("run codesign");
+        assert!(signed.status.success(), "{}", String::from_utf8_lossy(&signed.stderr));
         let mut child = Command::new(&copy)
             .arg("30")
             .env("CODEX_HOME", "/tmp/codex home")

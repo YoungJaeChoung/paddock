@@ -1298,7 +1298,9 @@ fn test_c_d37_an_agent_named_program_gets_a_state_and_a_finish_is_announced_once
     let (mut client, _) = daemon.connect_authenticated();
     client.new_terminal(None, 100, 24);
     // 에이전트 이름의 실행 파일(claude)을 PATH 앞에 두고, 6초 동안 출력을 낸 뒤 끝나는 일을 시킨다.
-    // 마지막 조용한 4초는 셸 내장 명령(read)으로 기다린다. `bash -c`는 마지막 명령이 외부 프로그램(sleep)이면 새로 띄우지 않고 그 프로그램으로 자신을 바꿔 실행(exec)하므로,
+    // 마지막 조용한 8초는 셸 내장 명령(read)으로 기다린다. 끝남 알림은 마지막 출력 뒤 조용한 시간(3초)이 지난 첫 틱(2초 간격)에 나가므로,
+    // 그 틱이 이 구간 안에 떨어지려면 조용한 시간 + 틱 간격 + 병렬 부하 여유가 필요하다(4초는 부하에서 빗나갔다).
+    // `bash -c`는 마지막 명령이 외부 프로그램(sleep)이면 새로 띄우지 않고 그 프로그램으로 자신을 바꿔 실행(exec)하므로,
     // 가짜 claude 프로세스 자체가 sleep이 되어 기록을 쓰기 직전의 조사가 앞쪽 프로그램을 sleep으로 읽는다.
     let bin = daemon.home.path().join("bin");
     std::fs::create_dir_all(&bin).unwrap();
@@ -1306,7 +1308,7 @@ fn test_c_d37_an_agent_named_program_gets_a_state_and_a_finish_is_announced_once
     type_line(&mut client, &format!("PATH={}:$PATH\r", bin.display()));
     type_line(
         &mut client,
-        "claude -c 'for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo work $i; sleep 0.5; done; read -t 4 -r _'\r",
+        "claude -c 'for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo work $i; sleep 0.5; done; read -t 8 -r _'\r",
     );
     let mut seen = Vec::new();
     let finished = client.wait_for_state(Duration::from_secs(30), &mut seen, |state| state.finished);
