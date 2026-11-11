@@ -1,0 +1,35 @@
+# 빠른 열기 색인 부하(덩어리 27 실패 시 멈춤 조건): 파일 10,000개(폴더 100 × 100)를 색인하는 동안과 글자를 칠 때마다 순위를 다시 매기는 동안 창 스레드가 일한 최대 시간(`ui-max-busy-ms`, 운영체제 시계 눈금 15 ms 단위)이
+# 100 ms를 넘지 않는다. 색인은 작업 스레드가 하고 순위 계산은 창 스레드에서 한다. 실행 이름은 quick-open-10k이다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-10k"; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; $t = "abc def ghi " * 50; 1..100 | ForEach-Object { $d = "$p\\d$_"; New-Item -ItemType Directory $d -Force | Out-Null; 1..100 | ForEach-Object { [IO.File]::WriteAllText("$d\\f$_.txt", $t) } }; 1..7 | ForEach-Object { [IO.File]::WriteAllText("$p\\d$($_ * 10)\\needle-$_.txt", "xx needle xx") }; cd $p; echo DONE-10K\r
+waitline DONE-10K @240000
+send claude.exe -n 300 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+wait 1500
+mem before-open
+act resetgap
+key ctrl-shift-p
+waitoverlay quick-open @5000
+waitstate quick-open open=y indexing=n @120000
+state index-done
+mem index-open
+act resetgap
+act quickopen f
+wait 500
+act quickopen f5
+wait 500
+act quickopen f55
+wait 500
+act quickopen f55x
+wait 1500
+state typed
+act resetgap
+wait 1000
+state idle
+key escape
+waitoverlay none @3000
+wait 5000
+mem after-close
+quit

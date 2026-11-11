@@ -1,0 +1,39 @@
+# Git 변경 표시(WSL 폴더, 기본 셸 WSL): 배포판 안 저장소를 `\\wsl.localhost\<배포판>\tmp\…`로 연다. git은 `wsl.exe -e git`으로만 돈다(Windows git으로 돌아가지 않는다).
+# 파일 시스템 사건이 오지 않아도 터미널에서 `echo x >> a.js`를 치면 그 출력·Enter 뒤 게이트가 열려 3초 안에 표시가 붙는다(C-D7).
+# 처음 표시·편집 뒤 표시까지의 시간과 그동안 띄운 wsl.exe 수(`git-calls wsl=`)를 남긴다. 임시 폴더는 /tmp/pdk-git 하나이고 끝에 지운다.
+waittabs 1 @30000
+send unset HISTFILE; rm -rf /tmp/pdk-git && mkdir -p /tmp/pdk-git/proj/src && cd /tmp/pdk-git/proj && git init -q -b main && git config user.name Tester && git config user.email t@example.com && echo one > a.js && echo two > src/b.js && git add -A && git commit -q -m base && ln -sf /bin/bash /tmp/pdk-git/claude && export PATH=/tmp/pdk-git:$PATH\r
+send echo READY-WSLGIT\r
+waitline READY-WSLGIT @30000
+send claude -c 'read -t 900'\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @15000
+mark first-mark-wait
+waitstate scm state=ready @30000
+mark first-mark-seen
+state wsl-clean
+shot git-wsl-clean
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+mark edit-sent
+send echo x >> /tmp/pdk-git/proj/a.js; echo new > '/tmp/pdk-git/proj/new file.txt'; date +EDITED-%H:%M:%S.%3N\r
+waitstate file-row 0 file a.js mark=M color=modified @15000
+mark edit-seen
+state wsl-seen
+shot git-wsl-marks
+# 스테이징·커밋은 Source control 보기에서 배포판 안 git으로 간다.
+act view scm
+waitstate view=scm @5000
+act stage 1
+waitstate staged=1 @15000
+act commit wsl; commit
+waitstate staged=0 @15000
+state wsl-committed
+send git -C /tmp/pdk-git/proj log -1 --format=SUBJ[%s]\r
+waitline SUBJ[wsl; commit] @10000
+shot git-wsl-committed
+send rm -rf /tmp/pdk-git\r
+wait 800
+quit

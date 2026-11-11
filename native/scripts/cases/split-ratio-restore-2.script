@@ -1,0 +1,10 @@
+# (2/2) 재실행: 묶음마다 비율·선택 탭·셸 pid가 종료 전과 같아야 한다
+waittabs 4 @30000
+wait 2500
+state restarted-b
+act selectgroup 1
+wait 800
+state restarted-a
+shot restarted-a
+daemonlist after-restart
+quit

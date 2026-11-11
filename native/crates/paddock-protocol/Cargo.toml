@@ -1,0 +1,22 @@
+[package]
+name = "paddock-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Connection contract between the Paddock app and its terminal daemon."
+
+[dependencies]
+paddock-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+rand.workspace = true
+interprocess.workspace = true
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+widestring.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

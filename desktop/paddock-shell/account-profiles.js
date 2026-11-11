@@ -11,6 +11,8 @@ const { BrowserBridge } = require('./account-browser');
 const { flagSettingsPath } = require('./claude-flag-settings');
 const { PencilServer, PencilDoctor, toWslPath, repairPencilCommand, findWindowsPencil } = require('./account-pencil');
 const { ClaudeConfig, syncClaudeConfig } = require('./account-claude-config');
+const { AgentStatusHook, agentStatusHookCommand } = require('./agent-status-hook-settings');
+const { CodexHooks, syncCodexStatusHook, releaseOwnCodexHooks } = require('./codex-hooks');
 const { inspectDirectories, repairDirectory, storageAccessResult, openFolderSettings } = require('./account-storage-access');
 
 class AccountProfile {
@@ -81,8 +83,8 @@ function privateDirectory(
  * Links one host folder (for example commands) or file (for example AGENTS.md) into an account's config folder.
  *
  * The CLI looks these entries up by name inside its config folder, so an account that lacks the link loses them.
- * Nothing is linked when the host has no such entry; an existing account entry that is not this link is kept and reported.
- * `kind` is 'folder' or 'file'. Returns a warning text when an account entry was kept or a file link was refused, otherwise null.
+ * Nothing is linked when the host has no such entry; an existing account entry that is not this link is kept without a notice (it is the user's own choice).
+ * `kind` is 'folder' or 'file'. Returns a warning text only when Windows refused a file link, so the entry is not shared; otherwise null.
  */
 function linkSharedEntry(
     source,
@@ -105,12 +107,11 @@ function linkSharedEntry(
         } catch (error) {
             if (error.code !== 'ENOENT') throw error;
         }
-        let sameSource = false;
         // A link whose target is gone is one Paddock made before the host entry moved (a dotfiles repository relocated); it is repointed, not kept.
         let isDangling = false;
         if (existing?.isSymbolicLink()) {
             try {
-                sameSource = fs.realpathSync(target) === fs.realpathSync(source);
+                fs.realpathSync(target);
             } catch (error) {
                 if (error.code !== 'ENOENT') throw error;
                 isDangling = true;
@@ -123,9 +124,10 @@ function linkSharedEntry(
             } catch (error) {
                 // Windows allows file links only with developer mode or elevation.
                 if (kind !== 'file' || error.code !== 'EPERM') throw error;
-                warning = `The ${name} file could not be linked. Enable Windows developer mode to share it.`;
+                warning = `${name} is not shared with this account because Windows blocked the link. Turn on Developer Mode in Windows Settings to share it.`;
             }
-        } else if (!sameSource) warning = `An existing ${name} ${kind} was kept.`;
+        }
+        // An account entry that differs from the host's is the user's own choice and is kept without a notice: there is nothing for them to do.
     }
     return warning;
 }
@@ -164,21 +166,22 @@ function backupName(
  * the host link with a plain file and cut it off from its repository.
  * Nothing happens when the host has no such file. An account's own regular file is moved to `<name>.paddock-backup`
  * (`-<YYYYMMDD-HHMMSS>` appended when that name is taken) before linking, unless its content already equals the host's.
- * A link that already leads to the host file through another path is made direct; a link to some other file, or a folder, is kept and reported.
+ * A link that already leads to the host file through another path is made direct; a link to some other file, or a folder, is kept.
  * Windows without developer mode refuses file links (EPERM); then the account gets a copy that is refreshed whenever it differs,
  * and the first differing account file is backed up once.
- * Returns a warning text when something was moved, kept, or copied instead of linked; otherwise null.
+ * Linking is not reported: the backup keeps the account's old settings recoverable. The copy is reported each time it overwrites a differing
+ * account file, because changes made in that account are then lost and only Windows developer mode stops it. A failure throws, and the caller turns it into a warning.
  *
  * Examples
  * --------
  * | Host file | Account file                      | Result                                                           |
  * | --------- | --------------------------------- | ---------------------------------------------------------------- |
- * | exists    | none                              | direct link, no warning                                          |
- * | exists    | regular, different content        | account file moved to `.paddock-backup`, direct link, warning    |
- * | exists    | regular, same content             | relinked without backup, no warning                              |
+ * | exists    | none                              | direct link                                                      |
+ * | exists    | regular, different content        | account file moved to `.paddock-backup`, direct link, no warning |
+ * | exists    | regular, same content             | relinked without backup                                          |
  * | exists    | direct link to the host's file    | unchanged                                                        |
- * | exists    | link to it through another path   | made direct, no warning                                          |
- * | exists    | link elsewhere, or a folder       | kept, warning                                                    |
+ * | exists    | link to it through another path   | made direct                                                      |
+ * | exists    | link elsewhere, or a folder       | kept                                                             |
  * | none      | any                               | unchanged                                                        |
  */
 function shareSettingsFile(
@@ -213,11 +216,9 @@ function shareSettingsFile(
                 isDangling = true;
             }
         }
-        if (existing?.isSymbolicLink() && !isSameFile && !isDangling) {
-            warning = `An existing ${name} link was kept.`;
-        } else if (existing && !existing.isSymbolicLink() && !existing.isFile()) {
-            warning = `An existing ${name} entry was kept.`;
-        } else if (!isDirect) {
+        // A link to some other file, or a folder, is the user's own setup and is kept without a notice.
+        const isUserOwned = (existing?.isSymbolicLink() && !isSameFile && !isDangling) || (existing && !existing.isSymbolicLink() && !existing.isFile());
+        if (!isUserOwned && !isDirect) {
             const sameContent = isSameFile || isDangling || (Boolean(existing) && fs.readFileSync(resolved).equals(fs.readFileSync(target)));
             // The link is built beside the account file and renamed over it, so a refused link leaves the account file untouched.
             const pendingLink = path.join(path.dirname(target), `.${name}.${randomUUID()}.link`);
@@ -231,13 +232,9 @@ function shareSettingsFile(
             }
             try {
                 if (canLink) {
-                    let backup = null;
-                    if (existing && !sameContent) {
-                        backup = backupName(target);
-                        fs.renameSync(target, backup);
-                    }
+                    if (existing && !sameContent) fs.renameSync(target, backupName(target));
+                    // The backup keeps the account's old settings recoverable, so the move needs no notice.
                     fs.renameSync(pendingLink, target);
-                    if (backup) warning = `The ${name} of this account was moved to ${path.basename(backup)}; the account now follows the shared ${name}.`;
                 } else if (!sameContent) {
                     const backup = existing && !fs.existsSync(`${target}${AccountProfile.BACKUP_SUFFIX}`) ? `${target}${AccountProfile.BACKUP_SUFFIX}` : null;
                     if (backup) fs.copyFileSync(target, backup, fs.constants.COPYFILE_EXCL);
@@ -248,7 +245,7 @@ function shareSettingsFile(
                     } finally {
                         fs.rmSync(temporaryFile, { force: true });
                     }
-                    warning = `Enable Windows developer mode to share ${name} live; the account copy is refreshed each launch.`;
+                    warning = `Settings changed in this account are replaced by the shared ${name} at each launch because Windows blocked the link. Turn on Developer Mode in Windows Settings to keep them.`;
                 }
             } finally {
                 fs.rmSync(pendingLink, { force: true });
@@ -690,20 +687,14 @@ class AccountProfiles {
                     } catch (error) {
                         if (error.code !== 'ENOENT') throw error;
                     }
-                    let sameSource = false;
-                    if (existing?.isSymbolicLink()) {
-                        try {
-                            sameSource = fs.realpathSync(target) === fs.realpathSync(source);
-                        } catch (error) {
-                            if (error.code !== 'ENOENT') throw error;
-                        }
-                    }
                     if (!existing) fs.symlinkSync(source, target, process.platform === 'win32' ? 'junction' : 'dir');
-                    else if (!sameSource) warnings.push(`An existing skill named ${entry.name} was kept.`);
+                    // A skill the account already has under the same name is kept without a notice.
                 }
             }
         }
         const hostDirectory = profile.provider === 'claude' ? this.claudeDirectory : this.codexDirectory;
+        // A hooks.json that Paddock wrote (only its status hook) before the host got its own must not block sharing the host's file: drop it so the link below can take its place.
+        if (profile.provider === 'codex' && process.platform === 'linux') warnings.push(...sharingStep('Agent status hook', () => { releaseOwnCodexHooks(configDir, path.join(hostDirectory, CodexHooks.FILE)); }));
         // Each sharing step fails on its own: a refused link or an unreadable default file becomes a warning and the account still opens.
         // Structure checks (the account folders above) and the browser helper keep throwing because an account on a redirected folder must not start.
         for (const [names, kind] of [[AccountProfile.SHARED_FOLDERS[profile.provider], 'folder'], [AccountProfile.SHARED_FILES[profile.provider], 'file']]) {
@@ -728,7 +719,32 @@ class AccountProfiles {
                 pencilCommand: command,
             }).warnings));
         }
+        // Codex gets Paddock's agent status hook in its own account folder (Linux hosts; Windows hosts have no `sh` for native accounts).
+        if (profile.provider === 'codex' && process.platform === 'linux') warnings.push(...sharingStep('Agent status hook', () => this.syncCodexStatusHook(configDir)));
         return { configDir, warnings, ...(browserDirectory ? { browserDirectory } : {}) };
+    }
+
+    /**
+     * Puts Paddock's agent status hook into (or takes it out of) a Codex account folder's hooks.json, following the "agent status hook" setting
+     * recorded in usage/state.json (on unless turned off). Returns a notice text only when the hook was just written, because Codex asks to trust a changed hook.
+     * Nothing is written before the hook script exists (it is placed when the app starts).
+     */
+    syncCodexStatusHook(
+        configDir,
+    ) {
+        let state = {};
+        try {
+            state = JSON.parse(fs.readFileSync(path.join(this.configDirectory, 'usage', 'state.json'), 'utf8'));
+        } catch {
+            state = {};
+        }
+        const script = path.join(this.configDirectory, 'usage', AgentStatusHook.SCRIPT_NAME);
+        const isEnabled = state.statusHook?.enabled !== false;
+        let notice = null;
+        if (!isEnabled || fs.existsSync(script)) {
+            notice = syncCodexStatusHook(configDir, isEnabled ? agentStatusHookCommand(script, AgentStatusHook.APPS.CODEX) : null) === 'written' ? CodexHooks.TRUST_NOTICE : null;
+        }
+        return notice;
     }
 
     /** Returns the Windows Pencil server as a /mnt path for a WSL profile, or an empty text when it is not installed. */

@@ -1,0 +1,77 @@
+# 검토 메모(덩어리 26): 편집기에서 고른 줄에 Ctrl+Alt+M로 메모를 남기고(고른 곳이 없거나 가득 차면 상태 줄 안내), 우클릭 메뉴로 보내고 비운다.
+# 에이전트 터미널이 없으면 메모를 그대로 두고 알리며, 하나면 그곳으로, 지금 터미널이 에이전트가 아니고 여럿이면 고르게 한다. 붙여 넣기만 하고 Enter는 누르지 않는다.
+# 기본 셸은 WSL이고 가짜 claude는 bash(붙여넣기 감싸기를 켜서 여러 줄을 입력줄에 쌓는다).
+waittabs 1 @30000
+send unset HISTFILE; rm -rf /tmp/pdk-notes && mkdir -p /tmp/pdk-notes/proj/src && for i in $(seq 1 12); do echo "line $i"; done > /tmp/pdk-notes/proj/src/a.js && ln -sf /bin/bash /tmp/pdk-notes/claude && export PATH=/tmp/pdk-notes:$PATH && cd /tmp/pdk-notes/proj\r
+send echo READY-NOTES\r
+waitline READY-NOTES @20000
+# 에이전트가 없으니 파일 목록은 아직 없다. 파일을 직접 열고 줄 3~5를 골라 실제 자판으로 메모를 남긴다.
+act openpath //wsl.localhost/Ubuntu/tmp/pdk-notes/proj/src/a.js
+waitstate kind=text state=text lines=12 @10000
+act selectlines 3 5
+key ctrl-alt-m
+waitoverlay review-note @3000
+state note-open
+shot note-dialog
+text null check
+key enter
+waitoverlay none @3000
+waitstate review-notes=1 @3000
+state note-1
+# 에이전트가 없으면 보내지 않고 메모를 둔다.
+act sendnotes
+wait 500
+state no-agent
+act clearnotes
+waitstate review-notes=0 @3000
+# 에이전트 둘(터미널 1·2)과 셸(터미널 3)을 만든다. 터미널 2·3은 새 셸이라 가짜 claude 경로를 다시 넣는다.
+send claude\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+send export PATH=/tmp/pdk-notes:$PATH; claude\r
+wait 2500
+key ctrl-shift-c
+waittabs 3 @20000
+wait 1500
+# 작업 폴더가 서면 메모의 파일 경로는 작업 폴더 기준 상대 경로다.
+act filetab 1
+act selectlines 3 5
+key ctrl-alt-m
+waitoverlay review-note @3000
+text null check
+key enter
+waitoverlay none @3000
+act selectlines 7 7
+act note second note
+waitstate review-notes=2 @3000
+state notes-2
+shot notes-status
+# 편집기 우클릭 메뉴: Cut·Copy·Paste와 메모 항목(메모가 있으니 Send·Clear 포함).
+act editormenu
+waitstate menu: editor @3000
+state editor-menu
+shot editor-menu
+key escape
+waitstate menu: none @3000
+# 지금 터미널(3)은 셸이고 에이전트가 둘이라 고르게 한다.
+act sendnotes
+waitstate menu: pick-agent @3000
+state pick-menu
+shot pick-menu
+act pickagent 2
+waitstate review-notes=0 @5000
+wait 1500
+dump pasted
+state after-send
+# 붙여 넣기만 했고 Enter는 누르지 않았다: dump에서 메모 글이 입력줄로 쌓이고 마지막 줄이 프롬프트다.
+# 터미널이 활성일 때 Ctrl+Alt+M는 앱이 아니라 셸로 간다(창이 열리지 않는다).
+key ctrl-alt-m
+wait 500
+state terminal-ctrl-alt-m
+send rm -rf /tmp/pdk-notes\r
+wait 500
+quit

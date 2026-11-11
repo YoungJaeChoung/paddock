@@ -25,6 +25,12 @@ const MARKDOWN_PREVIEW = {
     EXTENSIONS: new Set(['.md', '.markdown', '.mdown', '.mkdn', '.mkd', '.rmd', '.qmd']),
 };
 
+// Pencil 디자인 편집기(.pen). 그 화면 안 iframe이 MCP 연결을 쥐고 있어, 화면이 DOM에서 떨어지면 연결이 끊긴다.
+const PENCIL = {
+    VIEW_TYPE: 'pencil.designEditor',
+    OWN_WINDOW_PREFERENCE: 'paddock.pencilInOwnWindow',
+};
+
 function element(
     tag,
     className,
@@ -141,4 +147,4 @@ function attachMenuKeys(
     });
 }
 
-module.exports = { STORAGE, STATUS_ITEMS, MARKDOWN_PREVIEW, element, codicon, button, menuItem, clampToWindow, createPopupMenu, showPopupMenuAt, attachMenuKeys };
+module.exports = { STORAGE, STATUS_ITEMS, MARKDOWN_PREVIEW, PENCIL, element, codicon, button, menuItem, clampToWindow, createPopupMenu, showPopupMenuAt, attachMenuKeys };

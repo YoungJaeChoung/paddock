@@ -1,0 +1,12 @@
+# 화면 대조: 터미널 2개·Work 목록·탭 2개 상태를 기존 앱 캡처와 같은 크기로 찍는다(zoomLevel은 임시 홈의 설정이 정한다)
+resize 2560 1550
+waittabs 1 @30000
+send echo 현재 우리 제품 맥에서 설치 가능하지? impeccable 이라는걸 쓰면 더 좋아지나\r
+waitfor impeccable @20000
+key ctrl-shift-t
+waittabs 2 @20000
+send printf '\\e[31mred\\e[32m green\\e[34m blue\\e[0m normal\\n'\r
+waitfor normal @20000
+wait 1500
+shot visual
+quit

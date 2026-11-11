@@ -1,0 +1,31 @@
+# 사용자 PC 전용: node 경로(C:\Program Files\nodejs\node.exe)를 고정으로 쓴다. node가 다른 곳에 있는 PC에서는 flag-status 줄의 경로를 그 PC의 `where node` 첫 줄로 바꾼다.
+# Paddock 전용 Claude 설정 쓰기(덩어리 32), 이 컴퓨터 쪽. 임시 홈에서 시작하면 claude 실행 래퍼가 놓이고 사용량 표시가 아직 정한 적 없음(unset)이어서 자동으로 켜진다.
+# Claude usage 항목을 끄면 상태 줄 명령이 빠진 빈 설정으로 돌아가고 스크립트 사본은 남으며, 다시 켜면 같은 명령으로 돌아온다.
+# 메모리 안내는 Windows 이 컴퓨터에서 쓸 수 없어(WSL 없음) 안내 문장만 보이고 마지막 설정에는 남지 않는다. 기준값 ± 단추는 설정 파일에 4608로 남는다.
+waittabs 1 @30000
+waitstate usage-setup computer state=on memory=- limit=- @60000
+waitstate wrapper=yes script=yes hook-script=no hook-off=no @5000
+waitstate flag-status="C:\Program Files\nodejs\node.exe" "C:\Temp\pdk-run\home-usage-setup\.paddock\config\usage\claude-statusline.cjs" "C:\Temp\pdk-run\home-usage-setup\.paddock\config\usage\claude.json" flag-hook=- @5000
+waitstate usage-setup-settings memory-notice=off limit=4096 wsl-launcher=ask focus=other notice=Claude usage is on. Turn it off in Quick settings. @10000
+state on-first
+shot 01-on-first
+act quick statusbar claude off
+waitstate items=claude:off,codex:on,memory:on @10000
+waitstate usage-setup computer state=off @30000
+waitstate flag-status=- flag-hook=- @5000
+waitstate wrapper=yes script=yes @5000
+state off
+act quick statusbar claude on
+waitstate usage-setup computer state=on @30000
+waitstate flag-status="C:\Program Files\nodejs\node.exe" "C:\Temp\pdk-run\home-usage-setup\.paddock\config\usage\claude-statusline.cjs" @10000
+state on-again
+act quick memorynotice on
+waitstate usage-setup-settings memory-notice=on @10000
+waitstate notice=The memory notice needs WSL or Linux. It is not available for Windows-native Claude. @10000
+waitstate computer state=on memory=- limit=- @5000
+act quick memorynoticemb +1
+waitstate usage-setup-settings memory-notice=on limit=4608 @10000
+files setup-settings
+state final
+shot 02-final
+quit

@@ -1,0 +1,25 @@
+# 터미널 찾기 부하: 5만 줄을 출력한 터미널(스크롤백은 1,000줄)에서 한 글자 질의(일치 수천 건)를 넣고 지우는 동안 창 스레드가 일한 최대 시간(`ui-max-busy-ms=`, 시계 눈금 약 15.6 ms 단위)을 본다.
+# 16 ms를 넘으면 질의 입력을 늦춰 찾거나 작업 스레드로 옮긴다(검토 지적).
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send 1..50000 | ForEach-Object { "line $_ of the long output" }\r
+send echo FILLED\r
+waitline FILLED @120000
+wait 3000
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act resetgap
+act termfind n
+waitstate matches= @5000
+wait 1500
+state one-char
+act termfind e
+wait 1500
+state one-char-e
+act termfind line 4
+wait 1500
+state longer
+act termfind
+wait 1500
+state emptied
+quit

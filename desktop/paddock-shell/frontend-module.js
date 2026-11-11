@@ -39,6 +39,7 @@ const { MainPluginApiProvider } = require('@theia/plugin-ext/lib/common/plugin-e
 const { PaddockPluginApiOverrides } = require('./plugin-api-overrides');
 const { PaddockReconnectGuard } = require('./reconnect-guard');
 const { PaddockGitShim } = require('./git-shim');
+const { BackgroundGitRefresh } = require('./background-git-refresh');
 require('./controls.css');
 
 // Paddock 설정. 설정 화면(Preferences)에서 "paddock"로 찾을 수 있다.
@@ -86,6 +87,11 @@ const PaddockPreferenceSchema = {
             default: false,
             description: 'Tell Claude Code agents when memory is low. Adds one PreToolUse hook to Paddock\'s own Claude Code settings file, which Paddock passes to Claude with --settings in its account terminals and in terminals where claude starts through Paddock\'s launcher; your own settings.json files are never changed. While available memory is below the limit, the hook adds a short note to the agent\'s context after a Bash, Agent or Task tool call so it postpones heavy work. It never blocks or stops anything. Turning it off removes only that hook and quiets agents that are already running. Turning it on reaches agents started afterwards. Works for WSL, Linux and accounts that run in WSL; macOS and Windows-native Claude are not supported.',
         },
+        'paddock.agents.statusHook': {
+            type: 'boolean',
+            default: true,
+            description: 'Show what Claude Code is doing in Work: Working, Needs input, Idle, Error. Adds hooks to Paddock\'s own Claude Code settings file, which Paddock passes to Claude with --settings in its account terminals and in terminals where claude starts through Paddock\'s launcher. The hook script reads only the event name, never your prompt text, and writes one status line to the terminal; your own settings.json is not touched. Turn it off to remove the hooks and go back to estimating the state from terminal output.',
+        },
         'paddock.agents.memoryNoticeMinimumMb': {
             type: 'number',
             default: 4096,
@@ -97,7 +103,7 @@ const PaddockPreferenceSchema = {
             enum: ['ask', 'on', 'off'],
             enumDescriptions: [
                 'Ask once when Paddock starts on Windows with WSL.',
-                'Keep one line in the WSL ~/.bashrc that puts Paddock\'s claude launcher first in PATH, so a claude you type in a WSL terminal also gets Paddock\'s status line and memory notice.',
+                'Keep one line in the WSL ~/.bashrc that defines a claude shell function running Paddock\'s launcher (a PATH entry would lose to ~/.local/bin in login shells), so a claude you type in a WSL terminal also gets Paddock\'s status line, memory notice and agent status.',
                 'Do not change the WSL ~/.bashrc. Turning this off removes the line Paddock added.',
             ],
             default: 'ask',
@@ -129,6 +135,11 @@ const PaddockPreferenceSchema = {
             minimum: 6,
             maximum: 24,
             description: 'Indentation in pixels for each level of the Work and file lists in the sidebar.',
+        },
+        'paddock.pencilInOwnWindow': {
+            type: 'boolean',
+            default: true,
+            description: 'Open .pen design files in their own window so switching work groups does not disconnect the Pencil MCP.',
         },
     },
 };
@@ -186,6 +197,8 @@ exports.default = new ContainerModule((bind, unbind, isBound, rebind, unbindAsyn
     bind(OpenHandler).toDynamicValue(({ container }) => new PaddockPdfOpener(container)).inSingletonScope();
     bind(OpenHandler).toDynamicValue(({ container }) => new PaddockBinaryNoticeOpener(container)).inSingletonScope();
     bind(PreferenceContribution).toConstantValue({ schema: PaddockPreferenceSchema });
+    // 백그라운드 Git 다시 읽기의 반복 실패 알림을 거른다. 작업 화면(보내는 쪽)과 메시지 등록기(알림 쪽)가 함께 쓴다.
+    bind(BackgroundGitRefresh).toDynamicValue(() => new BackgroundGitRefresh()).inSingletonScope();
     // 확장의 오류 모달을 알림으로 바꾸고 Git 출력 채널의 오류를 로그에 남긴다(plugin-api-overrides.js).
     bind(MainPluginApiProvider).toConstantValue(new PaddockPluginApiOverrides());
     // Windows에서 WSL 폴더의 저장소는 WSL 안의 git으로 실행한다: Git 보기의 `git.path` 기본값을 분배기로 정한다(git-shim.js).

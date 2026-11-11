@@ -1,0 +1,41 @@
+# 파일 탭의 묶음 소속: 작업 폴더에 들지 않은 파일은 지금 보는 묶음(Unassigned)이 쥔다. 묶음마다 파일 칸이 따로이고 다른 묶음에서는 안 보인다.
+# 그 묶음의 마지막 터미널을 닫으면 확인 창이 `and N files`를 말하고, 승인하면 터미널과 파일 탭이 함께 닫힌다(다른 묶음의 파일은 그대로).
+# 이 대본은 실행 이름이 file-unassigned일 때 임시 홈 경로(C:/Temp/pdk-run/home-file-unassigned)를 쓴다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send Set-Content "$env:USERPROFILE\\loose1.txt" "one"; Set-Content "$env:USERPROFILE\\loose2.txt" "two"; Set-Content "$env:USERPROFILE\\loose3.txt" "three"\r
+send echo READY-LOOSE\r
+waitline READY-LOOSE @20000
+act openpath C:/Temp/pdk-run/home-file-unassigned/loose1.txt
+waitstate file-view kind=text state=text @10000
+act openpath C:/Temp/pdk-run/home-file-unassigned/loose2.txt
+wait 1200
+state group1-two-files
+shot group1-two-files
+# 둘째 묶음(새 터미널)에는 파일이 없다. 거기서 연 파일은 그 묶음이 쥔다.
+act workadd
+waittabs 2 @20000
+wait 1500
+state group2-empty
+act openpath C:/Temp/pdk-run/home-file-unassigned/loose3.txt
+waitstate file-view kind=text state=text @10000
+state group2-one-file
+# 묶음 1의 터미널 하나를 닫으려 하면 확인 창이 파일 2개를 함께 말한다. 취소하면 그대로다.
+act selectgroup 1
+wait 800
+act menu group 1
+act menuitem Close terminal
+waitoverlay close-group @5000
+wait 500
+shot close-group-with-files
+act cancel
+waitoverlay none @5000
+state cancelled
+# 승인하면 터미널과 그 묶음의 파일 탭이 함께 닫히고 다른 묶음의 파일은 그대로다.
+act closegroup 1
+waitoverlay close-group @5000
+act confirm
+waitoverlay none @5000
+wait 1200
+state group1-closed
+quit

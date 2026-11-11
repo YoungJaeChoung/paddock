@@ -3,10 +3,15 @@ const { OS } = require('@theia/core/lib/common/os');
 const model = require('../work-model');
 const layoutModel = require('../layout-model');
 const agent = require('../agent-model');
+const { repoKeyOf } = require('../worktree-repo');
 const wsl = require('../wsl-terminals');
 const cwdReport = require('../cwd-report');
 const { AccountLaunch, accountTerminalOptions, refreshAccountResume } = require('../account-launch');
 const agentAccount = require('../agent-account');
+
+// 저장소 키 조회의 한 요청당 폴더 수(쿼리 길이 한도 때문)와 `.git`을 못 읽는 폴더를 다시 묻는 최대 횟수.
+const REPO_CHUNK = 50;
+const REPO_MAX_ATTEMPTS = 5;
 
 /**
  * 터미널마다 실행 중인 프로그램과 계정을 주기적으로 읽어, 에이전트가 돌면 작업 폴더를 만들고 끝나면 알린다.
@@ -17,6 +22,9 @@ class AgentActivity {
     ) {
         this.workspace = workspace;
         this.watched = new WeakSet();
+        // 저장소 키 조회: 폴더 key별 시도 횟수, 더 묻지 않을 폴더 key.
+        this.repoAttempts = new Map();
+        this.repoDone = new Set();
     }
 
     /** 이벤트가 없는 값(터미널 현재 폴더·프로그램·메모리)을 주기적으로 다시 읽는다. */
@@ -25,6 +33,7 @@ class AgentActivity {
         await Promise.all(this.workspace.terminals.all.map(terminal => this.workspace.readCwd(terminal)));
         await this.refreshPrograms();
         await this.promoteAgents();
+        await this.refreshRepos();
         this.checkAgents();
         this.workspace.rootSwitcher.showRootOf(this.workspace.currentWidget());
         void this.workspace.refreshWorkPresence();
@@ -42,7 +51,11 @@ class AgentActivity {
             this.watched.add(terminal);
             this.workspace.activity.set(terminal.id, agent.idle());
             terminal.onData((data) => {
-                this.workspace.activity.set(terminal.id, agent.noteInput(this.workspace.activity.get(terminal.id) ?? agent.idle(), data, Date.now()));
+                const before = this.workspace.activity.get(terminal.id) ?? agent.idle();
+                const after = agent.noteInput(before, data, Date.now());
+                this.workspace.activity.set(terminal.id, after);
+                // 중단 키가 신호를 idle로 바꾼 경우도 바로 다시 그린다.
+                if (after.signal !== before.signal) this.workspace.refreshSoon();
                 if (data.includes('\r')) {
                     this.acknowledgeActivity(terminal);
                     this.workspace.refreshSoon();
@@ -119,11 +132,25 @@ class AgentActivity {
         await this.observeAccountSessions();
     }
 
+    /**
+     * 터미널 상태(`activityState`)와, 그것이 에이전트가 알린 상태인지(`reported`)를 돌려준다.
+     * 사이드바·탭 줄이 같은 판정을 같은 방법으로 읽도록 한 곳에 둔다.
+     */
+    stateOf(
+        id,
+    ) {
+        const activity = this.workspace.activity.get(id) ?? agent.idle();
+        const agentNow = this.workspace.programs.has(id) ? agent.isAgent(this.workspace.programs.get(id)) : null;
+        return { state: agent.activityState(activity, Date.now(), agentNow), reported: agent.signalOf(activity, agentNow) !== null };
+    }
+
     /** 앞쪽 프로그램과 계정 판정을 함께 기억한다. 계정을 모르면(환경을 읽지 못함) 지난 판정을 지워 터미널을 연 계정 규칙으로 돌아간다. */
     rememberForeground(
         terminal,
         { program, account },
     ) {
+        const activity = this.workspace.activity.get(terminal.id);
+        if (activity) this.workspace.activity.set(terminal.id, agent.noteProgram(activity, this.workspace.programs.get(terminal.id), program));
         this.workspace.programs.set(terminal.id, program);
         if (account) this.workspace.agentAccounts.set(terminal.id, account);
         else this.workspace.agentAccounts.delete(terminal.id);
@@ -275,6 +302,49 @@ class AgentActivity {
             await this.workspace.save();
             const current = this.workspace.currentWidget();
             if (current && promoted.includes(current.id)) this.workspace.selectedFolder = model.folderOf(this.workspace.state, current.id);
+        }
+    }
+
+    /**
+     * 저장소 키를 아직 정하지 못한 작업 폴더의 `.git`을 백엔드에 묻고 결과를 폴더에 기록한다. 같은 저장소의 워크트리 폴더가 한 묶음으로 보이게 하려는 것이다.
+     * `.git`을 읽은 폴더는 한 번으로 끝난다. 읽지 못한 폴더(시작 직후 WSL 경로 지연·연결 끊김·지워진 워크트리)는 다음 주기에 다시 묻되
+     * REPO_MAX_ATTEMPTS번까지만 묻는다. 지워진 워크트리처럼 저장된 값이 이미 있으면 그대로 두고 더 묻지 않는다. 그래야 워크트리를 지워도 묶음 아래에 남는다.
+     */
+    async refreshRepos() {
+        const known = new Set(this.workspace.state.folders.map(folder => folder.key));
+        for (const map of [this.repoAttempts, this.repoDone]) {
+            for (const key of [...map.keys()]) {
+                if (!known.has(key)) map.delete(key);
+            }
+        }
+        const keys = [...known].filter(key => !this.repoDone.has(key));
+        // 쿼리 하나에 폴더를 너무 많이 담으면 요청 헤더 한도를 넘으므로 나눠 보낸다.
+        for (let start = 0; start < keys.length; start += REPO_CHUNK) {
+            const chunk = keys.slice(start, start + REPO_CHUNK);
+            for (const key of chunk) this.repoAttempts.set(key, (this.repoAttempts.get(key) ?? 0) + 1);
+            let roots = {};
+            try {
+                roots = await this.workspace.fetchJson('/paddock/repo-roots', 'GET', `?folders=${encodeURIComponent(JSON.stringify(chunk))}`);
+            } catch {
+                // 원격 연결이 끊겼을 때 등. 아래에서 읽지 못한 폴더로 다룬다.
+            }
+            let state = this.workspace.state;
+            for (const key of chunk) {
+                const saved = state.folders.find(folder => folder.key === key)?.repo;
+                if (roots[key]) {
+                    // 읽은 항목이 있을 때만 저장소 키를 정한다(`.git` 없음·서브모듈이면 키가 null이라 기록이 지워진다).
+                    state = model.setFolderRepo(state, key, repoKeyOf(key, roots[key]));
+                    this.repoDone.add(key);
+                } else if (saved || this.repoAttempts.get(key) >= REPO_MAX_ATTEMPTS) {
+                    this.repoDone.add(key);
+                }
+            }
+            const isChanged = state.folders.some((folder, index) => folder.repo !== this.workspace.state.folders[index]?.repo);
+            if (isChanged) {
+                this.workspace.state = state;
+                await this.workspace.save();
+                this.workspace.refreshSoon();
+            }
         }
     }
 

@@ -106,6 +106,40 @@ function setExpanded(
     return { ...state, folders: state.folders.map(folder => (folder.key === folderKey ? { ...folder, expanded } : folder)) };
 }
 
+/**
+ * 폴더가 속한 저장소 키(`worktree-repo.js`의 `repoKeyOf` 결과)를 기록한다. null이면 지운다.
+ * 같은 저장소 키를 가진 폴더가 둘 이상일 때만 `visibleRows`가 묶음 행을 만든다. 워크트리를 지워도 저장된 값은 남아
+ * 폴더가 묶음 아래에 그대로 있게 한다.
+ */
+function setFolderRepo(
+    state,
+    key,
+    repo,
+) {
+    const folderKey = normalizeKey(key);
+    return {
+        ...state,
+        folders: state.folders.map((folder) => {
+            let next = folder;
+            if (folder.key === folderKey && (folder.repo ?? null) !== repo) {
+                next = { ...folder };
+                if (repo) next.repo = repo;
+                else delete next.repo;
+            }
+            return next;
+        }),
+    };
+}
+
+/** 저장소 묶음의 접힘을 저장소 키별로 기록한다. 묶음 행이 없어졌다 다시 생겨도 접힘이 이어진다. */
+function setRepoExpanded(
+    state,
+    repoKey,
+    expanded,
+) {
+    return { ...state, repos: { ...state.repos, [repoKey]: { expanded } } };
+}
+
 /** 목록에 보일 이름을 바꾼다. 공백뿐이면 이름을 지워 폴더 이름으로 돌아간다. */
 function setFolderLabel(
     state,
@@ -178,6 +212,32 @@ function promoteAgentTerminals(
         }
     }
     return { state: result, promoted, added };
+}
+
+/**
+ * 같은 폴더 안에서 터미널 한 개의 목록 순서를 바꾼다. 이 순서는 사이드바 목록에만 쓰이고 탭 줄의 차례와 무관하다.
+ *
+ * `after`가 false면 `targetId` 앞에, true면 뒤에 놓는다. 두 터미널이 같은 폴더에 있지 않거나 같은 터미널이면 상태를 그대로 돌려준다.
+ * 폴더 안 순서는 `terminals`의 키 순서(terminalsOf)이므로, 순서를 바꾼 키 배열로 객체를 다시 만든다.
+ *
+ * Examples:
+ *   폴더 [a, b, c], c를 a 앞으로 → [c, a, b] · a를 b 뒤로 → [b, a, c] · 다른 폴더의 d를 a 앞으로 → 그대로
+ */
+function moveTerminal(
+    state,
+    id,
+    targetId,
+    after,
+) {
+    const entry = state.terminals[id];
+    const target = state.terminals[targetId];
+    let result = state;
+    if (entry && target && id !== targetId && entry.folder === target.folder) {
+        const ids = Object.keys(state.terminals).filter(key => key !== id);
+        ids.splice(ids.indexOf(targetId) + (after ? 1 : 0), 0, id);
+        result = { ...state, terminals: Object.fromEntries(ids.map(key => [key, state.terminals[key]])) };
+    }
+    return result;
 }
 
 /**
@@ -384,7 +444,8 @@ function usedTerminalNumbers(
 /**
  * 사이드바 Work 보기의 행 목록을 만든다.
  *
- * 행 종류: `folder`(폴더 줄), `terminal`(작업 터미널 줄, 같은 이름이면 `suffix`에 ·2·3), `more`(가려진 수).
+ * 행 종류: `repo`(같은 저장소 폴더 둘 이상의 묶음 줄), `folder`(폴더 줄, 묶음 구성원이면 `repo`에 저장소 키), `terminal`(작업 터미널 줄, 같은 이름이면 `suffix`에 ·2·3), `more`(가려진 수).
+ * 묶음을 접으면 구성원 폴더와 터미널이 모두 숨지만 현재 터미널이 든 묶음은 접혀 있어도 펼친다.
  * 현재 터미널이 속한 폴더는 접혀 있어도 펼치고, 8개 한도 밖이어도 현재 터미널은 보인다.
  * `showAll`에 든 폴더는 한도 없이 모두 보인다.
  *
@@ -399,10 +460,10 @@ function visibleRows(
 ) {
     const rows = [];
     const currentFolder = currentId ? folderOf(state, currentId) : null;
-    for (const folder of state.folders) {
+    const pushFolder = (folder, repo) => {
         const ids = terminalsOf(state, folder.key);
         const expanded = folder.expanded || folder.key === currentFolder;
-        rows.push({ kind: 'folder', key: folder.key, expanded, n_terminals: ids.length, current: folder.key === currentFolder });
+        rows.push({ kind: 'folder', key: folder.key, expanded, n_terminals: ids.length, current: folder.key === currentFolder, repo });
         if (expanded) {
             const named = terminalRows(state, folder.key);
             const limited = showAll.has(folder.key) ? named : named.filter((row, index) => index < N_VISIBLE_TERMINALS || row.id === currentId);
@@ -411,8 +472,43 @@ function visibleRows(
                 rows.push({ kind: 'more', folder: folder.key, n_hidden: named.length - limited.length });
             }
         }
+    };
+    // 같은 저장소 키를 가진 폴더가 둘 이상일 때만 묶는다. 묶음 행은 첫 구성원 자리에 서고 구성원은 저장된 순서대로 그 아래에 모인다.
+    const members = new Map();
+    for (const folder of state.folders) {
+        if (folder.repo) members.set(folder.repo, [...(members.get(folder.repo) ?? []), folder]);
+    }
+    const emitted = new Set();
+    for (const folder of state.folders) {
+        const repo = members.get(folder.repo)?.length >= 2 ? folder.repo : null;
+        if (repo === null) {
+            pushFolder(folder, null);
+        } else if (!emitted.has(repo)) {
+            emitted.add(repo);
+            const list = members.get(repo);
+            const current = list.some(member => member.key === currentFolder);
+            const expanded = state.repos?.[repo]?.expanded !== false || current;
+            rows.push({ kind: 'repo', key: repo, name: repoName(repo), expanded, n_folders: list.length, current });
+            if (expanded) {
+                for (const member of list) pushFolder(member, repo);
+            }
+        }
     }
     return rows;
+}
+
+/** 저장소 키(루트 폴더의 file URI)에서 묶음 행에 보일 이름, 즉 루트 폴더 이름을 뽑는다. */
+function repoName(
+    repoKey,
+) {
+    const last = repoKey.replace(/\/+$/, '').split('/').pop();
+    let name = last;
+    try {
+        name = decodeURIComponent(last);
+    } catch {
+        name = last;
+    }
+    return name || repoKey;
 }
 
 /**
@@ -433,7 +529,7 @@ function mergeWorkPresence(
     state,
     snapshots,
 ) {
-    let merged = { folders: [...state.folders], terminals: { ...state.terminals } };
+    let merged = { ...state, folders: [...state.folders], terminals: { ...state.terminals } };
     const remote = new Map();
     for (const snapshot of snapshots) {
         if (typeof snapshot?.windowId !== 'string') continue;
@@ -483,7 +579,12 @@ function restore(
             if (typeof folder?.key === 'string') {
                 state = setExpanded(ensureFolder(state, folder.key), folder.key, folder.expanded !== false);
                 if (typeof folder.label === 'string') state = setFolderLabel(state, folder.key, folder.label);
+                if (typeof folder.repo === 'string' && folder.repo) state = setFolderRepo(state, folder.key, folder.repo);
             }
+        }
+        // 저장소 묶음의 접힘. 옛 저장 문자열에는 없고, 모르는 모양은 버린다.
+        for (const [repo, entry] of Object.entries(parsed.repos && typeof parsed.repos === 'object' ? parsed.repos : {})) {
+            if (typeof entry?.expanded === 'boolean') state = setRepoExpanded(state, repo, entry.expanded);
         }
         for (const [id, entry] of Object.entries(parsed.terminals)) {
             if (liveIds.has(id) && typeof entry?.folder === 'string') {
@@ -606,7 +707,11 @@ module.exports = {
     folderOf,
     folderContaining,
     terminalsOf,
+    moveTerminal,
     setExpanded,
+    setFolderRepo,
+    setRepoExpanded,
+    repoName,
     setFolderLabel,
     folderLabel,
     promoteAgentTerminals,

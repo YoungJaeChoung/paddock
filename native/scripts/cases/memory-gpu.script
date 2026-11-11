@@ -1,0 +1,110 @@
+# 메모리(같은 순간 GPU 측정): 4K 이미지를 열고 1:1로 바꿨다 맞춤으로 돌아와 닫는 한 바퀴를 4번 되풀이하며, 매 단계에서 `gpumem`(앱 안에서 같은 순간에 읽은 Private와 DXGI 그래픽 메모리)과 `mem`(바깥 실행기 표본)을 함께 남긴다.
+# 기준 exe는 `gpumem`을 몰라 무시한다(`mem` 줄만 남는다). 임시 홈에 prep-big.sh로 proj-big 폴더를 채우고 기본 셸을 PowerShell로 둬야 한다. 실행 이름은 memory-gpu다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send echo READY-GPU\r
+waitline READY-GPU @30000
+wait 25000
+mem before-open
+gpumem before-open
+act openpath C:/Temp/pdk-run/home-memory-gpu/proj-big/g-4k.png
+waitstate kind=image state=image @20000
+wait 4000
+mem c1-fit
+gpumem c1-fit
+act imgzoom
+waitstate full=yes @20000
+gpumem c1-full-now
+wait 4000
+mem c1-full
+gpumem c1-full
+act imgzoom
+waitstate full=no @5000
+wait 4000
+mem c1-back-to-fit
+gpumem c1-back-to-fit
+act closefile
+wait 600
+wait 600
+wait 3000
+mem c1-closed-4s
+gpumem c1-closed-4s
+wait 15000
+mem c1-closed-34s
+gpumem c1-closed-34s
+act openpath C:/Temp/pdk-run/home-memory-gpu/proj-big/g-4k.png
+waitstate kind=image state=image @20000
+wait 4000
+mem c2-fit
+gpumem c2-fit
+act imgzoom
+waitstate full=yes @20000
+gpumem c2-full-now
+wait 4000
+mem c2-full
+gpumem c2-full
+act imgzoom
+waitstate full=no @5000
+wait 4000
+mem c2-back-to-fit
+gpumem c2-back-to-fit
+act closefile
+wait 600
+wait 600
+wait 3000
+mem c2-closed-4s
+gpumem c2-closed-4s
+wait 15000
+mem c2-closed-34s
+gpumem c2-closed-34s
+act openpath C:/Temp/pdk-run/home-memory-gpu/proj-big/g-4k.png
+waitstate kind=image state=image @20000
+wait 4000
+mem c3-fit
+gpumem c3-fit
+act imgzoom
+waitstate full=yes @20000
+gpumem c3-full-now
+wait 4000
+mem c3-full
+gpumem c3-full
+act imgzoom
+waitstate full=no @5000
+wait 4000
+mem c3-back-to-fit
+gpumem c3-back-to-fit
+act closefile
+wait 600
+wait 600
+wait 3000
+mem c3-closed-4s
+gpumem c3-closed-4s
+wait 15000
+mem c3-closed-34s
+gpumem c3-closed-34s
+act openpath C:/Temp/pdk-run/home-memory-gpu/proj-big/g-4k.png
+waitstate kind=image state=image @20000
+wait 4000
+mem c4-fit
+gpumem c4-fit
+act imgzoom
+waitstate full=yes @20000
+gpumem c4-full-now
+wait 4000
+mem c4-full
+gpumem c4-full
+act imgzoom
+waitstate full=no @5000
+wait 4000
+mem c4-back-to-fit
+gpumem c4-back-to-fit
+act closefile
+wait 600
+wait 600
+wait 3000
+mem c4-closed-4s
+gpumem c4-closed-4s
+wait 15000
+mem c4-closed-34s
+gpumem c4-closed-34s
+quit

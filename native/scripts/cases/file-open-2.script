@@ -1,0 +1,11 @@
+# 파일 탭 (2/2): 앱을 닫았다 다시 열면 파일 탭(경로가 있는 것)과 선택, 파일 칸 비율이 돌아오고 내용도 다시 읽힌다. 터미널은 그대로 붙는다.
+waittabs 3 @30000
+waitstate file-view @20000
+wait 1500
+state restored
+shot restored
+# 보이는 탭만 읽었다: 다른 탭은 고를 때 읽는다.
+act filetab 1
+waitstate kind=text state=text @10000
+state lazy-loaded
+quit

@@ -14,6 +14,8 @@
  * | `` / `  `     | `false`                                |
  * | `a/b`, `a\b`  | 이름에 `/`·`\`를 쓸 수 없다는 경고     |
  * | `.`, `..`     | 예약된 이름이라는 경고                 |
+ * | ` a`, `a `    | 앞뒤 빈칸 경고                         |
+ * | `a.`          | 끝 마침표 경고                         |
  */
 function validateEntryName(
     value,
@@ -23,7 +25,39 @@ function validateEntryName(
     else if (/[\\/]/.test(value)) result = 'A name can’t contain / or \\. Create one level at a time.';
     else if (value === '.' || value === '..') result = '“.” and “..” are reserved. Choose another name.';
     else if (/[\x00-\x1f]/.test(value)) result = 'Remove control characters from the name.';
+    // Windows는 앞뒤 빈칸·끝 마침표를 떼고 만들어 디스크 이름이 입력과 달라진다. 모든 운영체제에서 같은 규칙으로 막는다.
+    else if (value !== value.trim()) result = 'A name can’t start or end with a space.';
+    else if (value.endsWith('.')) result = 'A name can’t end with a period.';
     return result;
 }
 
-module.exports = { validateEntryName };
+/**
+ * 같은 이름이 있는 폴더에 붙여 넣거나 끌어 놓은 항목에 붙일 n번째 다른 이름.
+ *
+ * 덮어쓰지도, 이름을 묻지도 않고 이어 받을 수 있게 한다. 호출자는 0부터 n을 올리며 비어 있는 이름을 찾는다.
+ * 점으로 시작하고 다른 점이 없는 이름(`.env`)은 이름 전체를 앞부분으로 본다.
+ *
+ * Examples
+ * --------
+ * | name        | n | 결과                |
+ * | ----------- | - | ------------------- |
+ * | `image.png` | 0 | `image.png`         |
+ * | `image.png` | 1 | `image copy.png`    |
+ * | `image.png` | 2 | `image copy 2.png`  |
+ * | `a.tar.gz`  | 1 | `a.tar copy.gz`     |
+ * | `.env`      | 1 | `.env copy`         |
+ * | `Makefile`  | 3 | `Makefile copy 3`   |
+ */
+function copyEntryName(
+    name,
+    n,
+) {
+    const dot = name.lastIndexOf('.');
+    const hasExtension = dot > 0;
+    const stem = hasExtension ? name.slice(0, dot) : name;
+    const extension = hasExtension ? name.slice(dot) : '';
+    const suffix = n === 0 ? '' : n === 1 ? ' copy' : ` copy ${n}`;
+    return `${stem}${suffix}${extension}`;
+}
+
+module.exports = { validateEntryName, copyEntryName };

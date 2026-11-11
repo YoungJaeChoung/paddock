@@ -1,0 +1,47 @@
+# 폴더 검색 바꾸기(덩어리 27): `⇄`로 바꾸기 줄을 열어 바꿀 글을 넣고, 파일 행의 `Replace`는 그 파일만, `Replace All`은 확인 뒤 결과 전체를 바꾼다.
+# 파일은 읽은 뒤 같은 질의로 다시 찾아 바꾸므로 CRLF·BOM이 그대로이고, 저장하지 않은 편집이 있는 열린 파일은 건너뛴 채 안내한다. 바꾼 뒤 같은 질의로 다시 검색해 결과를 갱신한다.
+# 실행기가 임시 홈에 기본 셸을 PowerShell로 둬야 한다. 실행 이름은 search-replace다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-replace"; mkdir $p, "$env:USERPROFILE\\bin" -Force | Out-Null; [IO.File]::WriteAllText("$p\\a1.txt", "a needle`r`nneedle`r`n"); [IO.File]::WriteAllText("$p\\a2.txt", "a needle`r`nneedle`r`n"); [IO.File]::WriteAllBytes("$p\\b-bom.txt", [byte[]](0xEF,0xBB,0xBF) + [Text.Encoding]::UTF8.GetBytes("needle`n")); [IO.File]::WriteAllText("$p\\g-open.txt", "needle`n"); Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo READY-REPLACE\r
+waitline READY-REPLACE @30000
+send claude.exe -n 600 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+# g-open.txt를 열어 고친다(저장하지 않은 편집).
+act openpath C:/Temp/pdk-run/home-search-replace/proj-replace/g-open.txt
+waitstate file-view kind=text state=text @10000
+text z
+waitstate unsaved=yes @3000
+key ctrl-shift-f
+waitstate search open=y @5000
+act search needle
+waitstate n_results=6 n_files=4 capped=n state=done @20000
+act replacetext thread
+waitstate search-replace open=y text=thread @3000
+state replace-open
+shot replace-open
+# 첫 파일(a1.txt)만 바꾼다. 같은 질의로 다시 검색해 그 파일이 결과에서 빠진다.
+act replacefile 1
+waitstate n_files=3 @20000
+state replaced-one
+send $x = [BitConverter]::ToString([IO.File]::ReadAllBytes("$env:USERPROFILE\\proj-replace\\a1.txt")) + ":" + [BitConverter]::ToString([IO.File]::ReadAllBytes("$env:USERPROFILE\\proj-replace\\a2.txt")); if ($x -eq '61-20-74-68-72-65-61-64-0D-0A-74-68-72-65-61-64-0D-0A:61-20-6E-65-65-64-6C-65-0D-0A-6E-65-65-64-6C-65-0D-0A') { Write-Host ("SA" + "ME-ONE") } else { Write-Host ("DI" + "FF-ONE " + $x) }\r
+waitline SAME-ONE @10000
+# Replace All: 확인 창 문구 뒤 승인하면 저장하지 않은 g-open.txt만 건너뛰고 나머지를 바꾼다.
+act replaceall
+waitoverlay replace-all @3000
+shot replace-all-confirm
+state replace-all-prompt
+act confirm
+waitoverlay none @3000
+waitstate n_files=1 @20000
+state replaced-all
+shot replaced-all
+send $x = [BitConverter]::ToString([IO.File]::ReadAllBytes("$env:USERPROFILE\\proj-replace\\a2.txt")) + ":" + [BitConverter]::ToString([IO.File]::ReadAllBytes("$env:USERPROFILE\\proj-replace\\b-bom.txt")) + ":" + [BitConverter]::ToString([IO.File]::ReadAllBytes("$env:USERPROFILE\\proj-replace\\g-open.txt")); if ($x -eq '61-20-74-68-72-65-61-64-0D-0A-74-68-72-65-61-64-0D-0A:EF-BB-BF-74-68-72-65-61-64-0A:6E-65-65-64-6C-65-0A') { Write-Host ("SA" + "ME-ALL") } else { Write-Host ("DI" + "FF-ALL " + $x) }\r
+waitline SAME-ALL @10000
+quit

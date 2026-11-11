@@ -1,0 +1,53 @@
+# 동기화 ① 팝업 메뉴 키보드: ↑·↓·Home·End가 강조를 옮기고 끝에서 반대쪽으로 돌며, Enter가 강조 항목을 실행한다. Esc는 닫는다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-menu"; mkdir $p, "$env:USERPROFILE\\bin" -Force | Out-Null; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo READY-MENU\r
+waitline READY-MENU @20000
+send claude.exe -n 900 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+key ctrl-shift-t
+waittabs 2 @20000
+key ctrl-shift-t
+waittabs 3 @20000
+wait 1000
+act menu terminal 1
+waitstate menu: terminal @5000
+state menu-open
+waitstate menu-highlight=- @5000
+key down
+waitstate menu-highlight=0 @5000
+shot highlight-first
+key down
+waitstate menu-highlight=1 @5000
+key down
+waitstate menu-highlight=2 @5000
+key down
+waitstate menu-highlight=3 @5000
+key down
+waitstate menu-highlight=0 @5000
+key up
+waitstate menu-highlight=3 @5000
+key up
+waitstate menu-highlight=2 @5000
+key home
+waitstate menu-highlight=0 @5000
+key end
+waitstate menu-highlight=3 @5000
+state last-item
+# Enter: 강조한 Close terminal이 실행되어 (실행 중인 터미널이므로) 확인 창이 뜬다.
+key enter
+waitoverlay close-terminal @5000
+state close-confirm
+act cancel
+waitoverlay none @5000
+# Esc는 메뉴만 닫고, 열린 동안 키는 터미널로 가지 않는다.
+act menu terminal 2
+waitstate menu: terminal @5000
+key down
+key escape
+waitstate menu: none @5000
+waitstate menu-highlight=- @5000
+state menu-closed
+quit

@@ -1,0 +1,14 @@
+# 데몬 CPU: 터미널 4개가 출력 없이 놓인 60초 동안의 CPU와 wsl.exe 호출 수를 바깥 실행기(cpu.ps1)가 잰다.
+# 시작 출력이 가라앉도록 기다린 뒤 창 구간을 표지로 알린다.
+waittabs 1 @30000
+key ctrl-shift-t
+waittabs 2 @20000
+key ctrl-shift-t
+waittabs 3 @20000
+key ctrl-shift-t
+waittabs 4 @20000
+wait 15000
+mark cpu-window-start
+wait 60000
+mark cpu-window-end
+quit

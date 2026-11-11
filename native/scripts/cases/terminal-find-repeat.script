@@ -1,0 +1,199 @@
+# 터미널 찾기 띠 메모리(D61): 띠를 열고 질의를 넣고 닫기를 반복해도 닫은 뒤 남는 몫이 늘지 않는지(반복 평평) 잰다. 1·5·10·20·30번째 닫은 뒤에 `mem`을 남긴다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send 1..200 | ForEach-Object { if ($_ % 17 -eq 0) { ("nee" + "dle $_") } else { "line $_" } }\r
+send echo FILLED\r
+waitline FILLED @20000
+wait 12000
+mem repeat-0
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+wait 2500
+mem repeat-1
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+wait 2500
+mem repeat-5
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+wait 2500
+mem repeat-10
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+wait 2500
+mem repeat-20
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+key ctrl-shift-h
+waitstate term-find open=y @5000
+act termfind needle
+waitstate matches=11 @5000
+key escape
+waitstate term-find open=n @5000
+wait 2500
+mem repeat-30
+quit

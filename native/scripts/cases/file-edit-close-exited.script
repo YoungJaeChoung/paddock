@@ -1,0 +1,35 @@
+# 끝난 터미널만 남은 묶음·터미널을 닫을 때도 저장하지 않은 파일이 있으면 묻는다(`(1 unsaved)`). 파일이 없거나 저장했으면 예전처럼 바로 닫는다.
+# 실행 이름이 file-edit-close-exited일 때 임시 홈 경로(C:/Temp/pdk-run/home-file-edit-close-exited)를 쓴다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send Set-Content "$env:USERPROFILE\\loose1.txt" "one"; Set-Content "$env:USERPROFILE\\loose2.txt" "two"\r
+send echo READY-EXITED\r
+waitline READY-EXITED @20000
+act workadd
+waittabs 2 @20000
+wait 1500
+act selectgroup 1
+act openpath C:/Temp/pdk-run/home-file-edit-close-exited/loose1.txt
+waitstate file-view kind=text state=text @10000
+text x
+waitstate unsaved=yes @3000
+# 묶음 1의 셸을 끝낸다(`exit`) — 터미널은 끝났지만 탭은 남는다.
+sendto 1 exit\r
+wait 2500
+# 저장하지 않은 파일이 있어 묻는다.
+act closegroup 1
+waitoverlay close-group @5000
+state exited-with-unsaved
+shot close-group-unsaved
+act cancel
+waitoverlay none @3000
+# 저장하면 묻지 않고 바로 닫힌다.
+act selectgroup 1
+act openpath C:/Temp/pdk-run/home-file-edit-close-exited/loose1.txt
+key ctrl-s
+waitstate unsaved=no @5000
+act closegroup 1
+waitoverlay none @3000
+wait 1200
+state group-closed
+quit

@@ -1,0 +1,375 @@
+# 메모리(4단계 총측정, 덩어리 34): 3단계 총측정 장면(memory-stage3)에 4단계의 것을 더해 20초 쉰 뒤 Private 메모리와 그래픽 몫·Rust 보유량을 잰다 —
+# PDF를 연 뒤에는 빠른 설정을 열었다 닫아 창을 한 번 더 그리게 한다 — 3단계 마감 판은 PDF 칸 크기를 잰 뒤 다시 그리지 않아 쪽이 다른 이유로 다시 그릴 때까지 늦게 그려지므로(4단계 판은 고쳤다), 두 판 모두 쪽이 그려진 상태를 재도록 같은 조건을 맞춘다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+mem start-1-terminal
+gpumem start-1-terminal
+send $p = "$env:USERPROFILE\\proj-a"; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p; git init -q -b main; git config user.name Tester; git config user.email t@example.com; git add -A; git commit -q -m base; 1..30 | ForEach-Object { Set-Content "file-$_.txt" "changed $_" }; 1..10 | ForEach-Object { Set-Content "new-$_.txt" new }\r
+send echo READY-A\r
+waitline READY-A @180000
+send claude.exe -n 600 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+act workadd
+waittabs 3 @20000
+waitstate cwd=C: @30000
+send cd \\\\wsl.localhost\\Ubuntu\\tmp\\pdk-stage2\\proj\r
+send echo READY-W\r
+waitline READY-W @30000
+send claude.exe -n 600 127.0.0.1\r
+wait 4000
+key ctrl-shift-c
+waittabs 4 @20000
+wait 3000
+state four-terminals
+act selecttab 1
+wait 5000
+mem before-open
+gpumem before-open
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/code-200k.ts
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/README.md
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/f-1080p.png
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+wait 3000
+act quick open
+wait 500
+act quick close
+wait 1500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/bulk.txt
+wait 1500
+text x
+wait 500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/file-1.txt
+wait 1500
+text x
+wait 500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/file-2.txt
+wait 1500
+text x
+wait 500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/file-3.txt
+wait 1500
+text x
+wait 500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/code-200k.ts
+wait 1500
+text x
+wait 500
+wait 5000
+act selectlines 1 2
+act note first note
+act selectlines 3 3
+act note second note
+act selectlines 5 6
+act note third note
+wait 500
+act search needle
+wait 15000
+act view scm
+wait 3000
+act quickopen file
+wait 3000
+act quickclose
+wait 800
+act selecttab 1
+wait 800
+act termfind needle
+wait 1500
+state r1-scene
+act usageopen claude
+wait 2500
+mem r1-popup-open
+act usageclose
+wait 800
+act usageopen claude
+wait 800
+act usageclose
+wait 800
+act usageopen claude
+wait 800
+act usageclose
+wait 800
+wait 8000
+mem r1-final-20s
+gpumem r1-final-20s
+key escape
+wait 800
+act clearnotes
+act view work
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+key ctrl-shift-f
+wait 600
+wait 8000
+mem r1-after-close
+gpumem r1-after-close
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/code-200k.ts
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/README.md
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/f-1080p.png
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+wait 3000
+act quick open
+wait 500
+act quick close
+wait 1500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/bulk.txt
+wait 1500
+text x
+wait 500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/file-1.txt
+wait 1500
+text x
+wait 500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/file-2.txt
+wait 1500
+text x
+wait 500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/file-3.txt
+wait 1500
+text x
+wait 500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/code-200k.ts
+wait 1500
+text x
+wait 500
+wait 5000
+act selectlines 1 2
+act note first note
+act selectlines 3 3
+act note second note
+act selectlines 5 6
+act note third note
+wait 500
+act search needle
+wait 15000
+act view scm
+wait 3000
+act quickopen file
+wait 3000
+act quickclose
+wait 800
+act selecttab 1
+wait 800
+act termfind needle
+wait 1500
+state r2-scene
+act usageopen claude
+wait 2500
+mem r2-popup-open
+act usageclose
+wait 800
+act usageopen claude
+wait 800
+act usageclose
+wait 800
+act usageopen claude
+wait 800
+act usageclose
+wait 800
+wait 8000
+mem r2-final-20s
+gpumem r2-final-20s
+key escape
+wait 800
+act clearnotes
+act view work
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+key ctrl-shift-f
+wait 600
+wait 8000
+mem r2-after-close
+gpumem r2-after-close
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/code-200k.ts
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/README.md
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/f-1080p.png
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+wait 3000
+act quick open
+wait 500
+act quick close
+wait 1500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/bulk.txt
+wait 1500
+text x
+wait 500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/file-1.txt
+wait 1500
+text x
+wait 500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/file-2.txt
+wait 1500
+text x
+wait 500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/file-3.txt
+wait 1500
+text x
+wait 500
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/code-200k.ts
+wait 1500
+text x
+wait 500
+wait 5000
+act selectlines 1 2
+act note first note
+act selectlines 3 3
+act note second note
+act selectlines 5 6
+act note third note
+wait 500
+act search needle
+wait 15000
+act view scm
+wait 3000
+act quickopen file
+wait 3000
+act quickclose
+wait 800
+act selecttab 1
+wait 800
+act termfind needle
+wait 1500
+state r3-scene
+act usageopen claude
+wait 2500
+mem r3-popup-open
+act usageclose
+wait 800
+act usageopen claude
+wait 800
+act usageclose
+wait 800
+act usageopen claude
+wait 800
+act usageclose
+wait 800
+wait 8000
+mem r3-final-20s
+gpumem r3-final-20s
+key escape
+wait 800
+act clearnotes
+act view work
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+act closefile
+wait 400
+act savechoice dont
+wait 400
+key ctrl-shift-f
+wait 600
+wait 8000
+mem r3-after-close
+gpumem r3-after-close
+shot memory-stage3
+quit

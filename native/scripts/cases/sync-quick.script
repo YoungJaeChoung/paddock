@@ -1,0 +1,46 @@
+# 동기화 ① 빠른 설정: Sidebar indent − / +(6~24, 기본 12)가 Work 목록·파일 목록 들여쓰기에 바로 반영되고 공유 키 `paddock.sidebarIndent`에 쓰이며,
+# Copy on selection은 `terminal.integrated.copyOnSelection`에 쓰인다. 값은 네이티브 설정 파일에만 쓰이고 기존 앱 설정 파일은 그대로다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-quick"; mkdir "$p\\src\\deep", "$env:USERPROFILE\\bin" -Force | Out-Null; Set-Content "$p\\src\\deep\\a.js" x; Set-Content "$p\\README.md" x; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo READY-QUICK\r
+waitline READY-QUICK @20000
+send claude.exe -n 600 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+# 폴더 src → deep을 펼쳐 깊이 2의 행까지 보인다.
+act files 1
+waitstate file-row 1 dir deep @5000
+act files 2
+waitstate file-row 2 file a.js @5000
+waitstate sidebar-indent=12 @5000
+state indent-12
+files indent-12
+shot indent-12
+act quick open
+waitstate quick=open @5000
+shot panel-rows
+act quick step indent 1
+waitstate sidebar-indent=13 @5000
+act quick step indent 8
+waitstate sidebar-indent=21 @5000
+state indent-21
+files indent-21
+shot indent-21
+act quick step indent 20
+waitstate sidebar-indent=24 @5000
+act quick step indent -30
+waitstate sidebar-indent=6 @5000
+state indent-6
+shot indent-6
+act quick step indent 6
+waitstate sidebar-indent=12 @5000
+act quick copyonselection
+waitstate copy-on-selection=on @5000
+files copy-on
+act quick copyonselection
+waitstate copy-on-selection=off @5000
+files copy-off
+act quick close
+quit

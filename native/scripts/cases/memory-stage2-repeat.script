@@ -1,0 +1,144 @@
+# 메모리(2단계 총측정 반복): memory-stage2와 같은 장면에서 파일 탭 4개·검색·Source control 보기를 열고 닫는 한 바퀴를 3번 되풀이하며, 첫 바퀴는 탭마다 열 때·닫을 때 값을 남겨 닫은 뒤 몫이 어느 탭의 것인지와 반복해도 늘지 않는지를 본다.
+# `mem`(바깥 실행기 표본)과 `gpumem`(앱 안에서 같은 순간에 읽은 Private·Rust 보유량·DXGI 그래픽 몫)을 함께 남긴다. 실행기·시험 자료는 memory-stage2와 같다(prep-stage2.sh, 이름 memory-stage2).
+# 이 대본의 실행 이름도 memory-stage2다(대본 안의 임시 홈 경로가 그 이름을 쓴다).
+# 임시 홈에 prep-stage2.sh로 proj-a를 채우고 기본 셸을 PowerShell로 둬야 한다. 실행 이름은 memory-stage2다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+mem start-1-terminal
+gpumem start-1-terminal
+send $p = "$env:USERPROFILE\\proj-a"; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p; git init -q -b main; git config user.name Tester; git config user.email t@example.com; git add -A; git commit -q -m base; 1..30 | ForEach-Object { Set-Content "file-$_.txt" "changed $_" }; 1..10 | ForEach-Object { Set-Content "new-$_.txt" new }\r
+send echo READY-A\r
+waitline READY-A @180000
+send claude.exe -n 600 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+act workadd
+waittabs 3 @20000
+waitstate cwd=C: @30000
+send cd \\\\wsl.localhost\\Ubuntu\\tmp\\pdk-stage2\\proj\r
+send echo READY-W\r
+waitline READY-W @30000
+send claude.exe -n 600 127.0.0.1\r
+wait 4000
+key ctrl-shift-c
+waittabs 4 @20000
+wait 3000
+state four-terminals
+act selecttab 1
+wait 5000
+mem before-open
+gpumem before-open
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/code-200k.ts
+wait 5000
+mem r1-open-text
+gpumem r1-open-text
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/README.md
+wait 5000
+mem r1-open-md
+gpumem r1-open-md
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/f-1080p.png
+wait 5000
+mem r1-open-img
+gpumem r1-open-img
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+wait 5000
+mem r1-open-pdf
+gpumem r1-open-pdf
+act closefile
+wait 600
+wait 600
+wait 4000
+mem r1-closed-pdf
+gpumem r1-closed-pdf
+act closefile
+wait 600
+wait 600
+wait 4000
+mem r1-closed-img
+gpumem r1-closed-img
+act closefile
+wait 600
+wait 600
+wait 4000
+mem r1-closed-md
+gpumem r1-closed-md
+act closefile
+wait 600
+wait 600
+wait 4000
+mem r1-closed-text
+gpumem r1-closed-text
+act search needle
+wait 8000
+mem r1-search
+gpumem r1-search
+key ctrl-shift-f
+wait 600
+wait 600
+wait 4000
+mem r1-search-closed
+gpumem r1-search-closed
+act view scm
+wait 8000
+mem r1-scm
+gpumem r1-scm
+act view work
+wait 600
+wait 600
+wait 4000
+mem r1-scm-closed
+gpumem r1-scm-closed
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/code-200k.ts
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/README.md
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/f-1080p.png
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+wait 3000
+act search needle
+wait 8000
+act view scm
+wait 8000
+mem r2-open
+gpumem r2-open
+act view work
+act closefile
+act closefile
+act closefile
+act closefile
+key ctrl-shift-f
+wait 600
+wait 600
+wait 8000
+mem r2-closed
+gpumem r2-closed
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/code-200k.ts
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/README.md
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/f-1080p.png
+wait 3000
+act openpath C:/Temp/pdk-run/home-memory-stage2/proj-a/sample-3p.pdf
+wait 3000
+act search needle
+wait 8000
+act view scm
+wait 8000
+mem r3-open
+gpumem r3-open
+act view work
+act closefile
+act closefile
+act closefile
+act closefile
+key ctrl-shift-f
+wait 600
+wait 600
+wait 8000
+mem r3-closed
+gpumem r3-closed
+quit

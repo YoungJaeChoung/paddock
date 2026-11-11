@@ -1,0 +1,14 @@
+# Memory 게이지(실제 WSL, 덩어리 31): 데몬이 `wsl.exe`로 읽은 실제 WSL 메모리(/proc/meminfo)와 터미널별 메모리가 게이지·말풍선에 나온다. 값 범위만 본다(바깥 실행기가 1~99%인지 확인).
+# 기본 셸은 WSL이다. 데몬은 앱이 묻는 10초 주기에만 WSL을 읽는다.
+waittabs 1 @30000
+send unset HISTFILE; echo READY-MEM\r
+waitline READY-MEM @30000
+waitstate Largest WSL terminal @40000
+waitstate memory percent= @5000
+state wsl-real
+shot wsl-real
+mark mem-idle-start
+wait 30000
+mark mem-idle-end
+state wsl-real-later
+quit

@@ -1,0 +1,82 @@
+# PDF 열고 닫기 반복: 300쪽 PDF를 열고 닫기를 10번 반복하며 1·2·5·10번째 닫은 뒤 앱 Private 메모리를 잰다. 평평하면 1회성 보유, 계속 늘면 누수다. 실행 이름은 pdf-leak이고 임시 홈에 prep-pdf.sh로 proj-pdf를 채운다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send echo READY-LEAK\r
+waitline READY-LEAK @30000
+wait 3000
+mem baseline
+act openpath C:/Temp/pdk-run/home-pdf-leak/proj-pdf/many-300p.pdf
+waitstate kind=pdf state=pdf pages=300 @20000
+wait 2500
+act pdfscroll 40
+wait 1500
+act closefile
+wait 2500
+mem closed-1
+act openpath C:/Temp/pdk-run/home-pdf-leak/proj-pdf/many-300p.pdf
+waitstate kind=pdf state=pdf pages=300 @20000
+wait 2500
+act pdfscroll 40
+wait 1500
+act closefile
+wait 2500
+mem closed-2
+act openpath C:/Temp/pdk-run/home-pdf-leak/proj-pdf/many-300p.pdf
+waitstate kind=pdf state=pdf pages=300 @20000
+wait 2500
+act pdfscroll 40
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-pdf-leak/proj-pdf/many-300p.pdf
+waitstate kind=pdf state=pdf pages=300 @20000
+wait 2500
+act pdfscroll 40
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-pdf-leak/proj-pdf/many-300p.pdf
+waitstate kind=pdf state=pdf pages=300 @20000
+wait 2500
+act pdfscroll 40
+wait 1500
+act closefile
+wait 2500
+mem closed-5
+act openpath C:/Temp/pdk-run/home-pdf-leak/proj-pdf/many-300p.pdf
+waitstate kind=pdf state=pdf pages=300 @20000
+wait 2500
+act pdfscroll 40
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-pdf-leak/proj-pdf/many-300p.pdf
+waitstate kind=pdf state=pdf pages=300 @20000
+wait 2500
+act pdfscroll 40
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-pdf-leak/proj-pdf/many-300p.pdf
+waitstate kind=pdf state=pdf pages=300 @20000
+wait 2500
+act pdfscroll 40
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-pdf-leak/proj-pdf/many-300p.pdf
+waitstate kind=pdf state=pdf pages=300 @20000
+wait 2500
+act pdfscroll 40
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-pdf-leak/proj-pdf/many-300p.pdf
+waitstate kind=pdf state=pdf pages=300 @20000
+wait 2500
+act pdfscroll 40
+wait 1500
+act closefile
+wait 2500
+mem closed-10
+quit

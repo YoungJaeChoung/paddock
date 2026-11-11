@@ -1,0 +1,40 @@
+# 분리 창 확인(덩어리 36 첫 항목): 같은 터미널 보기를 두 번째 창에 그리고, 그 창의 키가 같은 터미널로 가는지, 창 좌표의 기준이 어디인지 읽는다.
+# ① 두 번째 창에 같은 보기 그리기(글자·커서·한글 2칸) ② 분리 창에 넣은 키가 같은 터미널로 ④ bounds() 원점 기준(events.log의 window-geometry 줄)
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send echo BASE-ONE\r
+waitline BASE-ONE @20000
+key ctrl-shift-t
+waittabs 2 @20000
+sendto 2 echo SECOND-READY\r
+wait 1500
+state before-detach
+act movetowindow 2
+waitstate place=detached @10000
+wait 2000
+state after-detach
+# ① 글자·한글이 분리 창 격자에 그려지는지: 같은 격자에 입력하고 분리 창을 캡처한다
+sendto 2 echo HANGUL-한글-가나다\r
+wait 1500
+dumptab 2 detached-grid
+shotwin 2 detached-hangul
+# ② 분리 창에 넣은 키가 같은 터미널(2번 탭)로 가는지
+textwin 2 echo keywin-typed
+keywin 2 enter
+wait 1500
+dumptab 2 detached-keys
+shotwin 2 detached-keys
+# 본 창의 선택 탭(1번)은 입력을 받지 않아야 한다
+dumptab 1 main-grid
+shot main-after-detach
+# 분리 창 탭 우클릭 메뉴
+act detachedmenu 2
+wait 800
+shotwin 2 detached-menu
+act detachedmenuitem 2 Move Back to Main Window
+waitstate place=main @10000
+wait 1500
+state after-back
+shot main-after-back
+act quick quitstop
+wait 3000

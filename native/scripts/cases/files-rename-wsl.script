@@ -1,0 +1,47 @@
+# 동기화 ② 이름 바꾸기(WSL 공유 폴더): 9P 위의 폴더에서 이름 바꾸기가 창을 막지 않고(ui-max-busy-ms ≤ 100), 이름이 바뀐 폴더 두 단계 아래에 만든 파일이 한 주기(2초) 안에 목록에 나타난다.
+# 기본 셸은 WSL이다.
+waittabs 1 @30000
+send unset HISTFILE; rm -rf /tmp/pdk-rename && mkdir -p /tmp/pdk-rename/proj/src/deep && touch /tmp/pdk-rename/proj/a.js /tmp/pdk-rename/proj/src/x.js && ln -sf /bin/bash /tmp/pdk-rename/claude && export PATH=/tmp/pdk-rename:$PATH && cd /tmp/pdk-rename/proj\r
+send echo READY-WSL\r
+waitline READY-WSL @20000
+send claude -c 'for i in $(seq 1 300); do echo work $i; sleep 0.5; done'\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+waitstate files-watch=polling @5000
+act files 1
+waitstate file-row 1 file x.js @8000
+act files 2
+waitstate file-row 1 dir deep expanded @8000
+act resetgap
+state wsl-listed
+# 행: 1 src · 2 deep · 3 deep이 비었다는 안내 · 4 x.js · 5 a.js. 파일 이름 바꾸기.
+act filesrename 5 b.js
+waitstate file-row 0 file b.js @8000
+state wsl-renamed-file
+# 폴더 이름 바꾸기: 펼침이 그대로 따라간다.
+act filesrename 1 lib
+waitstate file-row 0 dir lib expanded @8000
+waitstate file-row 1 dir deep expanded @8000
+waitstate file-row 1 file x.js @8000
+state wsl-renamed-folder
+shot wsl-renamed-folder
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+mark touch-sent
+send touch /tmp/pdk-rename/proj/lib/deep/c.txt\r
+waitstate file-row 2 file c.txt @4000
+state wsl-watched-after-rename
+# 대소문자만 다른 두 파일이 함께 있는 9P 폴더: `a.txt`를 `A.txt`로 바꾸려 하면 덮어쓰지 않고 거절한다(둘 다 그대로).
+send printf one > /tmp/pdk-rename/proj/a.txt; printf two > /tmp/pdk-rename/proj/A.txt\r
+waitstate file-row 0 file A.txt @6000
+state wsl-case-pair
+act filesrename 5 A.txt
+waitstate already exists @6000
+state wsl-case-refused
+send echo CASE-$(cat /tmp/pdk-rename/proj/a.txt)-$(cat /tmp/pdk-rename/proj/A.txt)\r
+waitline CASE-one-two @6000
+send rm -rf /tmp/pdk-rename\r
+wait 500
+quit

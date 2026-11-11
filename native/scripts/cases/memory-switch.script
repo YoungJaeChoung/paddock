@@ -1,0 +1,25 @@
+# 메모리(덩어리 33·34): 계정 바꾸기 1회의 몫. A 계정 터미널(WSL, 가짜 claude)에서 `Continue with B`를 한 번 하고 전후 Private 메모리와 Rust 보유량을 잰다.
+# 실행기가 PADDOCK_TEST_WSL_HOME=/tmp/paddock-test-memory-switch 로 띄우고 준비물은 assets/account-switch-wsl-fixture.sh다. 3단계 exe에는 이 기능이 없어 새 exe로만 돈다(앱 몫 증가분은 3단계 장면 측정과 합쳐 본다).
+waittabs 1 @30000
+waitstate cwd=C: @30000
+act plusmenu
+waitstate menu: new-terminal @5000
+act menuitem Claude · A
+waittabs 2 @30000
+waitfor STARTED aaaaaaaa-1111-4111-8111-000000000001 @60000
+waitstate account-switch switching=no conversation=aaaaaaaa-1111-4111-8111-000000000001 start-mark=yes @30000
+wait 5000
+mem before-switch
+gpumem before-switch
+act pickermenu
+waitstate account-menu kind=continue items=Current(A),B @5000
+act continuewith B
+waitfor RESUMED @60000
+waitstate account-switch switching=no conversation=aaaaaaaa-1111-4111-8111-000000000001 @30000
+wait 2000
+mem after-switch
+gpumem after-switch
+wait 20000
+mem final-20s
+gpumem final-20s
+quit

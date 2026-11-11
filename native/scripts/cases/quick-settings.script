@@ -1,0 +1,100 @@
+# 빠른 설정(C-D41): 기존 앱 설정(소리 끔)이 처음부터 적용되고, 패널에서 바꾼 값은 네이티브 설정 파일에만 쓰이며 창에 바로 반영된다.
+# 테마를 라이트로 바꾸면 바탕이 #ffffff가 되고 state.json·기존 설정 파일은 그대로다. 글자 크기를 16으로 올리면 터미널 칸 수가 바뀌고 셸도 새 크기를 안다.
+# 소리는 기존 앱 값(끔)이면 완료 알림이 소리를 요청하지 않고, 패널에서 켜면 요청한다.
+waittabs 1 @30000
+send unset HISTFILE; mkdir -p /tmp/paddock-fake && ln -sf /bin/bash /tmp/paddock-fake/claude && export PATH=/tmp/paddock-fake:$PATH\r
+send echo READY-1\r
+waitline READY-1 @20000
+send stty size\r
+wait 1000
+state initial
+files initial
+dump size-14
+shot 01-dark-main
+act quick open
+waitstate quick=open @5000
+wait 500
+shot 02-panel-dark
+act quick expand theme
+wait 300
+shot 03-panel-dark-select-open
+act quick choose theme Mermaid Light
+waitstate theme=Mermaid Light @5000
+wait 700
+state theme-light
+files theme-light
+shot 04-panel-light
+act quick expand shell
+wait 300
+shot 05-panel-light-select-open
+act quick expand shell
+act quick close
+wait 500
+shot 06-light-main
+# 라이트 테마의 메뉴·이름 바꾸기 창(입력칸 글자색)
+act menu terminal 1
+wait 300
+shot 06a-light-menu
+act menuitem Rename terminal
+wait 500
+shot 06b-light-rename
+act cancel
+wait 300
+act quick open
+act quick step fontsize 1
+act quick step fontsize 1
+waitstate font=16px @5000
+wait 1000
+send stty size\r
+wait 1000
+state font-16
+files font-16
+dump size-16
+shot 07-panel-font-16
+act quick close
+wait 500
+shot 08-light-font-16
+# 배율: 한 단계 올린다
+act quick open
+act quick step zoom 1
+wait 1000
+state zoom-1
+shot 09-zoom-1
+act quick step zoom -1
+wait 700
+act quick close
+resize 1000 650
+wait 800
+act quick open
+wait 500
+shot 09a-small-window-panel
+act quick close
+# 완료 소리: 기존 앱 값이 끔이므로 에이전트가 끝나도 소리 요청이 없다
+key ctrl-shift-t
+waittabs 2 @20000
+send unset HISTFILE\r
+send echo READY-2\r
+waitline READY-2 @20000
+key ctrl-left
+send claude -c 'for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo work $i; sleep 0.5; done; sleep 3'\r
+waitstate program=claude @20000
+waitstate activity=working @20000
+key ctrl-right
+waitstate unseen=yes @40000
+wait 2000
+state sound-off
+# 패널에서 소리를 켜면 다음 완료부터 소리를 요청한다
+key ctrl-left
+waitstate unseen=no @5000
+act quick open
+act quick sound
+wait 500
+files sound-on
+shot 10-panel-sound-on
+act quick close
+send claude -c 'for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo work $i; sleep 0.5; done; sleep 3'\r
+waitstate activity=working @20000
+key ctrl-right
+waitstate sound-requested 1 @40000
+state sound-on
+quit

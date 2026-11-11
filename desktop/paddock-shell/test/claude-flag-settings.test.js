@@ -32,6 +32,19 @@ test('C-flag.2: 켜져 있는 기능만 담고 둘 다 꺼져 있으면 빈 객�
     assert.equal(hasMemoryHook(both), true);
 });
 
+test('C-flag.2b: 에이전트 상태 훅은 메모리 안내 훅과 함께 들어가고 꺼져 있으면 빠진다', () => {
+    const { agentStatusHookCommand, hasAgentStatusHook } = require('../agent-status-hook-settings');
+    const status = agentStatusHookCommand('/u/agent-status-hook.sh');
+    const memory = memoryHookCommand('/u/memory-hook.sh', 2048);
+    const both = buildFlagSettings({ memoryHookCommand: memory, statusHookCommand: status });
+    assert.equal(hasAgentStatusHook(both), true);
+    assert.equal(hasMemoryHook(both), true);
+    assert.equal(both.hooks.PreToolUse.length, 2);
+    assert.equal(both.hooks.Stop.length, 1);
+    assert.equal(hasAgentStatusHook(buildFlagSettings({ memoryHookCommand: memory })), false);
+    assert.deepEqual(buildFlagSettings({ statusHookCommand: null }), {});
+});
+
 test('C-flag.3: 쓰면 0600 파일이 생기고, 같은 내용은 다시 쓰지 않으며, 바뀌면 교체한다', context => {
     const file = path.join(folder(context), 'claude', 'flag-settings.json');
     assert.equal(writeFlagSettings(file, {}), 'written');

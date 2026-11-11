@@ -1,0 +1,31 @@
+# 열린 파일 바로 다시 읽기(24-추가): 파일 목록이 감시하는 폴더 안의 열린 파일이 바뀌면 3초 주기를 기다리지 않고 감시 사건으로 1.5초 안에 다시 읽힌다.
+# 임시 홈에 prep-reload.sh로 proj-reload 폴더를 채우고 기본 셸을 PowerShell로 둔다. 실행 이름은 file-reload-live다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-reload"; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo READY-LIVE\r
+waitline READY-LIVE @20000
+send claude.exe -n 300 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+waitstate files-watch=events @5000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+act openpath C:/Temp/pdk-run/home-file-reload-live/proj-reload/long.txt
+waitstate kind=text state=text lines=300 @10000
+wait 3500
+state before
+# 세 번 바꾼다. 매번 1.5초 안에 줄 수가 올라야 한다(주기 확인은 3초 이상 걸릴 수 있다).
+mark change-1
+send Add-Content "$env:USERPROFILE\\proj-reload\\long.txt" "append 1"\r
+waitstate lines=301 @1500
+mark change-2
+send Add-Content "$env:USERPROFILE\\proj-reload\\long.txt" "append 2"\r
+waitstate lines=302 @1500
+mark change-3
+send Add-Content "$env:USERPROFILE\\proj-reload\\long.txt" "append 3"\r
+waitstate lines=303 @1500
+state after
+quit

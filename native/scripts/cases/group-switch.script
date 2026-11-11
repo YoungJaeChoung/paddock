@@ -1,0 +1,20 @@
+# 묶음 전환: Unassigned 묶음을 둘 만들고 오가도 셸 프로세스가 그대로이고, 탭 줄은 보이는 묶음의 터미널만 보인다.
+waittabs 1 @30000
+send echo GROUP-ONE\r
+waitline GROUP-ONE @20000
+state group-one
+act workadd
+waittabs 2 @20000
+send echo GROUP-TWO\r
+waitline GROUP-TWO @20000
+state group-two
+shot group-two
+act selectgroup 1
+wait 500
+state back-to-one
+shot group-one
+act selectgroup 2
+wait 500
+state back-to-two
+daemonlist after-switch
+quit

@@ -1,0 +1,43 @@
+# 이미지 조각 보기: 4K 이미지를 1:1로 바꿔 여러 자리로 스크롤하며 그려진 조각 수(`drawn-tiles`)와 반납 기록, 같은 순간의 메모리를 남긴다. 실행 이름은 image-tiles다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send echo READY-TILES\r
+waitline READY-TILES @30000
+wait 20000
+gpumem start
+act openpath C:/Temp/pdk-run/home-image-tiles/proj-big/g-4k.png
+waitstate kind=image state=image @20000
+wait 2000
+gpumem fit
+act imgzoom
+waitstate full=yes @20000
+# 보이는 조각 수를 기대값으로 고정한다(이 대본의 창 크기에서: 왼쪽 위 4개, 가운데 6개, 오른쪽 아래 9개).
+waitstate drawn-tiles=4 @10000
+wait 1000
+state tiles-top-left
+shot tiles-top-left
+gpumem top-left
+act imgscroll 3000 1500
+wait 1500
+waitstate drawn-tiles=9 @10000
+state tiles-bottom-right
+shot tiles-bottom-right
+gpumem bottom-right
+act imgscroll 1800 900
+wait 1500
+waitstate drawn-tiles=6 @10000
+state tiles-middle
+shot tiles-middle
+gpumem middle
+act imgscroll 0 0
+wait 1500
+state tiles-back-top-left
+gpumem back-top-left
+act imgzoom
+waitstate full=no @5000
+wait 3000
+gpumem back-to-fit
+act closefile
+wait 5000
+gpumem closed
+quit

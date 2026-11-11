@@ -1,0 +1,18 @@
+# 묻기 창 모양: 터미널 닫기 확인과 종료 묻기를 찍는다
+resize 1200 760
+waittabs 1 @30000
+send echo ready\r
+waitline ready @20000
+key ctrl-shift-w
+waitoverlay close-terminal @10000
+wait 500
+shot dialog-close
+key escape
+waitoverlay none @10000
+closewindow
+waitoverlay quit @10000
+wait 500
+shot dialog-quit
+key escape
+waitoverlay none @10000
+quit

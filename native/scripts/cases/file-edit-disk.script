@@ -1,0 +1,119 @@
+# 파일 편집 중 디스크 변경(덩어리 25): 저장하지 않은 편집이 있으면 다시 읽지 않고 `This file changed on disk.` 띠가 `Reload`·`Keep mine`을 묻는다.
+# `Keep mine`은 내 내용을 지켜 다음 저장이 묻지 않고 덮어쓰고, 띠를 무시하고 저장하면 `Overwrite` 묻기가 뜬다. 고친 게 없는 파일은 예전처럼 바로 다시 읽는다.
+# 저장하지 않은 파일을 목록·검색으로 다시 열어도 편집 내용이 그대로다. 실행 이름이 file-edit-disk일 때 임시 홈 경로(C:/Temp/pdk-run/home-file-edit-disk)를 쓴다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-disk"; mkdir $p, "$env:USERPROFILE\\bin" -Force | Out-Null; foreach ($n in "a","b","c","d","e","f","g") { [IO.File]::WriteAllText("$p\\$n.txt", "one`ntwo`n") }; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo READY-DISK\r
+waitline READY-DISK @30000
+send claude.exe -n 900 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+waitstate files-watch=events @5000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+# --- a.txt: 고친 뒤 디스크가 바뀌면 다시 읽지 않고 띠가 뜬다(편집 내용 그대로).
+act openpath C:/Temp/pdk-run/home-file-edit-disk/proj-disk/a.txt
+waitstate kind=text state=text @10000
+text x
+waitstate unsaved=yes @3000
+state a-edited
+send Add-Content "$env:USERPROFILE\\proj-disk\\a.txt" "external"\r
+waitstate disk-changed=yes @6000
+wait 500
+state a-changed
+shot changed-bar
+# 같은 파일을 목록에서 다시 열어도 편집 내용은 그대로다.
+act openpath C:/Temp/pdk-run/home-file-edit-disk/proj-disk/a.txt
+wait 1500
+state a-reopened
+# `Keep mine`: 띠가 사라지고 편집은 그대로, 저장하면 묻지 않고 내 내용으로 덮어쓴다.
+act keepmine
+waitstate disk-changed=no @3000
+state a-kept
+key ctrl-s
+waitstate unsaved=no @5000
+send $x = [BitConverter]::ToString([IO.File]::ReadAllBytes("$env:USERPROFILE\\proj-disk\\a.txt")); if ($x -eq '78-6F-6E-65-0A-74-77-6F-0A') { Write-Host ("SA" + "ME-A") } else { Write-Host ("DI" + "FF-A " + $x) }\r
+waitline SAME-A @10000
+# --- b.txt: `Reload`는 고친 내용을 버리고 디스크 내용을 읽는다.
+act openpath C:/Temp/pdk-run/home-file-edit-disk/proj-disk/b.txt
+waitstate file-view kind=text state=text lines=2 @10000
+text y
+waitstate unsaved=yes @3000
+send Add-Content "$env:USERPROFILE\\proj-disk\\b.txt" "external"\r
+waitstate disk-changed=yes @6000
+act reload
+waitstate disk-changed=no @3000
+waitstate unsaved=no @3000
+waitstate file-view kind=text state=text lines=3 @5000
+state b-reloaded
+# --- c.txt: 띠를 무시하고 저장하면 덮어쓸지 묻는다. `Cancel`은 파일을 그대로 두고 `Save`가 덮어쓴다.
+act openpath C:/Temp/pdk-run/home-file-edit-disk/proj-disk/c.txt
+waitstate file-view kind=text state=text lines=2 @10000
+text z
+waitstate unsaved=yes @3000
+send Add-Content "$env:USERPROFILE\\proj-disk\\c.txt" "external"\r
+waitstate disk-changed=yes @6000
+key ctrl-s
+waitoverlay overwrite-file @5000
+state overwrite-prompt
+shot overwrite-prompt
+act savechoice cancel
+waitoverlay none @3000
+send $x = [BitConverter]::ToString([IO.File]::ReadAllBytes("$env:USERPROFILE\\proj-disk\\c.txt")); if ($x -eq '6F-6E-65-0A-74-77-6F-0A-65-78-74-65-72-6E-61-6C-0D-0A') { Write-Host ("SA" + "ME-C1") } else { Write-Host ("DI" + "FF-C1 " + $x) }\r
+waitline SAME-C1 @10000
+key ctrl-s
+waitoverlay overwrite-file @5000
+act savechoice save
+waitstate unsaved=no @5000
+send $x = [BitConverter]::ToString([IO.File]::ReadAllBytes("$env:USERPROFILE\\proj-disk\\c.txt")); if ($x -eq '7A-6F-6E-65-0A-74-77-6F-0A') { Write-Host ("SA" + "ME-C2") } else { Write-Host ("DI" + "FF-C2 " + $x) }\r
+waitline SAME-C2 @10000
+# --- d.txt: 고친 게 없으면 예전처럼 바로 다시 읽는다.
+act openpath C:/Temp/pdk-run/home-file-edit-disk/proj-disk/d.txt
+waitstate file-view kind=text state=text lines=2 @10000
+wait 2500
+send Add-Content "$env:USERPROFILE\\proj-disk\\d.txt" "external"\r
+waitstate file-view kind=text state=text lines=3 @6000
+state d-reread
+# --- e.txt: 닫기 묻기의 `Save`가 충돌하면 덮어쓰기를 묻고, 덮어써서 저장되면 그 탭이 닫힌다.
+act openpath C:/Temp/pdk-run/home-file-edit-disk/proj-disk/e.txt
+waitstate file-view kind=text state=text lines=2 @10000
+text e
+waitstate unsaved=yes @3000
+send Add-Content "$env:USERPROFILE\\proj-disk\\e.txt" "external"\r
+waitstate disk-changed=yes @6000
+act closefile
+waitoverlay close-file @3000
+act savechoice save
+waitoverlay overwrite-file @5000
+act savechoice save
+waitoverlay none @3000
+waitnostate proj-disk/e.txt selected @5000
+send $x = [BitConverter]::ToString([IO.File]::ReadAllBytes("$env:USERPROFILE\\proj-disk\\e.txt")); if ($x -eq '65-6F-6E-65-0A-74-77-6F-0A') { Write-Host ("SA" + "ME-E") } else { Write-Host ("DI" + "FF-E " + $x) }\r
+waitline SAME-E @10000
+# --- f·g: 종료 `Save all`에서 충돌이 둘이면 덮어쓰기 묻기가 차례로 뜨고, 모두 덮어쓰면 터미널 종료 묻기로 이어진다. 묻지 못한 파일도 띠가 선다.
+act openpath C:/Temp/pdk-run/home-file-edit-disk/proj-disk/f.txt
+waitstate file-view kind=text state=text lines=2 @10000
+text f
+waitstate unsaved=yes @3000
+act openpath C:/Temp/pdk-run/home-file-edit-disk/proj-disk/g.txt
+waitstate file-view kind=text state=text lines=2 @10000
+text g
+waitstate unsaved-files=2 @3000
+send Add-Content "$env:USERPROFILE\\proj-disk\\f.txt" "external"; Add-Content "$env:USERPROFILE\\proj-disk\\g.txt" "external"\r
+waitstate disk-changed-files=2 @8000
+closewindow
+waitoverlay quit-unsaved @5000
+act savechoice save
+waitoverlay overwrite-file @5000
+state first-overwrite
+act savechoice save
+waitoverlay overwrite-file @5000
+state second-overwrite
+act savechoice save
+waitoverlay quit @10000
+send $x = [BitConverter]::ToString([IO.File]::ReadAllBytes("$env:USERPROFILE\\proj-disk\\f.txt")) + ":" + [BitConverter]::ToString([IO.File]::ReadAllBytes("$env:USERPROFILE\\proj-disk\\g.txt")); if ($x -eq '66-6F-6E-65-0A-74-77-6F-0A:67-6F-6E-65-0A-74-77-6F-0A') { Write-Host ("SA" + "ME-FG") } else { Write-Host ("DI" + "FF-FG " + $x) }\r
+waitline SAME-FG @10000
+act quitstop

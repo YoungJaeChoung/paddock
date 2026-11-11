@@ -1,0 +1,117 @@
+# 이미지 열고 닫기 반복: 4K png와 1080p png를 열고 닫기를 10번씩 반복하며 1·2·5·10번째 닫은 뒤 앱 Private 메모리를 잰다.
+# 회수마다 계속 늘면 누수, 평평하면 1회성 보유다. 이 대본은 실행 이름이 image-leak일 때 임시 홈 경로(C:/Temp/pdk-run/home-image-leak)를 쓴다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send echo READY-LEAK\r
+waitline READY-LEAK @30000
+wait 3000
+mem baseline
+act openpath C:/Temp/pdk-run/home-image-leak/proj-md/g-4k.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+mem 4k-closed-1
+act openpath C:/Temp/pdk-run/home-image-leak/proj-md/g-4k.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+mem 4k-closed-2
+act openpath C:/Temp/pdk-run/home-image-leak/proj-md/g-4k.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-image-leak/proj-md/g-4k.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-image-leak/proj-md/g-4k.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+mem 4k-closed-5
+act openpath C:/Temp/pdk-run/home-image-leak/proj-md/g-4k.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-image-leak/proj-md/g-4k.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-image-leak/proj-md/g-4k.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-image-leak/proj-md/g-4k.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-image-leak/proj-md/g-4k.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+mem 4k-closed-10
+act openpath C:/Temp/pdk-run/home-image-leak/proj-md/f-1080p.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+mem 1080p-closed-1
+act openpath C:/Temp/pdk-run/home-image-leak/proj-md/f-1080p.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+mem 1080p-closed-2
+act openpath C:/Temp/pdk-run/home-image-leak/proj-md/f-1080p.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-image-leak/proj-md/f-1080p.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-image-leak/proj-md/f-1080p.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+mem 1080p-closed-5
+act openpath C:/Temp/pdk-run/home-image-leak/proj-md/f-1080p.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-image-leak/proj-md/f-1080p.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-image-leak/proj-md/f-1080p.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-image-leak/proj-md/f-1080p.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-image-leak/proj-md/f-1080p.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+mem 1080p-closed-10
+quit

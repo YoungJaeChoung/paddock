@@ -161,11 +161,8 @@ if [ -d "$source_dir" ]; then
         skill_name=\${source_skill##*/}
         if [ "$skill_name" != synced ] && [ -d "$source_skill" ] && [ -f "$source_skill/SKILL.md" ]; then
             target_skill="$target_dir/$skill_name"
-            if [ -e "$target_skill" ] || [ -L "$target_skill" ]; then
-                if [ ! -L "$target_skill" ] || [ "$(readlink "$target_skill")" != "$source_skill" ]; then
-                    printf 'An existing skill named %s was kept.\\0' "$skill_name"
-                fi
-            else
+            # A skill the account already has under the same name is kept without a notice.
+            if [ ! -e "$target_skill" ] && [ ! -L "$target_skill" ]; then
                 ln -s "$source_skill" "$target_skill"
             fi
         fi
@@ -191,9 +188,8 @@ link_shared() {
             # A link whose target is gone was made by an earlier launch before the host entry moved; repoint it.
             ln -sfn "$shared_source" "$shared_target" || printf '%s could not be shared: the link was refused.\\0' "$shared_name"
         elif [ -e "$shared_target" ] || [ -L "$shared_target" ]; then
-            if [ ! -L "$shared_target" ] || [ "$(readlink "$shared_target")" != "$shared_source" ]; then
-                printf 'An existing %s %s was kept.\\0' "$shared_name" "$shared_kind"
-            fi
+            # An account entry that differs from the host's is the user's own choice and is kept without a notice.
+            :
         else
             ln -s "$shared_source" "$shared_target" || printf '%s could not be shared: the link was refused.\\0' "$shared_name"
         fi
@@ -220,13 +216,13 @@ for settings_name in $settings_names; do
             # A link whose target is gone was made by an earlier launch before the host file moved; repoint it.
             ln -sfn "$settings_real" "$settings_target" || printf '%s could not be shared: the link was refused.\\0' "$settings_name"
         elif [ -L "$settings_target" ]; then
-            if [ "$(readlink -f "$settings_target")" != "$settings_real" ]; then
-                printf 'An existing %s link was kept.\\0' "$settings_name"
-            elif [ "$(readlink "$settings_target")" != "$settings_real" ]; then
+            # A link to some other file is the user's own setup and is kept without a notice; one reaching the host file through another path is made direct.
+            if [ "$(readlink -f "$settings_target")" = "$settings_real" ] && [ "$(readlink "$settings_target")" != "$settings_real" ]; then
                 ln -sfn "$settings_real" "$settings_target" || printf '%s could not be shared: the link was refused.\\0' "$settings_name"
             fi
         elif [ -e "$settings_target" ] && [ ! -f "$settings_target" ]; then
-            printf 'An existing %s entry was kept.\\0' "$settings_name"
+            # A folder or other entry under that name is the user's own and is kept without a notice.
+            :
         else
             settings_backup=""
             if [ -f "$settings_target" ] && ! cmp -s "$settings_source" "$settings_target"; then
@@ -234,13 +230,8 @@ for settings_name in $settings_names; do
                 if [ -e "$settings_backup" ] || [ -L "$settings_backup" ]; then settings_backup="$settings_backup-$(date +%Y%m%d-%H%M%S)"; fi
                 mv "$settings_target" "$settings_backup" || { printf '%s could not be shared: the account file could not be backed up.\\0' "$settings_name"; continue; }
             fi
-            if ln -sf "$settings_real" "$settings_target"; then
-                if [ -n "$settings_backup" ]; then
-                    printf 'The %s of this account was moved to %s; the account now follows the shared %s.\\0' "$settings_name" "\${settings_backup##*/}" "$settings_name"
-                fi
-            else
-                printf '%s could not be shared: the link was refused.\\0' "$settings_name"
-            fi
+            # The backup keeps the account's old settings recoverable, so the move needs no notice.
+            ln -sf "$settings_real" "$settings_target" || printf '%s could not be shared: the link was refused.\\0' "$settings_name"
         fi
     fi
 done`;

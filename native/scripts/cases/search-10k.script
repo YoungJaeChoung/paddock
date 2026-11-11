@@ -1,0 +1,35 @@
+# 폴더 검색 부하 (D56 실패 시 멈춤 조건): 파일 10,000개(폴더 100 × 100)를 훑는 동안 창 스레드가 일한 최대 시간(ui-max-busy-ms, 운영체제 시계 눈금 15 ms 단위)이 100 ms를 넘지 않는다. ui-max-gap-ms는 타이머가 늦게 깨운 시간까지 든 간격이라 막힘 판정에 쓰지 않는다.
+# 파일은 한 줄짜리(약 600자)이고 일곱 파일에만 needle이 있다. 임시 홈에 bin 폴더만 만들고(prep-link.sh) 기본 셸을 PowerShell로 둔다. 실행 이름은 search-10k다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-10k"; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; $t = "abc def ghi " * 50; 1..100 | ForEach-Object { $d = "$p\\d$_"; New-Item -ItemType Directory $d -Force | Out-Null; 1..100 | ForEach-Object { [IO.File]::WriteAllText("$d\\f$_.txt", $t) } }; 1..7 | ForEach-Object { [IO.File]::WriteAllText("$p\\d$($_ * 10)\\needle-$_.txt", "xx needle xx") }; cd $p; echo DONE-10K\r
+waitline DONE-10K @240000
+send claude.exe -n 300 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @20000
+wait 1500
+act resetgap
+key ctrl-shift-f
+waitstate search open=y @5000
+act search needle
+waitstate n_results=7 n_files=7 capped=n state=done @120000
+state search-10k-done
+act resetgap
+act search abc
+wait 300
+state search-10k-start
+waitstate n_results=2000 n_files=2000 capped=y state=done @120000
+state search-10k-done2
+wait 1500
+state search-10k-capped
+act resetgap
+act searchfile 1
+wait 1500
+state search-10k-collapse1
+act resetgap
+act searchfile 1
+wait 1500
+state search-10k-expand1
+shot search-10k
+quit

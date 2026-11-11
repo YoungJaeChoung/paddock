@@ -1,0 +1,112 @@
+# PDF 분리 창 메모리 진단 — 되돌린 뒤 본 창을 빠른 설정 열고 닫기로 몇 번 다시 그리게 한 판(덩어리 39): 놀고 있는 본 창에서 그래픽 드라이버의 늦은 해제가 풀리는지 본다. 임시 홈 이름 memory-pdf-diag.
+# 실행기가 임시 홈에 prep-fd.sh로 proj-fdp 폴더를 채우고 기본 셸을 PowerShell로 둔다(임시 홈 이름 memory-pdf-diag).
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send echo MEM-PD\r
+waitline MEM-PD @20000
+act openpath C:/Temp/pdk-run/home-memory-pdf-diag/proj-fdp/sample-3p.pdf
+waitstate kind=pdf state=pdf pages=3 @15000
+wait 15000
+mem d-before
+gpumem d-before
+act detachsize 900 600
+act movetowindow file C:/Temp/pdk-run/home-memory-pdf-diag/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 10000
+mem d-open-1
+gpumem d-open-1
+act moveback file C:/Temp/pdk-run/home-memory-pdf-diag/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf selected shown place=main @10000
+wait 10000
+mem d-back-1
+gpumem d-back-1
+act quick open
+wait 400
+act quick close
+wait 400
+act quick open
+wait 400
+act quick close
+wait 400
+act quick open
+wait 400
+act quick close
+wait 4000
+mem d-poke-1
+gpumem d-poke-1
+act movetowindow file C:/Temp/pdk-run/home-memory-pdf-diag/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 10000
+mem d-open-2
+gpumem d-open-2
+act moveback file C:/Temp/pdk-run/home-memory-pdf-diag/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf selected shown place=main @10000
+wait 10000
+mem d-back-2
+gpumem d-back-2
+act quick open
+wait 400
+act quick close
+wait 400
+act quick open
+wait 400
+act quick close
+wait 400
+act quick open
+wait 400
+act quick close
+wait 4000
+mem d-poke-2
+gpumem d-poke-2
+act movetowindow file C:/Temp/pdk-run/home-memory-pdf-diag/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 10000
+mem d-open-3
+gpumem d-open-3
+act moveback file C:/Temp/pdk-run/home-memory-pdf-diag/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf selected shown place=main @10000
+wait 10000
+mem d-back-3
+gpumem d-back-3
+act quick open
+wait 400
+act quick close
+wait 400
+act quick open
+wait 400
+act quick close
+wait 400
+act quick open
+wait 400
+act quick close
+wait 4000
+mem d-poke-3
+gpumem d-poke-3
+act movetowindow file C:/Temp/pdk-run/home-memory-pdf-diag/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 10000
+mem d-open-4
+gpumem d-open-4
+act moveback file C:/Temp/pdk-run/home-memory-pdf-diag/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf selected shown place=main @10000
+wait 10000
+mem d-back-4
+gpumem d-back-4
+act quick open
+wait 400
+act quick close
+wait 400
+act quick open
+wait 400
+act quick close
+wait 400
+act quick open
+wait 400
+act quick close
+wait 4000
+mem d-poke-4
+gpumem d-poke-4
+wait 40000
+mem d-final
+gpumem d-final
+quit

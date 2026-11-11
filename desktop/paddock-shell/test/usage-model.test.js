@@ -73,3 +73,12 @@ test('C-usage-U3.4: 초기화 전 창이 하나라도 있어야 지금 의미 �
     assert.equal(usage.hasCurrentWindow([], 200), false);
     assert.deepEqual([59, 600, 67680, 259200].map(usage.shortAge), ['0m', '10m', '18h', '3d']);
 });
+
+test('C-usage-U1.x: 초기화 시각은 오늘이면 시각만, 다른 날이면 날짜를 붙이고, 모르면 빈 문자열이다', () => {
+    const now = Math.floor(new Date(2026, 9, 13, 10, 0).getTime() / 1000);
+    const at = (day, hour, minute) => Math.floor(new Date(2026, 9, day, hour, minute).getTime() / 1000);
+    assert.equal(usage.resetClock({ resetsAt: at(13, 18, 30) }, now), '18:30');
+    assert.equal(usage.resetClock({ resetsAt: at(15, 9, 5) }, now), 'Oct 15, 09:05');
+    assert.equal(usage.resetClock({ resetsAt: null }, now), '');
+    assert.equal(usage.resetClock({}, now), '');
+});

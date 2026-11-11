@@ -1,0 +1,22 @@
+# 비교용: git-cpu.script와 같은 WSL 장면에서 Git 기능 없이(1단계 마감 exe) 앱 CPU를 잰다. 파일 목록·Source control 상태를 기다리지 않는다.
+waittabs 1 @30000
+send unset HISTFILE; rm -rf /tmp/pdk-gitcpu && mkdir -p /tmp/pdk-gitcpu/proj && cd /tmp/pdk-gitcpu/proj && git init -q -b main && git config user.name Tester && git config user.email t@example.com && echo one > a.js && git add -A && git commit -q -m base && ln -sf /bin/bash /tmp/pdk-gitcpu/claude && export PATH=/tmp/pdk-gitcpu:$PATH\r
+send echo READY-GITCPU\r
+waitline READY-GITCPU @30000
+send claude -c 'read -t 900'\r
+waitstate program=claude @20000
+waitstate row folder @20000
+wait 5000
+wait 3000
+key ctrl-shift-c
+waittabs 2 @20000
+# 시작 출력과 첫 읽기가 가라앉도록 기다린 뒤 구간을 표지로 알린다.
+wait 15000
+state idle-before
+mark idle-start
+wait 60000
+mark idle-end
+state idle-after
+send rm -rf /tmp/pdk-gitcpu\r
+wait 800
+quit

@@ -1,0 +1,21 @@
+# 기존 앱 설정이 그대로 적용된다(C-D41): 배율 3단계(1.728)·Mermaid Light가 처음부터 쓰이고, 패널을 열어도 파일은 바뀌지 않는다.
+waittabs 1 @30000
+send echo READY\r
+waitline READY @20000
+files initial
+state initial
+shot 01-main
+act quick open
+waitstate quick=open @5000
+wait 500
+shot 02-panel
+files panel-open
+# 1000x650 창에서도 톱니가 보이고 패널이 창 안에 들어온다(배율 1.728이라 가장 빠듯하다)
+act quick close
+resize 1000 650
+wait 800
+act quick open
+wait 500
+shot 03-small-window-panel
+state small
+quit

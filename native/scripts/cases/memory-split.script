@@ -1,0 +1,15 @@
+# 메모리(분할): 터미널 4개 중 2개가 나란히 보이는 상태로 20초 쉰 뒤 Private 메모리를 잰다
+waittabs 1 @30000
+wait 1500
+mem start-1-terminal
+key ctrl-shift-c
+waittabs 2 @20000
+key ctrl-shift-t
+waittabs 3 @20000
+key ctrl-shift-t
+waittabs 4 @20000
+wait 20000
+state split-four
+mem split-four-20s
+shot memory-split
+quit

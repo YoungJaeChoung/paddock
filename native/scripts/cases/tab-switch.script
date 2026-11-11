@@ -1,0 +1,22 @@
+# 탭 전환: 보이지 않는 탭의 출력도 격자에 쌓여, 전환하면 마지막 줄까지 보인다
+waittabs 1 @30000
+send echo READY-1\r
+waitline READY-1 @20000
+key ctrl-shift-t
+waittabs 2 @20000
+send echo READY-2\r
+waitline READY-2 @20000
+key ctrl-left
+state before-output
+shot tab1-visible
+# 탭 1이 보이는 동안 숨은 탭 2에 출력을 만든다
+sendto 2 seq 1 100\r
+wait 3000
+dumptab 2 hidden-tab2
+dump visible-tab1
+key ctrl-right
+waitline 100 @10000
+dump after-switch
+state after-switch
+shot tab2-switched
+quit

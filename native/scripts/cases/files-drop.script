@@ -1,0 +1,41 @@
+# 동기화 ② 탐색기에서 끌어 놓기(클립보드를 바꾸지 않는 낮 점검, C-D69): `act filesdrop`이 `on_drop::<ExternalPaths>`와 같은 경로로 받는다.
+# 폴더 행에 놓으면 그 폴더 안, 파일 행에 놓으면 그 파일의 폴더, 빈 자리(0)에 놓으면 머리줄 새 파일 폴더. 같은 이름은 `a copy.txt`로 받아 덮어쓰지 않고,
+# 폴더는 안까지 복사하며, 폴더를 자기 안에 놓으면 거부한다. 파일을 이미 연 탭도 그대로다.
+# 이 대본은 실행 이름이 files-drop일 때 임시 홈 경로를 쓴다. 기본 셸은 PowerShell이다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-drop"; $o = "$env:USERPROFILE\\outside"; mkdir "$p\\src", "$o\\tree\\sub", "$env:USERPROFILE\\bin" -Force | Out-Null; Set-Content "$p\\a.txt" mine; Set-Content "$o\\a.txt" theirs; Set-Content "$o\\b.txt" bee; Set-Content "$o\\tree\\sub\\t.txt" leaf; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo READY-DROP\r
+waitline READY-DROP @20000
+send claude.exe -n 900 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+state before
+# 행: 1 src · 2 a.txt. 폴더 행 src에 놓는다.
+act filesdrop 1 C:/Temp/pdk-run/home-files-drop/outside/b.txt
+waitstate Copied 1 item into src @8000
+# 받은 폴더(src)는 새 항목이 보이도록 저절로 펼쳐진다.
+waitstate file-row 1 file b.txt @8000
+state dropped-into-folder
+# 같은 이름: 행은 1 src · 2 b.txt · 3 a.txt다. 파일 행(a.txt)에 놓으면 그 파일의 폴더(proj)에 `a copy.txt`로 받는다. 원본 a.txt는 그대로 mine이다.
+act filesdrop 3 C:/Temp/pdk-run/home-files-drop/outside/a.txt
+waitstate file-row 0 file a copy.txt @8000
+state same-name
+# 폴더 통째로: 빈 자리(0)에 놓으면 머리줄 새 파일 폴더에 받는다(직접 펼친 폴더가 없으므로 목록 폴더 proj).
+act filesdrop 0 C:/Temp/pdk-run/home-files-drop/outside/tree
+waitstate file-row 0 dir tree @8000
+state folder-dropped
+# 자기 안에 놓으면 거부한다: src를 src에.
+act filesdrop 1 C:/Temp/pdk-run/home-files-drop/proj-drop/src
+waitstate be copied into itself @8000
+state refused
+key ctrl-shift-t
+waittabs 2 @20000
+wait 1500
+send Get-Content "$env:USERPROFILE\\proj-drop\\a.txt", "$env:USERPROFILE\\proj-drop\\a copy.txt", "$env:USERPROFILE\\proj-drop\\tree\\sub\\t.txt"\r
+waitline mine @10000
+waitline theirs @10000
+waitline leaf @10000
+dump drop-contents
+quit

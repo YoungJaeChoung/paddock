@@ -1,0 +1,74 @@
+# 파일 안 찾기·바꾸기·줄로 가기(덩어리 25): 파일 탭이 활성일 때 Ctrl+F가 편집기의 찾기 패널을, Ctrl+H가 바꾸기 패널을, Ctrl+G가 줄로 가기 창을 연다.
+# 바꾸면 저장하지 않은 상태가 된다. 줄로 가기는 숫자만 받고 파일 줄 수보다 크면 마지막 줄로 간다. 실행 이름이 file-find일 때 임시 홈 경로(C:/Temp/pdk-run/home-file-find)를 쓴다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-find"; mkdir $p, "$env:USERPROFILE\\bin" -Force | Out-Null; $lines = 1..200 | ForEach-Object { if ($_ % 50 -eq 0) { "line $_ needle" } else { "line $_" } }; [IO.File]::WriteAllText("$p\\a.txt", (($lines -join "`n") + "`n")); Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo READY-FIND\r
+waitline READY-FIND @30000
+send claude.exe -n 900 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+act openpath C:/Temp/pdk-run/home-file-find/proj-find/a.txt
+waitstate kind=text state=text lines=200 @10000
+state opened
+# Ctrl+F: 찾기 패널이 열리고 입력한 글자의 일치 개수가 보인다.
+key ctrl-f
+waitstate find-open=yes @3000
+text needle
+wait 800
+shot find-panel
+state find-open
+key enter
+wait 500
+state find-next
+# Ctrl+H: 바꾸기 패널.
+key ctrl-h
+wait 800
+shot replace-panel
+state replace-open
+# 패널의 `Replace All`(단추)과 같은 동작: 모든 일치를 바꾸면 저장하지 않은 상태가 된다.
+act findreplace thread
+waitstate unsaved=yes @3000
+wait 500
+shot replaced
+state replaced
+# 줄로 가기: Ctrl+G 창이 열리고 숫자를 넣어 Enter로 간다. 파일 줄 수보다 크면 마지막 줄이다.
+key escape
+wait 300
+act focusfile
+key ctrl-g
+waitoverlay goto-line @3000
+state goto-open
+shot goto-line
+text 120
+wait 300
+state goto-typed
+key enter
+waitoverlay none @3000
+wait 600
+state goto-120
+key ctrl-g
+waitoverlay goto-line @3000
+text 9999
+key enter
+waitoverlay none @3000
+wait 600
+state goto-last
+key ctrl-g
+waitoverlay goto-line @3000
+text 12x
+wait 300
+state goto-invalid
+key enter
+wait 300
+state goto-invalid-enter
+key escape
+waitoverlay none @3000
+act gotoline 7
+wait 600
+state goto-7
+quit

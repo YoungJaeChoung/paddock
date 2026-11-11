@@ -602,6 +602,10 @@ class PaddockTerminal extends TerminalWidgetImpl {
             const filePath = window.electronTheiaCore?.getPathForFile(file) || await this.savePastedImage(file);
             paths.push(filePath);
         }
+        // 줄바꿈 같은 제어 문자가 든 경로는 따옴표 안이어도 셸이 Enter로 읽어 명령이 실행될 수 있어 붙이지 않는다.
+        if (paths.some(filePath => /[\x00-\x1f\x7f]/.test(filePath))) {
+            throw new Error('A file path contains a line break or control character, so it was not pasted.');
+        }
         const isWindows = OS.backend.type() === OS.Type.Windows;
         const place = !isWindows ? PASTE_PLACE.POSIX : isWslShell(this.options.shellPath) ? PASTE_PLACE.WSL : PASTE_PLACE.WINDOWS;
         this.term.focus();

@@ -1,0 +1,37 @@
+# 계정 바꾸기(덩어리 33), WSL. 실행기가 PADDOCK_TEST_WSL_HOME=/tmp/paddock-test-account-switch-wsl 로 띄우고(자동 점검 빌드는 이 변수가 있을 때만 WSL 계정을 열며 그 셸의 HOME을 이 폴더로 덮는다),
+# 준비물 scripts/assets/account-switch-wsl-fixture.sh가 WSL 계정 A·B와 대화를 흉내 내는 가짜 claude(bash)를 임시 WSL 홈에 둔다.
+# A 계정 터미널의 가짜 claude가 대화를 열고(`conversation=<ID>`), 메뉴가 `Continue`(`Current(A),B`)이며 B 항목의 보조 글자가 `WSL`이다.
+# `Continue with B`: 같은 탭 자리에 B 계정 터미널이 새로 열려 가짜 claude가 `RESUMED <A 계정 폴더의 대화 파일 경로>`를 찍고 CLAUDE_CONFIG_DIR이 B 폴더이며, 대화 ID가 그대로다.
+# 옛 가짜 claude는 TERM을 받아 bye.log에 한 줄 남기고 끝난다(실행기가 파일로 확인). 대화 파일을 지우면 `Continue with A`는 `The saved conversation file is missing…`로 끝나고 탭은 그대로다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+act plusmenu
+waitstate menu: new-terminal @5000
+act menuitem Claude · A
+waittabs 2 @30000
+waitfor STARTED aaaaaaaa-1111-4111-8111-000000000001 @60000
+waitstate account-switch switching=no conversation=aaaaaaaa-1111-4111-8111-000000000001 start-mark=yes @30000
+state before
+act pickermenu
+waitstate account-menu kind=continue items=Current(A),B @5000
+shot 01-continue-menu
+act continuewith B
+waitfor RESUMED /tmp/paddock-test-account-switch-wsl/.paddock/agent-profiles/11111111-aaaa-4aaa-8aaa-111111111111/claude/projects/ @60000
+waitfor CFG /tmp/paddock-test-account-switch-wsl/.paddock/agent-profiles/22222222-bbbb-4bbb-8bbb-222222222222/claude @10000
+waitstate account-switch switching=no conversation=aaaaaaaa-1111-4111-8111-000000000001 @30000
+waittabs 2 @5000
+state resumed
+shot 02-resumed
+act pickermenu
+waitstate account-menu kind=continue items=A,Current(B) @5000
+send delete-transcript\r
+waitfor TRANSCRIPT-DELETED @10000
+act continuewith A
+waitstate notice=The saved conversation file is missing. Restore it before switching accounts; this terminal has not been changed. @30000
+waitstate account-switch switching=no conversation=aaaaaaaa-1111-4111-8111-000000000001 @5000
+waittabs 2 @5000
+state missing
+act selecttab 1
+act pickermenu
+waitstate account-menu kind=start items=A,B @5000
+quit

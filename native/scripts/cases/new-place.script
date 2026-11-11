@@ -1,0 +1,35 @@
+# 새 터미널 자리: 폴더가 보이면 그 폴더, Unassigned 묶음이 보이면 그 묶음, 아무것도 없으면 새 묶음(Ctrl+`).
+waittabs 1 @30000
+send unset HISTFILE; mkdir -p /tmp/paddock-fake/proj-a && ln -sf /bin/bash /tmp/paddock-fake/claude && export PATH=/tmp/paddock-fake:$PATH && cd /tmp/paddock-fake/proj-a\r
+send echo READY-PLACE\r
+waitline READY-PLACE @20000
+key ctrl-`
+waittabs 2 @20000
+wait 500
+state place-group
+send unset HISTFILE; export PATH=/tmp/paddock-fake:$PATH\r
+send claude -c 'sleep 60; echo end'\r
+waitstate row folder @20000
+key ctrl-`
+waittabs 3 @20000
+wait 500
+state place-folder
+key ctrl-shift-w
+waitoverlay close-terminal @5000
+key enter
+waittabs 2 @5000
+key ctrl-shift-w
+waitoverlay close-terminal @5000
+key enter
+waittabs 1 @5000
+key ctrl-shift-w
+waitoverlay close-terminal @5000
+key enter
+waittabs 0 @5000
+wait 500
+state place-none
+key ctrl-`
+waittabs 1 @20000
+wait 500
+state place-new-group
+quit

@@ -1,0 +1,56 @@
+# PDF 분리 창 메모리 진단(덩어리 39): PDF 하나를 연 채 분리(900×600) → 10초 → 되돌림 → 10초를 4번 되풀이하고 마지막에 40초 쉬며 Private·그래픽 몫·Rust 보유량·반납 기록(Buried/Drained)을 잰다.
+# 실행기가 임시 홈에 prep-fd.sh로 proj-fdp 폴더를 채우고 기본 셸을 PowerShell로 둔다(임시 홈 이름 memory-pdf-diag).
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send echo MEM-PD\r
+waitline MEM-PD @20000
+act openpath C:/Temp/pdk-run/home-memory-pdf-diag/proj-fdp/sample-3p.pdf
+waitstate kind=pdf state=pdf pages=3 @15000
+wait 15000
+mem d-before
+gpumem d-before
+act detachsize 1200 800
+act movetowindow file C:/Temp/pdk-run/home-memory-pdf-diag/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 10000
+mem d-open-1
+gpumem d-open-1
+act moveback file C:/Temp/pdk-run/home-memory-pdf-diag/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf selected shown place=main @10000
+wait 10000
+mem d-back-1
+gpumem d-back-1
+act movetowindow file C:/Temp/pdk-run/home-memory-pdf-diag/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 10000
+mem d-open-2
+gpumem d-open-2
+act moveback file C:/Temp/pdk-run/home-memory-pdf-diag/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf selected shown place=main @10000
+wait 10000
+mem d-back-2
+gpumem d-back-2
+act movetowindow file C:/Temp/pdk-run/home-memory-pdf-diag/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 10000
+mem d-open-3
+gpumem d-open-3
+act moveback file C:/Temp/pdk-run/home-memory-pdf-diag/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf selected shown place=main @10000
+wait 10000
+mem d-back-3
+gpumem d-back-3
+act movetowindow file C:/Temp/pdk-run/home-memory-pdf-diag/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf place=detached @10000
+wait 10000
+mem d-open-4
+gpumem d-open-4
+act moveback file C:/Temp/pdk-run/home-memory-pdf-diag/proj-fdp/sample-3p.pdf
+waitstate sample-3p.pdf selected shown place=main @10000
+wait 10000
+mem d-back-4
+gpumem d-back-4
+wait 40000
+mem d-final
+gpumem d-final
+quit

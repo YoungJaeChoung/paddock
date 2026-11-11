@@ -340,3 +340,85 @@ test('C-work-mem.3: 가장 큰 터미널을 고르고 비었으면 null이다', 
     assert.equal(model.heaviestTerminal({}), null);
     assert.equal(model.heaviestTerminal({ t1: 0 }), null);
 });
+
+test('C-work-U1.x: 같은 폴더 안에서만 터미널 목록 순서를 바꾼다', () => {
+    let state = model.empty();
+    for (const [id, folder] of [['a', '/p'], ['b', '/p'], ['c', '/p'], ['d', '/q']]) state = model.assignTerminal(state, id, folder, id);
+    const order = next => model.terminalsOf(next, '/p');
+    assert.deepEqual(order(model.moveTerminal(state, 'c', 'a', false)), ['c', 'a', 'b']);
+    assert.deepEqual(order(model.moveTerminal(state, 'a', 'b', true)), ['b', 'a', 'c']);
+    assert.equal(model.moveTerminal(state, 'd', 'a', false), state, 'a terminal from another folder is not moved');
+    assert.equal(model.moveTerminal(state, 'a', 'a', true), state);
+});
+
+// -- 저장소 묶음(같은 저장소의 워크트리 폴더) --
+
+function repoState() {
+    let state = model.empty();
+    for (const [key, repo] of [['file:///r/main', 'file:///r/main'], ['file:///other', null], ['file:///r/wt1', 'file:///r/main'], ['file:///solo', 'file:///solo']]) {
+        state = model.ensureFolder(state, key);
+        if (repo) state = model.setFolderRepo(state, key, repo);
+    }
+    state = model.assignTerminal(state, 't0', 'file:///r/wt1', 'claude');
+    state = model.assignTerminal(state, 't1', 'file:///other', 'codex');
+    return state;
+}
+
+const kinds = (rows) => rows.map(row => (row.kind === 'terminal' ? `terminal:${row.id}` : row.kind === 'more' ? 'more' : `${row.kind}:${row.key}`));
+
+test('C-repo-1: 같은 저장소 폴더가 둘 이상일 때만 묶음 행을 첫 구성원 자리에 끼우고 구성원을 그 아래로 모은다', () => {
+    const rows = model.visibleRows(repoState(), null, new Set());
+    assert.deepEqual(kinds(rows), ['repo:file:///r/main', 'folder:file:///r/main', 'folder:file:///r/wt1', 'terminal:t0', 'folder:file:///other', 'terminal:t1', 'folder:file:///solo']);
+    const repo = rows[0];
+    assert.equal(repo.name, 'main');
+    assert.equal(repo.n_folders, 2);
+    assert.equal(repo.expanded, true);
+    assert.deepEqual(rows.filter(row => row.kind === 'folder').map(row => row.repo ?? null), ['file:///r/main', 'file:///r/main', null, null], '구성원 폴더 행은 묶음 키를 달고 단독 저장소(solo)는 묶지 않는다');
+});
+
+test('C-repo-2: 묶음을 접으면 구성원 폴더와 터미널이 숨고, 현재 터미널이 든 묶음은 접혀 있어도 펼친다', () => {
+    let state = model.setRepoExpanded(repoState(), 'file:///r/main', false);
+    assert.deepEqual(kinds(model.visibleRows(state, null, new Set())), ['repo:file:///r/main', 'folder:file:///other', 'terminal:t1', 'folder:file:///solo']);
+    assert.equal(model.visibleRows(state, null, new Set())[0].expanded, false);
+    const current = model.visibleRows(state, 't0', new Set());
+    assert.equal(current[0].expanded, true);
+    assert.equal(current[0].current, true);
+    assert(current.some(row => row.id === 't0'));
+});
+
+test('C-repo-3: 묶음 안 폴더의 접힘과 Show N more 한도는 폴더 단위로 그대로 동작한다', () => {
+    let state = model.ensureFolder(model.setFolderRepo(model.ensureFolder(model.empty(), 'file:///a'), 'file:///a', 'file:///a'), 'file:///b');
+    state = model.setFolderRepo(state, 'file:///b', 'file:///a');
+    for (let index = 0; index < 10; index += 1) state = model.assignTerminal(state, `t${index}`, 'file:///b', `n${index}`);
+    state = model.setExpanded(state, 'file:///a', false);
+    const limited = model.visibleRows(state, null, new Set());
+    assert.equal(limited.filter(row => row.kind === 'terminal').length, model.N_VISIBLE_TERMINALS);
+    assert.equal(limited.find(row => row.kind === 'more').n_hidden, 2);
+    assert.equal(model.visibleRows(state, null, new Set(['file:///b'])).filter(row => row.kind === 'terminal').length, 10);
+});
+
+test('C-repo-4: 저장 순서는 그대로이고 표시만 묶는다. 구성원이 하나로 줄면 묶음 행이 사라진다', () => {
+    const state = repoState();
+    assert.deepEqual(state.folders.map(folder => folder.key), ['file:///r/main', 'file:///other', 'file:///r/wt1', 'file:///solo']);
+    const removed = model.removeFolder(state, 'file:///r/wt1', null).state;
+    assert(!model.visibleRows(removed, null, new Set()).some(row => row.kind === 'repo'));
+});
+
+test('C-repo-5: 저장·복구에서 repo와 repos를 되살리고 옛 저장 문자열은 그대로 읽는다', () => {
+    let state = model.setRepoExpanded(repoState(), 'file:///r/main', false);
+    const live = new Set(['t0', 't1']);
+    const restored = model.restore(model.serialize(state), live);
+    assert.deepEqual(restored.folders.map(folder => folder.repo ?? null), ['file:///r/main', null, 'file:///r/main', 'file:///solo']);
+    assert.deepEqual(restored.repos, { 'file:///r/main': { expanded: false } });
+    const old = model.restore(JSON.stringify({ folders: [{ key: 'file:///a', expanded: true }], terminals: {} }), new Set());
+    assert.equal(old.folders[0].repo, undefined);
+    assert.equal(old.repos, undefined);
+    assert.equal(model.restore(JSON.stringify({ folders: [{ key: 'file:///a', repo: 5 }], repos: { x: 'bad', y: { expanded: 'no' } }, terminals: {} }), new Set()).folders[0].repo, undefined);
+    // setFolderRepo(null)은 저장된 repo를 지운다.
+    assert.equal(model.setFolderRepo(state, 'file:///r/wt1', null).folders.find(folder => folder.key === 'file:///r/wt1').repo, undefined);
+});
+
+test('C-repo-6: 다른 창 상태를 합친 표시용 목록도 묶음 접힘(repos)을 유지한다', () => {
+    const state = model.setRepoExpanded(repoState(), 'file:///r/main', false);
+    assert.deepEqual(model.mergeWorkPresence(state, []).state.repos, { 'file:///r/main': { expanded: false } });
+});

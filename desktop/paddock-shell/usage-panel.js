@@ -539,6 +539,11 @@ class UsagePanel {
                 const title = `${UsageAccounts.PROVIDERS[profile.provider]} · ${this.displayName(profile)} · ${usage.windowName(window.label)}: ${usage.describe(window, now)}${updated}${reason}`;
                 target.append(this.meter(`${scopeKey(profile)}-${window.label}`, window.label, window.used, title));
             }
+            if (details) {
+                // 목록 행은 창마다 초기화까지 남은 시간과 시각을 문장으로 보인다. 상태 바는 말풍선에만 둔다.
+                const resets = windows.filter(window => window.resetsAt).map(window => `${usage.windowName(window.label)} resets in ${usage.duration(Math.max(0, window.resetsAt - now))} (${usage.resetClock(window, now)})`);
+                if (resets.length) target.append(node('span', 'account-usage-hint', resets.join(' · ')));
+            }
             if (stale) {
                 // 상태 바는 짧은 경과 시간만, 목록 행은 같은 내용을 문장으로 보인다.
                 const explanation = `Usage recorded ${snapshot.data.updatedAt ? `${elapsed} ago` : 'at an unknown time'}${reason || '. It may have changed since then.'}`;

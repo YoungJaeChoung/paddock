@@ -1,0 +1,9 @@
+# Memory 게이지(덩어리 31): 이 창에 WSL 터미널이 하나도 없으면 데몬이 WSL을 읽지 않는다. 기본 셸이 PowerShell이고 Memory 항목이 켜져 있어도
+# 25초(요청 두 번 이상) 동안 게이지는 이 컴퓨터 값만 보이고(source=system), 데몬 로그에는 `wsl memory not available`이 한 번만 남고 WSL 읽기 기록(`wsl.exe`)이 없다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+wait 25000
+waitstate source=system @5000
+waitnostate source=wsl @3000
+state nowsl
+quit

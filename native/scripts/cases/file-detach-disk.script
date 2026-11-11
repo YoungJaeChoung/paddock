@@ -1,0 +1,54 @@
+# 파일 분리 창과 디스크 변경(덩어리 38): 분리한 파일도 본 창의 열린 파일 감시에 든다. 고치지 않은 파일은 디스크가 바뀌면 분리 창이 바로 새 내용을 보이고,
+# 고친 파일은 덮지 않고 분리 창 안쪽에 `Reload`·`Keep mine` 띠를 보인다. 실행 이름이 file-detach-disk일 때 임시 홈 경로(C:/Temp/pdk-run/home-file-detach-disk)를 쓴다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\proj-fdd"; mkdir $p, "$env:USERPROFILE\bin" -Force | Out-Null; [IO.File]::WriteAllText("$p\c.txt", "c1`n"); Copy-Item C:\Windows\System32\PING.EXE "$env:USERPROFILE\bin\claude.exe"; cd $p\r
+send echo READY-FDD\r
+waitline READY-FDD @20000
+send claude.exe -n 900 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+act openpath C:/Temp/pdk-run/home-file-detach-disk/proj-fdd/c.txt
+waitstate kind=text state=text lines=1 @10000
+act movetowindow file C:/Temp/pdk-run/home-file-detach-disk/proj-fdd/c.txt
+waitstate c.txt place=detached @10000
+waitstate dfile-view file_c.txt kind=text state=text lines=1 @10000
+# 디스크가 바뀌면(고치지 않았다) 분리 창이 새 내용으로 바뀐다.
+send [IO.File]::AppendAllText("$env:USERPROFILE\proj-fdd\c.txt", "c2`n"); Write-Host ([BitConverter]::ToString([IO.File]::ReadAllBytes("$env:USERPROFILE\proj-fdd\c.txt")) + "-AP" + "PEND1")\r
+waitline 63-31-0A-63-32-0A-APPEND1 @10000
+waitstate dfile-view file_c.txt kind=text state=text lines=2 @15000
+state reloaded-in-detached
+shotwin file_c.txt detached-reloaded
+# 고친 뒤 디스크가 또 바뀌면 덮지 않고 띠가 묻는다.
+keywin file_c.txt ctrl-end
+textwin file_c.txt mine
+waitstate dfile file_c.txt unsaved=yes @5000
+send [IO.File]::AppendAllText("$env:USERPROFILE\proj-fdd\c.txt", "c3`n"); Write-Host ([BitConverter]::ToString([IO.File]::ReadAllBytes("$env:USERPROFILE\proj-fdd\c.txt")) + "-AP" + "PEND2")\r
+waitline 63-31-0A-63-32-0A-63-33-0A-APPEND2 @10000
+waitstate disk-changed=yes @15000
+state changed-bar
+shotwin file_c.txt detached-changed-bar
+# 분리 창 Ctrl+S: 디스크가 바뀌어 있으면 덮어쓰기 묻기가 본 창에 열리고 본 창이 앞으로 온다. `Overwrite`로 저장하면 키 입력은 분리 창으로 돌아간다.
+keywin file_c.txt ctrl-s
+waitoverlay overwrite-file @10000
+waitstate main-activations=1 @3000
+state overwrite-in-main
+shot overwrite-in-main
+act savechoice save
+waitoverlay none @10000
+waitstate dfile file_c.txt unsaved=no @10000
+textwin file_c.txt z
+waitstate dfile file_c.txt unsaved=yes @5000
+# 저장하지 않은 채 ×: 닫기 묻기에서 `Don't Save`로 버리고 닫는다.
+act detachedclose file C:/Temp/pdk-run/home-file-detach-disk/proj-fdd/c.txt
+waitoverlay close-file @5000
+act savechoice dont
+waitoverlay none @5000
+waitnostate c.txt place=detached @3000
+state closed
+act quick quitstop
+wait 3000

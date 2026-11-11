@@ -1,0 +1,7 @@
+# 셋째 실행: 설정이 on이면 묻지 않고, 시작 때 줄이 남아 있는지 확인만 한다(조용히 present, 줄은 그대로 한 개).
+waittabs 1 @30000
+waitstate launcher=present @60000
+waitstate bashrc-lines=1 @5000
+waitstate overlay: none @2000
+state quiet
+quit

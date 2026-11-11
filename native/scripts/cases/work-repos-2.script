@@ -1,0 +1,15 @@
+# 같은 저장소의 워크트리 폴더 묶음(2/3): 앱을 다시 열어도 묶음의 접힘이 이어지고(저장값), 한 번 더 누르면 펼쳐진다. 이어 새 터미널에서
+# 워크트리 폴더 wt2를 디스크에서 지운다(3번 대본이 지워진 워크트리도 묶음 아래에 남는지 본다). session-run.ps1로 1번 뒤에 같은 임시 홈에서 돌린다.
+waittabs 4 @30000
+waitstate name=main expanded=false n=3 @15000
+state restart-collapsed
+shot restart-collapsed
+act repotoggle 1
+waitstate name=main expanded=true n=3 @10000
+state restart-expanded
+shot restart-expanded
+act workadd
+waittabs 5 @20000
+send rm -rf /tmp/paddock-repos/wt2 && echo WT2-DELETED\r
+waitline WT2-DELETED @20000
+quit

@@ -1,0 +1,12 @@
+# 되살리기 확인(Windows): 데몬이 바뀐 뒤 앱을 다시 열면 같은 폴더·같은 이름의 PowerShell 터미널이 이전 화면과 안내 줄, `claude --resume <id>` 입력과 함께 돌아와야 한다.
+waittabs 2 @40000
+waitfor claude --resume 0b9f2f77-6a1e-4a4c-9d33-2f7a5d1c1a10 @30000
+wait 1500
+state restored
+dump restored
+shot restored-tab
+send (Get-Location).Path\r
+wait 1500
+dump restored-folder
+daemonlist restored
+quit

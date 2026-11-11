@@ -1,0 +1,52 @@
+# CPU(3단계 마감, 덩어리 28): cpu-stage2와 같은 장면에 편집 탭 5개(고친 채, 편집기에 포커스 — 캐럿이 깜빡인다)를 더해 놀 때 앱 CPU를 같은 날 2단계 마감 exe와 견준다. 아래는 2단계 설명이다.
+# CPU(2단계 마감): 터미널 4개가 WSL 저장소 폴더(파일 목록·Source control이 보이고 9P 수정 시각 폴링이 켜진 상태)에 놓인 채
+# 놀 때 60초(변경도 터미널 출력도 없음)와 변경 중 60초(1초마다 새 파일을 만들며 출력)의 앱·데몬 CPU와 `wsl.exe` 호출 수를 바깥 실행기(cpu-stage2.ps1)가 잰다.
+# 기본 셸은 WSL이다. 임시 폴더는 /tmp/pdk-cpu2 하나이고 끝에 지운다.
+waittabs 1 @30000
+send unset HISTFILE; rm -rf /tmp/pdk-cpu2 && mkdir -p /tmp/pdk-cpu2/proj/src && cd /tmp/pdk-cpu2/proj && for i in $(seq 1 200); do echo x > f$i.txt; done && git init -q -b main && git config user.name Tester && git config user.email t@example.com && git add -A && git commit -q -m base && ln -sf /bin/bash /tmp/pdk-cpu2/claude && export PATH=/tmp/pdk-cpu2:$PATH\r
+send echo READY-CPU2\r
+waitline READY-CPU2 @60000
+send claude -c 'read -t 900'\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @15000
+waitstate scm state=ready @30000
+key ctrl-shift-c
+waittabs 2 @20000
+key ctrl-shift-c
+waittabs 3 @20000
+key ctrl-shift-c
+waittabs 4 @20000
+# 편집 탭 5개: WSL 폴더의 파일을 열어 한 글자씩 고친다(저장하지 않은 채). 마지막 탭의 편집기에 포커스가 있어 캐럿이 깜빡인다.
+act openpath //wsl.localhost/Ubuntu/tmp/pdk-cpu2/proj/f1.txt
+waitstate kind=text state=text @15000
+text x
+act openpath //wsl.localhost/Ubuntu/tmp/pdk-cpu2/proj/f2.txt
+wait 800
+text x
+act openpath //wsl.localhost/Ubuntu/tmp/pdk-cpu2/proj/f3.txt
+wait 800
+text x
+act openpath //wsl.localhost/Ubuntu/tmp/pdk-cpu2/proj/f4.txt
+wait 800
+text x
+act openpath //wsl.localhost/Ubuntu/tmp/pdk-cpu2/proj/f5.txt
+wait 800
+text x
+# 시작 출력과 첫 읽기가 가라앉도록 기다린 뒤 구간을 표지로 알린다.
+wait 15000
+state idle-before
+mark idle-start
+wait 60000
+mark idle-end
+state idle-after
+mark change-start
+send for i in $(seq 1 60); do touch /tmp/pdk-cpu2/proj/g$i.txt; echo changed $i; sleep 1; done; echo CHANGES-DONE\r
+waitline CHANGES-DONE @90000
+mark change-end
+wait 4000
+state change-after
+act savechoice dont
+send rm -rf /tmp/pdk-cpu2\r
+wait 800
+quit

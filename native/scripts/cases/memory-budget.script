@@ -1,0 +1,21 @@
+# 메모리 예산: 터미널 4개(1개 보임)를 열고 20초 쉰 뒤, 4개 모두에 5만 줄을 출력한 뒤 Private 메모리를 잰다
+waittabs 1 @30000
+wait 1500
+mem start-1-terminal
+key ctrl-shift-t
+waittabs 2 @20000
+key ctrl-shift-t
+waittabs 3 @20000
+key ctrl-shift-t
+waittabs 4 @20000
+wait 20000
+mem four-terminals-20s
+sendto 1 seq 1 50000\r
+sendto 2 seq 1 50000\r
+sendto 3 seq 1 50000\r
+send seq 1 50000\r
+waitline 50000 @90000
+wait 5000
+mem after-50k-x4
+shot memory-budget-final
+quit

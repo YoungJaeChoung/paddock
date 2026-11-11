@@ -1,0 +1,119 @@
+# 파일 탭 열고 닫기 반복: 1 MiB 텍스트 탭과 400 KiB .ts(강조) 탭을 열고 닫기를 10번 반복하며 1·2·5·10번째 닫은 뒤 앱 Private 메모리를 잰다.
+# 회수마다 계속 늘면 누수, 평평하면 1회성 보유다. 이 대본은 실행 이름이 file-leak일 때 임시 홈 경로(C:/Temp/pdk-run/home-file-leak)를 쓴다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = $env:USERPROFILE; $line = "export const value = 'a long enough line of source text to fill the file quickly';`n"; $big = $line * [math]::Ceiling(1048576 / $line.Length); [IO.File]::WriteAllText("$p\\big.txt", $big.Substring(0, 1048576)); [IO.File]::WriteAllText("$p\\mid.ts", $big.Substring(0, 409600)); echo READY-LEAK\r
+waitline READY-LEAK @30000
+wait 3000
+mem baseline
+act openpath C:/Temp/pdk-run/home-file-leak/big.txt
+waitstate kind=text state=text @10000
+wait 1500
+act closefile
+wait 2500
+mem big-closed-1
+act openpath C:/Temp/pdk-run/home-file-leak/big.txt
+waitstate kind=text state=text @10000
+wait 1500
+act closefile
+wait 2500
+mem big-closed-2
+act openpath C:/Temp/pdk-run/home-file-leak/big.txt
+waitstate kind=text state=text @10000
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-file-leak/big.txt
+waitstate kind=text state=text @10000
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-file-leak/big.txt
+waitstate kind=text state=text @10000
+wait 1500
+act closefile
+wait 2500
+mem big-closed-5
+act openpath C:/Temp/pdk-run/home-file-leak/big.txt
+waitstate kind=text state=text @10000
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-file-leak/big.txt
+waitstate kind=text state=text @10000
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-file-leak/big.txt
+waitstate kind=text state=text @10000
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-file-leak/big.txt
+waitstate kind=text state=text @10000
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-file-leak/big.txt
+waitstate kind=text state=text @10000
+wait 1500
+act closefile
+wait 2500
+mem big-closed-10
+mem big-done
+act openpath C:/Temp/pdk-run/home-file-leak/mid.ts
+waitstate kind=text state=text @10000
+wait 1500
+act closefile
+wait 2500
+mem mid-closed-1
+act openpath C:/Temp/pdk-run/home-file-leak/mid.ts
+waitstate kind=text state=text @10000
+wait 1500
+act closefile
+wait 2500
+mem mid-closed-2
+act openpath C:/Temp/pdk-run/home-file-leak/mid.ts
+waitstate kind=text state=text @10000
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-file-leak/mid.ts
+waitstate kind=text state=text @10000
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-file-leak/mid.ts
+waitstate kind=text state=text @10000
+wait 1500
+act closefile
+wait 2500
+mem mid-closed-5
+act openpath C:/Temp/pdk-run/home-file-leak/mid.ts
+waitstate kind=text state=text @10000
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-file-leak/mid.ts
+waitstate kind=text state=text @10000
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-file-leak/mid.ts
+waitstate kind=text state=text @10000
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-file-leak/mid.ts
+waitstate kind=text state=text @10000
+wait 1500
+act closefile
+wait 2500
+act openpath C:/Temp/pdk-run/home-file-leak/mid.ts
+waitstate kind=text state=text @10000
+wait 1500
+act closefile
+wait 2500
+mem mid-closed-10
+mem mid-done
+quit

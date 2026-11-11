@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { coalesceMessage } = require('../message-coalesce');
 const { loggedLines } = require('../plugin-output-log');
+const { BackgroundGitRefresh } = require('../background-git-refresh');
 
 /** 호출 횟수를 세고, 직접 닫을 수 있는 열기 함수. */
 function fakeOpen() {
@@ -86,6 +87,7 @@ test('A-messages.6: 오류 모달은 알림으로 열고 누른 버튼을 응답
     const services = new Map([
         [MessageService, { error: (text, ...titles) => { shown.push([text, titles]); return Promise.resolve(answer); } }],
         [ILogger, { warn: () => {} }],
+        [BackgroundGitRefresh, new BackgroundGitRefresh()],
     ]);
     const registry = new PaddockMessageRegistryMain({ get: key => services.get(key) });
     const actions = [{ title: 'Open Git Log' }, { title: 'Show Command Output' }];
@@ -93,4 +95,57 @@ test('A-messages.6: 오류 모달은 알림으로 열고 누른 버튼을 응답
     assert.deepEqual(shown, [['Git: fatal', ['Open Git Log', 'Show Command Output']]]);
     answer = undefined;
     assert.equal(await registry.$showMessage(MainMessageType.Error, 'Git: fatal 2', { modal: true, onCloseActionHandle: 7 }, actions), 7);
+});
+
+test('A-messages.7: 백그라운드 다시 읽기 중 같은 실패가 이어지면 첫 알림만 띄우고, 성공하면 묶음을 닫아 반복 횟수를 돌려준다', async () => {
+    const refresh = new BackgroundGitRefresh();
+    assert.equal(refresh.classify('Git: x'), 'foreground');
+    const kinds = [];
+    const failing = () => { kinds.push(refresh.classify('Git: x')); return Promise.resolve(); };
+    assert.equal(await refresh.run(failing), null);
+    assert.equal(await refresh.run(failing), null);
+    assert.equal(await refresh.run(failing), null);
+    assert.deepEqual(kinds, ['first', 'repeat', 'repeat']);
+    assert.deepEqual(await refresh.run(() => Promise.resolve()), { failure: 'Git: x', n_repeats: 2 });
+    assert.equal(await refresh.run(() => Promise.resolve()), null);
+    await refresh.run(failing);
+    assert.equal(kinds.at(-1), 'first');
+});
+
+test('A-messages.8: 다른 문구는 새 실패로 띄우고, 다시 읽기가 거부해도 알림이 없었으면 성공으로 본다', async () => {
+    const refresh = new BackgroundGitRefresh();
+    await refresh.run(() => { refresh.classify('Git: x'); });
+    let kind;
+    await refresh.run(() => { kind = refresh.classify('Git: y'); });
+    assert.equal(kind, 'first');
+    assert.deepEqual(await refresh.run(() => Promise.reject(new Error('cancelled'))), { failure: 'Git: y', n_repeats: 0 });
+});
+
+test('A-messages.9: 등록기는 백그라운드 반복 실패를 띄우지도 로그에 남기지도 않고 닫힌 것으로 답한다', async () => {
+    const { MessageService } = require('@theia/core/lib/common/message-service');
+    const { ILogger } = require('@theia/core/lib/common/logger');
+    const { MainMessageType } = require('@theia/plugin-ext/lib/common/plugin-api-rpc');
+    const { PaddockMessageRegistryMain } = require('../plugin-messages');
+    const shown = [];
+    const logged = [];
+    const refresh = new BackgroundGitRefresh();
+    const services = new Map([
+        [MessageService, { error: (text) => { shown.push(text); return Promise.resolve(undefined); } }],
+        [ILogger, { warn: (line) => { logged.push(line); } }],
+        [BackgroundGitRefresh, refresh],
+    ]);
+    const registry = new PaddockMessageRegistryMain({ get: key => services.get(key) });
+    const options = { modal: true, onCloseActionHandle: 3 };
+    const answers = [];
+    const failing = () => registry.$showMessage(MainMessageType.Error, 'Git: Failed to execute git', options, []).then(answer => { answers.push(answer); });
+    await refresh.run(failing);
+    await refresh.run(failing);
+    await refresh.run(failing);
+    assert.deepEqual(shown, ['Git: Failed to execute git']);
+    assert.equal(logged.length, 1);
+    assert.match(logged[0], /background Git refresh/);
+    assert.deepEqual(answers, [3, 3, 3]);
+    // 백그라운드 다시 읽기 밖에서 온 같은 문구는 그대로 띄운다.
+    await registry.$showMessage(MainMessageType.Error, 'Git: Failed to execute git', options, []);
+    assert.equal(shown.length, 2);
 });

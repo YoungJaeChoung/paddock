@@ -1,0 +1,16 @@
+# 되살리기 준비(Windows): PowerShell 터미널에서 폴더로 들어가 표지를 찍고, 가짜 claude(ping 복사본)를 띄워 대화 기록(sessions/<pid>.json)을 남긴다.
+# 이 대본 뒤에 실행기(restore-run.ps1)가 끝맺음(종료 묻기에서 Stop all and quit, 또는 `mark ready-to-kill` 뒤 대기)을 덧붙인다.
+waittabs 1 @30000
+act envmenu
+waitstate menu: environments @5000
+act menuitem PowerShell
+waittabs 2 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj dir"; mkdir $p, "$env:USERPROFILE\\bin", "$env:USERPROFILE\\.claude\\sessions" -Force | Out-Null; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo BACKMARK\r
+waitline BACKMARK @20000
+send $c = Start-Process "$env:USERPROFILE\\bin\\claude.exe" -ArgumentList '-n','300','127.0.0.1' -NoNewWindow -PassThru; '{"pid":' + $c.Id + ',"sessionId":"0b9f2f77-6a1e-4a4c-9d33-2f7a5d1c1a10","kind":"interactive"}' | Set-Content "$env:USERPROFILE\\.claude\\sessions\\$($c.Id).json"; echo CLAUDE-UP\r
+waitline CLAUDE-UP @20000
+wait 9000
+state before
+dump before

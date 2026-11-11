@@ -34,6 +34,7 @@ const { WorkspaceService } = require('@theia/workspace/lib/browser/workspace-ser
 const model = require('./work-model');
 const { searchRoots } = require('./search-scope');
 const { fileRootFor } = require('./file-owner');
+const { BackgroundGitRefresh } = require('./background-git-refresh');
 const layoutModel = require('./layout-model');
 const tabOverflow = require('./tab-overflow');
 const { attachTabDrag, attachNativeTabDrag } = require('./tab-detach');
@@ -45,7 +46,7 @@ const { UsagePanel } = require('./usage-panel');
 const agent = require('./agent-model');
 const { startRendererProbe } = require('./renderer-probe');
 const agentAccount = require('./agent-account');
-const { STORAGE, STATUS_ITEMS, MARKDOWN_PREVIEW, element, button, attachMenuKeys } = require('./workspace/shared');
+const { STORAGE, STATUS_ITEMS, MARKDOWN_PREVIEW, PENCIL, element, button, attachMenuKeys } = require('./workspace/shared');
 const { RootSwitcher } = require('./workspace/root-switcher');
 const { AgentActivity } = require('./workspace/agent-activity');
 const { AccountTerminals } = require('./workspace/account-terminals');
@@ -57,6 +58,7 @@ const { QuickSettings } = require('./workspace/quick-settings');
 const { PathBar } = require('./workspace/path-bar');
 const { StatusBar } = require('./workspace/status-bar');
 const { MemoryNotice } = require('./workspace/memory-notice');
+const { AgentStatusHookSync } = require('./workspace/agent-status-hook');
 
 // 터미널 현재 폴더·실행 중 프로그램·메모리처럼 이벤트가 없는 값을 다시 읽는 간격(ms).
 const REFRESH_INTERVAL = 2000;
@@ -90,6 +92,9 @@ const RESIZE_KEY_GUARD_MS = 200;
 
 // 파일 감시가 걸리지 않는 WSL 폴더를 보는 동안 Git 상태·파일 목록을 다시 읽는 간격(watchShownFolder).
 const WSL_FOLDER_REREAD_MS = 5000;
+
+// 감시가 걸리지 않는 WSL 폴더의 열린 파일을 보이는 동안 디스크와 대조하는 간격(watchOpenWslFiles).
+const WSL_OPEN_FILE_CHECK_MS = 2000;
 
 /**
  * 사이드바(Work·Source control·Extensions), Unassigned 작업 목록, 내부 터미널·파일 탭 줄, 본문 경로 줄, 상태 줄을 Theia 서비스와 잇는다.
@@ -129,6 +134,8 @@ class PaddockWorkspace {
         this.pageFolders = new Map();
         this.markdownPreviewSources = new Map();
         this.pendingMarkdownSource = null;
+        // 별도 창으로 한 번 내보낸 Pencil 화면. 되돌린 탭을 다시 내보내지 않으려고 기억한다.
+        this.pencilWindowOffered = new WeakSet();
         this.homePath = '';
         // -- 에이전트 완료 알림 --
         this.activity = new Map();
@@ -174,6 +181,7 @@ class PaddockWorkspace {
         this.pathBar = new PathBar(this);
         this.statusBar = new StatusBar(this);
         this.memoryNotice = new MemoryNotice(this);
+        this.agentStatusHook = new AgentStatusHookSync(this);
     }
 
     // -- 명령·단축키 --
@@ -432,6 +440,7 @@ class PaddockWorkspace {
             fetch(url, { method: 'DELETE', keepalive: true }).catch(() => {});
         });
         this.scm = this.container.get(ScmService);
+        this.backgroundGitRefresh = this.container.get(BackgroundGitRefresh);
         this.env = this.container.get(EnvVariablesServer);
         this.remoteStatus = this.container.get(RemoteStatusService);
         this.preferences = this.container.get(PreferenceService);
@@ -464,6 +473,8 @@ class PaddockWorkspace {
             }
             // 메모리 안내를 켜거나 기준값을 바꾸면 기본 환경과 등록 계정의 Claude 설정을 맞춘다.
             if (this.memoryNotice.isPreference(preferenceName)) void this.memoryNotice.syncAll();
+            // 에이전트 상태 훅을 켜거나 끄면 같은 설정 파일을 맞춘다.
+            if (this.agentStatusHook.isPreference(preferenceName)) void this.agentStatusHook.syncAll();
             if (preferenceName === 'paddock.interfaceFontFamily' || preferenceName === 'paddock.sidebarIndent') {
                 this.quickSettings.applyInterfacePreferences();
                 if (preferenceName === 'paddock.sidebarIndent') this.refreshSoon();
@@ -486,6 +497,16 @@ class PaddockWorkspace {
             if (this.isTerminal(widget)) this.agentActivity.watchTerminal(widget);
             if (widget instanceof WebviewWidget && widget.viewType === MARKDOWN_PREVIEW.VIEW_TYPE && this.pendingMarkdownSource) {
                 this.markdownPreviewSources.set(widget.id, this.pendingMarkdownSource);
+            }
+            // 묶음을 바꾸면 그 묶음 밖 탭은 DOM에서 떨어지고, Theia는 떨어진 웹뷰의 iframe을 지운다(가려진 탭은 Pencil이 유지를 켜 둬 괜찮다).
+            // 묶음과 무관한 별도 창에 두면 떨어지지 않는다. 처음 열 때만 옮겨, 사용자가 본 창으로 되돌린 탭은 다시 내보내지 않는다.
+            if (widget instanceof WebviewWidget && widget.viewType === PENCIL.VIEW_TYPE && this.layoutReady && !widget.secondaryWindow
+                && !this.pencilWindowOffered.has(widget) && this.preferences.get(PENCIL.OWN_WINDOW_PREFERENCE, true)) {
+                this.pencilWindowOffered.add(widget);
+                // 연 쪽의 활성화가 끝난 뒤 옮긴다.
+                setTimeout(() => {
+                    if (!widget.isDisposed && !widget.secondaryWindow) this.run(() => this.folderTabs.moveTabToWindow(widget.id));
+                }, 0);
             }
             if (this.isFolderPage(widget)) {
                 const folder = this.shownFolder();
@@ -595,9 +616,12 @@ class PaddockWorkspace {
             accountMenu.hidePopover();
             accountPicker.focus();
         });
-        this.shell.folderBar.node.querySelector('.markdown-view-actions').addEventListener('click', (event) => {
-            const target = event.target.closest('[data-markdown-view]');
-            if (target) this.run(() => this.markdownPreview.setMarkdownView(target.dataset.markdownView));
+        // 보기 전환과 분할 버튼은 칸을 나누면 복제본이 그 칸의 탭 묶음 끝에 그려진다(folder-tabs.js). 원본·복제본 모두 받도록 줄에서 위임해 듣는다.
+        this.shell.folderBar.node.addEventListener('click', (event) => {
+            const view = event.target.closest('[data-markdown-view]');
+            const split = event.target.closest('.folder-split-down, .folder-split-right');
+            if (view) this.run(() => this.markdownPreview.setMarkdownView(view.dataset.markdownView));
+            else if (split) this.run(() => this.newTerminalHere({ split: split.classList.contains('folder-split-down') ? 'split-bottom' : 'split-right' }));
         });
         // 브랜치 표시를 누르면 Git 확장의 브랜치 전환 목록을 연다. 지금 작업 폴더의 저장소 경로를 넘겨 저장소를 다시 묻지 않게 한다.
         this.shell.folderBar.node.querySelector('.folder-bar-branch').addEventListener('click', () => this.run(async () => {
@@ -650,8 +674,6 @@ class PaddockWorkspace {
             // 창·사이드바 폭이 바뀌면 잘린 탭과 넘김 버튼을 맞춘다. 사용자가 다른 탭을 찾는 스크롤 위치는 유지한다.
             new ResizeObserver(() => this.folderTabs.updateTabOverflow(strip)).observe(strip);
         }
-        this.shell.folderBar.node.querySelector('.folder-split-down').addEventListener('click', () => this.run(() => this.newTerminalHere({ split: 'split-bottom' })));
-        this.shell.folderBar.node.querySelector('.folder-split-right').addEventListener('click', () => this.run(() => this.newTerminalHere({ split: 'split-right' })));
         const picker = sidebar.querySelector('.shell-picker');
         const menu = sidebar.querySelector('#shell-menu');
         menu.addEventListener('beforetoggle', (event) => {
@@ -690,6 +712,7 @@ class PaddockWorkspace {
             if (quickSettings.matches(':popover-open')) this.quickSettings.renderQuickSettings();
         });
         this.shell.footer.node.querySelector('.remote-indicator').addEventListener('click', () => this.run(() => this.commands.executeCommand('remote.select')));
+        this.watchOpenWslFiles();
         this.files.onDidFilesChange((event) => {
             this.refreshRepositoriesOf(event.changes.map(change => change.resource));
             // 파일 내용 변경은 행 표시를 바꾸지 않는다. 추가·삭제 때는 수정 시각의 정밀도에 기대지 않고 목록을 다시 읽는다.
@@ -766,6 +789,7 @@ class PaddockWorkspace {
         this.usagePanel.data.restoreSelection(await this.storage.getData(STORAGE.USAGE_SELECTION, {}).catch(() => ({})));
         void this.usagePanel.refresh();
         void this.memoryNotice.syncAll();
+        void this.agentStatusHook.syncAll();
         const liveIds = new Set(this.terminals.all.map(terminal => terminal.id));
         this.state = model.restore(saved || '', liveIds);
         const savedInner = await this.storage.getData(STORAGE.INNER_TABS, '{}');
@@ -1783,7 +1807,10 @@ class PaddockWorkspace {
                     // 경로가 열린 저장소에 속하므로 Git 확장이 저장소 고르기 창을 띄우지 않는다.
                     // 경로는 주소의 호스트까지 담아 바꾼다. 경로 부분만 쓰면 WSL 폴더(\\wsl.localhost\…)가 \<배포판>\…로 바뀌어
                     // Git 확장이 저장소를 못 찾고, 5초마다 다시 읽을 때마다 "Choose a repository" 창이 뜬다.
-                    this.commands.executeCommand('git.refresh', root).catch(() => undefined);
+                    // 실패하면 Git 확장이 오류 알림을 띄운다. 같은 실패의 반복 알림은 BackgroundGitRefresh가 거른다.
+                    this.backgroundGitRefresh.run(() => this.commands.executeCommand('git.refresh', root)).then((recovered) => {
+                        if (recovered) console.warn(`Background Git refresh succeeded again after "${recovered.failure}" (${recovered.n_repeats} repeated failures hidden).`);
+                    });
                 }, 500));
             }
         }
@@ -1857,6 +1884,43 @@ class PaddockWorkspace {
                 this.refreshRepositoriesOf([uri]);
             }
         }
+    }
+
+    /**
+     * WSL 폴더(\\wsl.localhost\…)의 열린 파일이 에이전트·터미널이 쓴 내용을 바로 보이게 한다. 앱 시작 때 한 번 건다.
+     *
+     * 열린 파일은 Theia가 파일마다 감시를 걸어 디스크가 바뀌면 다시 읽지만, Windows의 파일 감시는 WSL 폴더에 걸리지 않아
+     * 그 파일만 사건이 오지 않는다. 그래서 창이 보이는 동안 몇 초마다, 그리고 창에 초점이 돌아올 때 화면에 보이는 편집기만
+     * 쓴 시각·크기를 읽어 달라졌으면 다시 읽는다. 저장하지 않은 수정이 있는 문서는 다시 읽지 않는다(Theia가 저장 때 충돌을 묻는다).
+     */
+    watchOpenWslFiles() {
+        const stamps = new Map();
+        let n_checking = 0;
+        const check = async () => {
+            if (!document.hidden && n_checking === 0) {
+                const documents = [...this.shell.mainPanel.widgets()]
+                    .filter(widget => widget.isVisible && widget.editor?.document?.sync)
+                    .map(widget => widget.editor.document)
+                    .filter(document => ['wsl.localhost', 'wsl$'].includes(new URI(document.uri).authority.toLowerCase()));
+                n_checking += 1;
+                try {
+                    for (const document of documents) {
+                        const stat = await this.files.resolve(new URI(document.uri), { resolveMetadata: true }).catch(() => null);
+                        const stamp = stat ? `${stat.mtime}:${stat.size}` : null;
+                        const previous = stamps.get(document.uri);
+                        stamps.set(document.uri, stamp);
+                        if (stamp && previous !== undefined && previous !== stamp && !document.dirty) await document.sync();
+                    }
+                } catch (error) {
+                    // 주기 확인이라 실패를 알림으로 띄우지 않는다. 다음 확인에서 다시 읽는다.
+                    console.warn('Could not reread an open WSL file', error);
+                } finally {
+                    n_checking -= 1;
+                }
+            }
+        };
+        setInterval(check, WSL_OPEN_FILE_CHECK_MS);
+        window.addEventListener('focus', check);
     }
 
     /**
@@ -2082,10 +2146,16 @@ class PaddockWorkspace {
         const fileBar = bars.find(bar => bar.titles.length && bar.titles.every(title => !this.isTerminal(title.owner)) && bar.currentTitle?.owner?.getResourceUri?.());
         const current = this.currentWidget();
         const terminal = this.isTerminal(current) ? current : bars.flatMap(bar => bar.titles.map(title => title.owner)).find(widget => this.isTerminal(widget));
-        // 파일은 터미널 옆 칸에 둔다. 이미 파일 칸이 있으면 그 칸의 탭을 재사용한다.
+        // 파일 칸이 없어도 터미널과 함께 파일이 든 칸이 있으면 그 칸의 파일 옆 탭으로 연다. 지금 칸을 먼저 본다.
+        // 새 칸을 만들면 나눈 칸 끝에 좁은 칸이 또 생겨 탭이 줄 끝 버튼에 가려진다(사용자 피드백 "맨 오른쪽 분할같이 생기고 터미널 탭도 안 생겼어").
+        const currentBar = current && this.shell.getTabBarFor(current);
+        const fileIn = bar => bar?.titles.map(title => title.owner).find(owner => !this.isTerminal(owner) && owner.getResourceUri?.());
+        const fileNeighbor = fileIn(currentBar) ?? bars.map(fileIn).find(Boolean);
+        // 파일은 터미널 옆 칸에 둔다. 이미 파일 칸(또는 파일이 든 칸)이 있으면 그 칸의 탭을 재사용한다.
         const widgetOptions = fileBar
             ? { area: 'main', ref: fileBar.currentTitle.owner }
-            : terminal ? { area: 'main', mode: 'split-right', ref: terminal } : { area: 'main' };
+            : fileNeighbor ? { area: 'main', ref: fileNeighbor }
+                : terminal ? { area: 'main', mode: 'split-right', ref: terminal } : { area: 'main' };
         const options = { mode: 'activate', widgetOptions, preview: false };
         const opener = await this.opener.getOpener(uri, options);
         if (uri.path.ext.toLowerCase() === '.pen' && !opener.id.startsWith('custom-editor-')) {

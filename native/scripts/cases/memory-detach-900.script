@@ -1,0 +1,86 @@
+# 분리 창 메모리(덩어리 36), 분리 창을 설계 크기 900×600으로 맞춘 판(자동 점검의 화면 밖 실행은 창이 기본 크기 1536×1095로 열린다): 열기 전 → 분리 1 → 20초 → 되돌림 → 20초 → 열고 닫기 10회 → 20초. 각 단계에서 Private 메모리와 그래픽 몫을 잰다.
+waittabs 1 @30000
+send echo MEM-A\r
+waitline MEM-A @20000
+key ctrl-shift-t
+waittabs 2 @20000
+send echo MEM-B\r
+wait 20000
+mem before-detach
+gpumem before-detach
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 20000
+mem detached-open
+gpumem detached-open
+act moveback 2
+waitstate detached=- @10000
+wait 20000
+mem after-close
+gpumem after-close
+act movetowindow 2
+waitstate detached=2 @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+wait 20000
+mem after-10
+gpumem after-10
+act quick quitstop
+wait 3000

@@ -121,7 +121,7 @@ test('A05 shares new skills at launch and preserves a conflicting account skill'
     skill(setup.claudeDirectory, 'new-skill');
     skill(initial.configDir, 'new-skill');
     const prepared = await setup.accounts.prepare(profile.id);
-    assert.deepEqual(prepared.warnings, ['An existing skill named new-skill was kept.']);
+    assert.deepEqual(prepared.warnings, [], 'a kept account skill is the user\'s own and is not reported');
     assert.equal(fs.lstatSync(path.join(initial.configDir, 'skills', 'new-skill')).isSymbolicLink(), false);
     skill(setup.claudeDirectory, 'added-later');
     await setup.accounts.prepare(profile.id);
@@ -219,7 +219,7 @@ test('A12 rejects unavailable WSL runtime without creating a native substitute',
     assert.deepEqual(fs.readdirSync(setup.homeDirectory), []);
 });
 
-test('A15 keeps a broken conflicting skill link and reports that it was not shared', async context => {
+test('A15 keeps a broken conflicting skill link without a notice', async context => {
     const setup = fixture(context);
     const profile = await setup.accounts.create({ provider: 'claude' });
     const prepared = await setup.accounts.prepare(profile.id);
@@ -227,7 +227,7 @@ test('A15 keeps a broken conflicting skill link and reports that it was not shar
     const missingDirectory = path.join(setup.homeDirectory, 'missing-skill');
     fs.symlinkSync(missingDirectory, path.join(prepared.configDir, 'skills', 'writing'), process.platform === 'win32' ? 'junction' : 'dir');
     const result = await setup.accounts.prepare(profile.id);
-    assert.deepEqual(result.warnings, ['An existing skill named writing was kept.']);
+    assert.deepEqual(result.warnings, []);
     assert.equal(fs.existsSync(missingDirectory), false);
 });
 
@@ -333,7 +333,7 @@ test('A28 WSL preparation script links settings.json like the native preparation
     assert.equal(fs.readFileSync(path.join(configDir, 'settings.json'), 'utf8'), '{"theme":"dark"}\n');
     fs.rmSync(path.join(configDir, 'settings.json'));
     fs.writeFileSync(path.join(configDir, 'settings.json'), '{"own":true}\n');
-    assert.deepEqual(prepare(), ['The settings.json of this account was moved to settings.json.paddock-backup; the account now follows the shared settings.json.']);
+    assert.deepEqual(prepare(), [], 'the backup keeps old settings recoverable, so the move is not reported');
     assert.equal(fs.readFileSync(path.join(configDir, 'settings.json.paddock-backup'), 'utf8'), '{"own":true}\n');
     assert.deepEqual(prepare(), []);
     fs.rmSync(path.join(configDir, 'settings.json'));
@@ -342,8 +342,8 @@ test('A28 WSL preparation script links settings.json like the native preparation
     assert.equal(fs.lstatSync(path.join(configDir, 'settings.json')).isSymbolicLink(), true);
     fs.rmSync(path.join(configDir, 'settings.json'));
     fs.writeFileSync(path.join(configDir, 'settings.json'), '{"other":1}\n');
-    const [warning] = prepare();
-    assert.match(warning, /settings\.json\.paddock-backup-\d{8}-\d{6}/);
+    assert.deepEqual(prepare(), []);
+    assert.equal(fs.readdirSync(configDir).filter(name => /^settings\.json\.paddock-backup-\d{8}-\d{6}$/.test(name)).length, 1, 'a taken backup name gets a time stamp');
     // Codex follows its config.toml the same way.
     fs.mkdirSync(path.join(home, '.codex'));
     fs.writeFileSync(path.join(home, '.codex', 'config.toml'), 'model = "x"\n');
@@ -391,7 +391,7 @@ test('A25 settings.json: an account file is moved to a backup and replaced by a 
     const second = await setup.accounts.prepare(profile.id);
     assert.equal(fs.readlinkSync(accountFile), dotfile);
     assert.equal(fs.readFileSync(`${accountFile}.paddock-backup`, 'utf8'), '{"autoMode":true}\n');
-    assert.deepEqual(second.warnings, ['The settings.json of this account was moved to settings.json.paddock-backup; the account now follows the shared settings.json.']);
+    assert.deepEqual(second.warnings, [], 'the backup keeps old settings recoverable, so the move is not reported');
     const third = await setup.accounts.prepare(profile.id);
     assert.deepEqual(third.warnings, []);
     assert.deepEqual(fs.readdirSync(first.configDir).filter(name => name.startsWith('settings.json')).sort(), ['settings.json', 'settings.json.paddock-backup']);
@@ -407,7 +407,7 @@ test('A25 settings.json: an account file is moved to a backup and replaced by a 
     const stamped = fs.readdirSync(first.configDir).filter(name => /^settings\.json\.paddock-backup-\d{8}-\d{6}$/.test(name));
     assert.equal(stamped.length, 1);
     assert.equal(fs.readFileSync(path.join(first.configDir, stamped[0]), 'utf8'), '{"model":"x"}\n');
-    assert.match(fourth.warnings[0], /settings\.json\.paddock-backup-\d{8}-\d{6}/);
+    assert.deepEqual(fourth.warnings, []);
     assert.equal(fs.readFileSync(`${accountFile}.paddock-backup`, 'utf8'), '{"autoMode":true}\n');
 });
 
@@ -426,16 +426,16 @@ test('A26 settings.json: no host file does nothing; an account file with the hos
     assert.deepEqual(relinked.warnings, []);
     assert.equal(fs.lstatSync(accountFile).isSymbolicLink(), true);
     assert.equal(fs.existsSync(`${accountFile}.paddock-backup`), false);
-    // A link to another file is kept and reported.
+    // A link to another file is kept without a notice.
     fs.rmSync(accountFile);
     fs.writeFileSync(path.join(setup.homeDirectory, 'elsewhere.json'), '{}');
     fs.symlinkSync(path.join(setup.homeDirectory, 'elsewhere.json'), accountFile);
-    assert.deepEqual((await setup.accounts.prepare(profile.id)).warnings, ['An existing settings.json link was kept.']);
+    assert.deepEqual((await setup.accounts.prepare(profile.id)).warnings, []);
     assert.equal(fs.readlinkSync(accountFile), path.join(setup.homeDirectory, 'elsewhere.json'));
-    // A folder is kept and reported.
+    // A folder is kept without a notice.
     fs.rmSync(accountFile);
     fs.mkdirSync(accountFile);
-    assert.deepEqual((await setup.accounts.prepare(profile.id)).warnings, ['An existing settings.json entry was kept.']);
+    assert.deepEqual((await setup.accounts.prepare(profile.id)).warnings, []);
 });
 
 test('A27 settings.json on Windows without link permission: the account gets a refreshed copy, backs up its first differing file once, and Codex gets no settings link', async context => {
@@ -453,7 +453,7 @@ test('A27 settings.json on Windows without link permission: the account gets a r
     const profile = await setup.accounts.create({ provider: 'claude' });
     const first = await setup.accounts.prepare(profile.id);
     const accountFile = path.join(first.configDir, 'settings.json');
-    const message = 'Enable Windows developer mode to share settings.json live; the account copy is refreshed each launch.';
+    const message = 'Settings changed in this account are replaced by the shared settings.json at each launch because Windows blocked the link. Turn on Developer Mode in Windows Settings to keep them.';
     // Creating the account already made the copy (its warning is dropped with the creation result), so an equal copy now reports nothing.
     assert.deepEqual(first.warnings, []);
     assert.equal(fs.lstatSync(accountFile).isSymbolicLink(), false);
@@ -488,7 +488,7 @@ test('A31 Codex config.toml is linked straight to the host file like Claude\'s s
     fs.rmSync(accountFile);
     fs.writeFileSync(accountFile, '[projects."/w"]\ntrust_level = "trusted"\n');
     const second = await setup.accounts.prepare(profile.id);
-    assert.deepEqual(second.warnings, ['The config.toml of this account was moved to config.toml.paddock-backup; the account now follows the shared config.toml.']);
+    assert.deepEqual(second.warnings, []);
     assert.equal(fs.readFileSync(`${accountFile}.paddock-backup`, 'utf8'), '[projects."/w"]\ntrust_level = "trusted"\n');
     assert.equal(fs.readFileSync(accountFile, 'utf8'), 'model = "gpt-5"\n');
     assert.equal(fs.existsSync(path.join(first.configDir, 'settings.json')), false);
@@ -573,7 +573,7 @@ test('A33 a link left dangling because the host file or folder moved is repointe
     fs.rmSync(path.join(first.configDir, 'settings.json'));
     fs.writeFileSync(path.join(setup.homeDirectory, 'other.json'), '{}');
     fs.symlinkSync(path.join(setup.homeDirectory, 'other.json'), path.join(first.configDir, 'settings.json'));
-    assert.deepEqual((await setup.accounts.prepare(profile.id)).warnings, ['An existing settings.json link was kept.']);
+    assert.deepEqual((await setup.accounts.prepare(profile.id)).warnings, []);
 });
 
 test('A34 the WSL preparation script repoints dangling settings and folder links the same way', { skip: process.platform === 'win32' }, context => {
@@ -603,7 +603,7 @@ test('A34 the WSL preparation script repoints dangling settings and folder links
     assert.equal(fs.existsSync(path.join(configDir, 'commands')), true);
 });
 
-test('A21 keeps an account-owned commands folder and reports it', async context => {
+test('A21 keeps an account-owned commands folder without a notice', async context => {
     const setup = fixture(context);
     fs.mkdirSync(path.join(setup.claudeDirectory, 'commands'), { recursive: true });
     const profile = await setup.accounts.create({ provider: 'claude' });
@@ -612,7 +612,7 @@ test('A21 keeps an account-owned commands folder and reports it', async context 
     fs.mkdirSync(path.join(initial.configDir, 'commands'));
     fs.writeFileSync(path.join(initial.configDir, 'commands', 'own.md'), 'own');
     const prepared = await setup.accounts.prepare(profile.id);
-    assert.deepEqual(prepared.warnings, ['An existing commands folder was kept.']);
+    assert.deepEqual(prepared.warnings, []);
     assert.deepEqual(fs.readdirSync(path.join(prepared.configDir, 'commands')), ['own.md']);
 });
 
@@ -706,7 +706,7 @@ test('A19 Windows WSL preparation separates the browser directory from warnings 
     const calls = [];
     context.mock.method(require('node:child_process'), 'execFile', (command, argumentsList, options, callback) => {
         calls.push({ command, argumentsList });
-        callback(null, `${configDir}\0${browserDirectory}\0An existing skill named writing was kept.\0`);
+        callback(null, `${configDir}\0${browserDirectory}\0commands could not be shared: the link was refused.\0`);
     });
     const modulePaths = [require.resolve('../account-profile-wsl'), require.resolve('../account-profiles')];
     const previousModules = modulePaths.map(modulePath => require.cache[modulePath]);
@@ -717,7 +717,7 @@ test('A19 Windows WSL preparation separates the browser directory from warnings 
     const prepared = await accounts.prepare(profile.id);
     assert.equal(prepared.configDir, configDir);
     assert.equal(prepared.browserDirectory, browserDirectory);
-    assert.deepEqual(prepared.warnings, ['An existing skill named writing was kept.']);
+    assert.deepEqual(prepared.warnings, ['commands could not be shared: the link was refused.']);
     assert.deepEqual(calls[0].argumentsList.slice(7, 11), [profile.id, profile.provider, BrowserBridge.NAME, BrowserBridge.SCRIPT]);
     browserDirectory = '/tmp/another-account/paddock-bin';
     await assert.rejects(accounts.prepare(profile.id), /valid browser helper folder/);

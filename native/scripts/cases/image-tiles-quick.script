@@ -1,0 +1,25 @@
+# 이미지 조각 보기(빠른 확인): 4K를 1:1로 바꾼 뒤 시간을 두고 캡처해 조각이 그려지는지 본다. 실행 이름은 image-tiles-quick이다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send echo READY-TILES\r
+waitline READY-TILES @30000
+wait 3000
+act openpath C:/Temp/pdk-run/home-image-tiles-quick/proj-big/g-4k.png
+waitstate kind=image state=image @20000
+wait 1500
+act imgzoom
+waitstate full=yes @20000
+wait 500
+shot q1
+wait 2500
+shot q2
+act imgscroll 3000 0
+wait 1500
+shot q3
+act imgscroll 0 1500
+wait 1500
+shot q4
+act imgscroll 3000 1500
+wait 1500
+shot q5
+quit

@@ -1,0 +1,19 @@
+# 종료 묻기 → 백그라운드 유지: 터미널 2개를 만들고 창을 닫는다
+waittabs 1 @30000
+send echo ONE\r
+waitline ONE @20000
+key ctrl-shift-t
+waittabs 2 @20000
+send echo TWO\r
+waitline TWO @20000
+send ls /\r
+wait 1500
+dumptab 1 before-1
+dumptab 2 before-2
+state before
+shot before-quit
+closewindow
+waitoverlay quit @5000
+shot quit-prompt
+key enter
+wait 3000

@@ -1,0 +1,118 @@
+# 폴더 검색 반복: 검색 보기를 열고 일치 2,000건을 보인 뒤 닫는 일을 열 번 되풀이하며 닫은 뒤 Private 메모리가 늘지 않는지 1·2·5·10번째에 잰다.
+# 임시 홈에 prep-search-big.sh로 proj-big 폴더를 채우고 기본 셸을 PowerShell로 둔다. 실행 이름은 search-leak다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-big"; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo READY-BIG\r
+waitline READY-BIG @60000
+send claude.exe -n 60 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 5000
+mem leak-0
+gpumem leak-0
+key ctrl-shift-f
+wait 800
+act search needle
+waitstate n_results=2000 n_files=1 capped=y state=done @60000
+wait 1500
+key ctrl-shift-f
+wait 600
+wait 600
+wait 3000
+wait 5000
+mem leak-1
+gpumem leak-1
+key ctrl-shift-f
+wait 800
+act search needle
+waitstate n_results=2000 n_files=1 capped=y state=done @60000
+wait 1500
+key ctrl-shift-f
+wait 600
+wait 600
+wait 3000
+wait 5000
+mem leak-2
+gpumem leak-2
+key ctrl-shift-f
+wait 800
+act search needle
+waitstate n_results=2000 n_files=1 capped=y state=done @60000
+wait 1500
+key ctrl-shift-f
+wait 600
+wait 600
+wait 3000
+key ctrl-shift-f
+wait 800
+act search needle
+waitstate n_results=2000 n_files=1 capped=y state=done @60000
+wait 1500
+key ctrl-shift-f
+wait 600
+wait 600
+wait 3000
+key ctrl-shift-f
+wait 800
+act search needle
+waitstate n_results=2000 n_files=1 capped=y state=done @60000
+wait 1500
+key ctrl-shift-f
+wait 600
+wait 600
+wait 3000
+wait 5000
+mem leak-5
+gpumem leak-5
+key ctrl-shift-f
+wait 800
+act search needle
+waitstate n_results=2000 n_files=1 capped=y state=done @60000
+wait 1500
+key ctrl-shift-f
+wait 600
+wait 600
+wait 3000
+key ctrl-shift-f
+wait 800
+act search needle
+waitstate n_results=2000 n_files=1 capped=y state=done @60000
+wait 1500
+key ctrl-shift-f
+wait 600
+wait 600
+wait 3000
+key ctrl-shift-f
+wait 800
+act search needle
+waitstate n_results=2000 n_files=1 capped=y state=done @60000
+wait 1500
+key ctrl-shift-f
+wait 600
+wait 600
+wait 3000
+key ctrl-shift-f
+wait 800
+act search needle
+waitstate n_results=2000 n_files=1 capped=y state=done @60000
+wait 1500
+key ctrl-shift-f
+wait 600
+wait 600
+wait 3000
+key ctrl-shift-f
+wait 800
+act search needle
+waitstate n_results=2000 n_files=1 capped=y state=done @60000
+wait 1500
+key ctrl-shift-f
+wait 600
+wait 600
+wait 3000
+wait 5000
+mem leak-10
+gpumem leak-10
+quit

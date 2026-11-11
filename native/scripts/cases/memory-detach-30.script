@@ -1,0 +1,231 @@
+# 분리 창 열고 닫기 30회 메모리(덩어리 36): 분리 창을 900×600으로 맞춘 판. 10회마다 재어 직선으로 늘지 않는지(한 번의 보유인지) 본다.
+waittabs 1 @30000
+send echo MEM-A\r
+waitline MEM-A @20000
+key ctrl-shift-t
+waittabs 2 @20000
+send echo MEM-B\r
+wait 20000
+mem before
+gpumem before
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+wait 15000
+mem after-10
+gpumem after-10
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+wait 15000
+mem after-20
+gpumem after-20
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+act movetowindow 2
+waitstate detached=2 @10000
+act resizewin 2 900 600
+wait 1500
+act moveback 2
+waitstate detached=- @10000
+wait 800
+wait 15000
+mem after-30
+gpumem after-30
+act quick quitstop
+wait 3000

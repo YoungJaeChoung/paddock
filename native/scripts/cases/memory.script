@@ -1,0 +1,19 @@
+# 메모리: 터미널 2개에 각각 5만 줄을 출력한 뒤 앱·데몬 Private 메모리를 잰다
+waittabs 1 @30000
+wait 1500
+mem start-1-terminal
+key ctrl-shift-t
+waittabs 2 @20000
+wait 1500
+mem start-2-terminals
+sendto 1 seq 1 50000\r
+send seq 1 50000\r
+waitline 50000 @60000
+wait 3000
+mem after-50k-lines
+key ctrl-left
+waitline 50000 @20000
+wait 1500
+mem after-50k-lines-tab1
+shot memory-final
+quit

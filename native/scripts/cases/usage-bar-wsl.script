@@ -1,0 +1,9 @@
+# 상태 줄 사용량(WSL 계정, 덩어리 29): 상태 줄에 남긴 WSL 계정의 값을 `\\wsl.localhost\<배포판>\…\paddock-usage\claude.json`에서 읽어 오고, 읽는 동안 창 스레드는 막히지 않는다(ui-max-busy-ms ≤ 100).
+# 계정 폴더는 실제 WSL 홈에 이미 있는 것이라 읽기만 한다. 값은 시험이 같은 파일을 따로 읽어 견준다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+waitstate claude=WSL Real: @40000
+waitstate reading=no @10000
+state wsl-account
+shot wsl-account
+quit

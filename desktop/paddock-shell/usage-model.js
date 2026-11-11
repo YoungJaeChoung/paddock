@@ -145,6 +145,27 @@ function shortAge(
 }
 
 /**
+ * 창이 초기화되는 시각을 지금 시간대의 날짜·시각으로 적는다. 오늘이면 시각만, 다른 날이면 날짜를 앞에 붙인다.
+ * 시각을 모르면(초기화되었거나 기록에 없음) 빈 문자열이다.
+ *
+ * Examples:
+ *   resetsAt 오늘 18:30 → '18:30' · resetsAt 10월 14일 09:00 → 'Oct 14, 09:00' · null → ''
+ */
+function resetClock(
+    window,
+    nowSeconds,
+) {
+    let text = '';
+    if (Number.isFinite(window.resetsAt) && window.resetsAt > nowSeconds) {
+        const reset = new Date(window.resetsAt * 1000);
+        const time = reset.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+        const sameDay = reset.toDateString() === new Date(nowSeconds * 1000).toDateString();
+        text = sameDay ? time : `${reset.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, ${time}`;
+    }
+    return text;
+}
+
+/**
  * 게이지 말풍선 문구.
  *
  * Examples:
@@ -203,6 +224,7 @@ module.exports = {
     currentWindows,
     hasCurrentWindow,
     describe,
+    resetClock,
     duration,
     shortAge,
     paddockStatusLineFiles,

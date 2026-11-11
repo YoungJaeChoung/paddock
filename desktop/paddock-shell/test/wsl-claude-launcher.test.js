@@ -24,7 +24,48 @@ function run(
     return { status: result.status, stderr: result.stderr, items: result.stdout.split('\0').filter(Boolean) };
 }
 
-const LINE = 'export PATH="$HOME/.paddock/config/bin:$PATH" # paddock-claude-wrapper';
+// The launcher is a shell function, not a PATH entry: a login shell runs ~/.profile after ~/.bashrc, and Ubuntu's ~/.profile (and Claude Code's installer line)
+// put ~/.local/bin back in front of PATH, so a PATH entry added in ~/.bashrc loses to the real claude. A function is found before PATH.
+const LINE = 'claude() { if [ -x "$HOME/.paddock/config/bin/claude" ]; then "$HOME/.paddock/config/bin/claude" "$@"; else command claude "$@"; fi; } # paddock-claude-wrapper';
+const OLD_LINE = 'export PATH="$HOME/.paddock/config/bin:$PATH" # paddock-claude-wrapper';
+
+// Ubuntu's default ~/.profile: reads ~/.bashrc first, then puts ~/.local/bin in front of PATH.
+const UBUNTU_PROFILE = `if [ -n "$BASH_VERSION" ]; then
+    if [ -f "$HOME/.bashrc" ]; then
+        . "$HOME/.bashrc"
+    fi
+fi
+if [ -d "$HOME/.local/bin" ] ; then
+    PATH="$HOME/.local/bin:$PATH"
+fi
+`;
+
+/** A temporary HOME like a Claude Code user's: the real claude in ~/.local/bin (found by the installer's PATH line), Ubuntu's ~/.profile, and Paddock's launcher installed. */
+function userHome(
+    context,
+    { launcher = true } = {},
+) {
+    const directory = home(context);
+    fs.mkdirSync(path.join(directory, '.local', 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(directory, '.local', 'bin', 'claude'), '#!/bin/sh\nprintf "REAL|%s\\n" "$*"\n', { mode: 0o755 });
+    fs.mkdirSync(path.join(directory, '.paddock', 'config', 'claude'), { recursive: true });
+    fs.writeFileSync(path.join(directory, '.paddock', 'config', 'claude', 'flag-settings.json'), '{}\n');
+    if (launcher) run(directory, 'install', claudeWrapperScript({ kind: 'sh', flagFile: path.join(directory, '.paddock', 'config', 'claude', 'flag-settings.json') }));
+    fs.writeFileSync(path.join(directory, '.profile'), UBUNTU_PROFILE);
+    // The Claude Code installer's line and a typical interactive-shell guard, as in a stock Ubuntu ~/.bashrc.
+    fs.writeFileSync(path.join(directory, '.bashrc'), 'case $- in\n    *i*) ;;\n      *) return;;\nesac\nalias ll="ls -l"\nexport PATH="$HOME/.local/bin:$PATH"\n');
+    return directory;
+}
+
+/** Runs bash with a clean environment and returns stdout lines. */
+function bash(
+    directory,
+    flags,
+    command,
+) {
+    const result = spawnSync('bash', [flags, '-c', command], { encoding: 'utf8', env: { PATH: '/usr/bin:/bin', HOME: directory }, timeout: 15000 });
+    return result.stdout.split('\n');
+}
 
 test('WL01 the script passes shell syntax checking and its marker matches the constant', { skip: process.platform === 'win32' }, () => {
     const result = spawnSync('sh', ['-n', '-c', WslClaudeLauncher.SCRIPT], { encoding: 'utf8' });
@@ -67,7 +108,7 @@ test('WL03 a linked .bashrc is edited at its real location, the link stays, and 
 
 test('WL04 installing puts an executable launcher file in place, replaces an old one, and refuses a link', { skip: process.platform === 'win32' }, context => {
     const directory = home(context);
-    const script = claudeWrapperScript({ kind: 'sh', flagFile: `${directory}/.paddock/config/claude/flag-settings.json` });
+    const script = claudeWrapperScript({ kind: 'sh', flagFile: `${directory}/.paddock/config/claude/flag-settings.json`, mcpConfigFile: `${directory}/.paddock/config/claude/pen-mcp.json` });
     assert.deepEqual(run(directory, 'install', script).items, ['installed']);
     const file = path.join(directory, '.paddock', 'config', 'bin', 'claude');
     assert.equal(fs.readFileSync(file, 'utf8'), script);
@@ -82,18 +123,66 @@ test('WL04 installing puts an executable launcher file in place, replaces an old
     assert.equal(run(directory, 'unknown').status, 2);
 });
 
-test('WL05 the added PATH line puts the launcher first in a real interactive bash', { skip: process.platform === 'win32' }, context => {
+test('WL05 the added function line puts the launcher first in a real interactive bash', { skip: process.platform === 'win32' }, context => {
     const directory = home(context);
     const real = path.join(directory, 'real');
     fs.mkdirSync(real);
     fs.writeFileSync(path.join(real, 'claude'), '#!/bin/sh\nprintf "REAL|%s\\n" "$*"\n', { mode: 0o755 });
-    run(directory, 'install', claudeWrapperScript({ kind: 'sh', flagFile: path.join(directory, 'missing.json') }));
+    run(directory, 'install', claudeWrapperScript({ kind: 'sh', flagFile: path.join(directory, 'missing.json'), mcpConfigFile: path.join(directory, 'pen-mcp.json') }));
     fs.writeFileSync(path.join(directory, '.bashrc'), `export PATH="${real}:$PATH"\n`);
     run(directory, 'add');
     const result = spawnSync('bash', ['-i', '-c', 'command -v claude; claude --version'], { encoding: 'utf8', env: { PATH: '/usr/bin:/bin', HOME: directory }, timeout: 10000 });
-    // The system-wide bash startup may print its own lines first, so look for the launcher path among the output lines.
-    assert.ok(result.stdout.split('\n').includes(path.join(directory, '.paddock', 'config', 'bin', 'claude')), result.stdout);
+    // The added line is a function that calls the launcher by its full path, so `claude` resolves to the function (not to the `real` folder) and still reaches the real claude.
+    assert.match(result.stdout, /(^|\n)claude\n/, result.stdout);
     assert.match(result.stdout, /REAL\|--version/);
+});
+
+test('WL07 in a login shell (~/.profile after ~/.bashrc) and in a plain interactive shell the launcher comes before the real claude', { skip: process.platform === 'win32' }, context => {
+    const directory = userHome(context);
+    run(directory, 'add');
+    const wrapper = path.join(directory, '.paddock', 'config', 'bin', 'claude');
+    const settings = path.join(directory, '.paddock', 'config', 'claude', 'flag-settings.json');
+    for (const flags of ['-lic', '-ic']) {
+        const lines = bash(directory, flags, 'type -a claude; claude --version');
+        const types = lines.filter(line => line.startsWith('claude is ') || line.startsWith('claude '));
+        assert.match(lines.join('\n'), /claude is a function/, `${flags}: ${lines.join(' | ')}`);
+        assert.ok(types.findIndex(line => line.includes('a function')) < types.findIndex(line => line.includes(path.join(directory, '.local', 'bin', 'claude'))), `${flags}: function first`);
+        assert.match(lines.join('\n'), new RegExp(`REAL\\|--settings ${settings.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} --version`), `${flags}: launcher added --settings: ${lines.join(' | ')}`);
+    }
+    assert.ok(fs.existsSync(wrapper));
+});
+
+test('WL08 the old PATH line alone loses to ~/.profile in a login shell, and adding upgrades it to the function in place', { skip: process.platform === 'win32' }, context => {
+    const directory = userHome(context);
+    const rc = path.join(directory, '.bashrc');
+    fs.appendFileSync(rc, `${OLD_LINE}\n`);
+    const before = bash(directory, '-lic', 'claude --version').join('\n');
+    assert.doesNotMatch(before, /--settings/, 'the old line leaves the real claude first in a login shell');
+    assert.deepEqual(run(directory, 'add').items, ['updated', rc, 'no']);
+    const text = fs.readFileSync(rc, 'utf8');
+    assert.ok(text.includes(`${LINE}\n`));
+    assert.ok(!text.includes(OLD_LINE));
+    assert.equal(text.split('# paddock-claude-wrapper').length - 1, 1, 'one marked line');
+    assert.ok(text.startsWith('case $-'), 'other lines stay in place');
+    assert.match(bash(directory, '-lic', 'claude --version').join('\n'), /--settings/);
+    assert.deepEqual(run(directory, 'add').items, ['present', rc, 'no']);
+});
+
+test('WL09 removing restores the original ~/.bashrc and the real claude runs again; a missing launcher file falls back to the real claude', { skip: process.platform === 'win32' }, context => {
+    const directory = userHome(context);
+    const rc = path.join(directory, '.bashrc');
+    const original = fs.readFileSync(rc, 'utf8');
+    run(directory, 'add');
+    fs.rmSync(path.join(directory, '.paddock', 'config', 'bin', 'claude'));
+    const fallback = bash(directory, '-lic', 'claude --version').join('\n');
+    assert.match(fallback, /REAL\|--version/, 'no launcher file: the real claude still runs');
+    assert.deepEqual(run(directory, 'remove').items, ['removed', rc, 'no']);
+    assert.equal(fs.readFileSync(rc, 'utf8'), original);
+    assert.doesNotMatch(bash(directory, '-lic', 'type -a claude').join('\n'), /function/);
+    // A user who only has the old line gets it removed too.
+    fs.appendFileSync(rc, `${OLD_LINE}\n`);
+    assert.equal(run(directory, 'remove').items[0], 'removed');
+    assert.equal(fs.readFileSync(rc, 'utf8'), original);
 });
 
 test('WL06 the output parser maps each shape and falls back to unsupported', () => {

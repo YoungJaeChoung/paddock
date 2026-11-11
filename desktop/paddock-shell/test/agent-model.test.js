@@ -174,6 +174,100 @@ test('C-agent-A4.5: 신호를 보내던 에이전트가 끝나 셸로 돌아오�
     assert.equal(agent.settle(agent.noteStatus(agent.idle(), { state: 'working', kind: null }, 0), 1000, null).finished, false, '프로그램을 모르면 판정을 미룬다');
 });
 
+test('C-agent-A5.1: 에이전트가 알린 상태가 있으면 추정보다 먼저 돌려주고 없을 때만 입력·출력으로 추정한다', () => {
+    const noted = (state, kind = null) => agent.noteStatus(agent.idle(), { state, kind }, 0);
+    for (const state of ['working', 'blocked', 'done', 'idle', 'error']) {
+        assert.equal(agent.activityState(noted(state), 10000, true), state);
+        assert.equal(agent.signalOf(noted(state), true), state);
+    }
+    // 출력이 막 있었어도 idle이라고 알렸으면 idle이다.
+    assert.equal(agent.activityState(agent.noteOutput(noted('idle'), 9900), 10000, true), 'idle');
+    assert.equal(agent.activityState(agent.noteInput(noted('blocked'), 'y\r', 9900), 10000, true), 'blocked');
+    // 신호가 없으면 추정이고 signalOf는 null이다.
+    assert.equal(agent.signalOf(agent.noteOutput(agent.idle(), 100), true), null);
+    assert.equal(agent.activityState(agent.noteOutput(agent.idle(), 100), 200, true), 'working');
+    // clear는 신호를 거둔다.
+    assert.equal(agent.signalOf(agent.noteStatus(noted('done'), { state: 'clear', kind: null }, 5), true), null);
+    // 에이전트가 아니거나 모르면 신호가 있어도 상태를 내지 않는다.
+    assert.equal(agent.activityState(noted('blocked'), 10000, false), null);
+    assert.equal(agent.activityState(noted('blocked'), 10000, null), 'unknown');
+    assert.equal(agent.signalOf(noted('blocked'), false), null);
+});
+
+test('C-agent-A5.2: 일하는 중이라는 신호 뒤 Esc나 Ctrl+C 한 바이트가 들어오면 idle로 바꾸고 알리지 않는다', () => {
+    const working = agent.noteStatus(agent.idle(), { state: 'working', kind: null }, 0);
+    for (const key of ['\x1b', '\x03']) {
+        const interrupted = agent.noteInput(working, key, 9000);
+        assert.equal(interrupted.signal.state, 'idle');
+        assert.equal(interrupted.signal.alert, false);
+        assert.equal(agent.activityState(interrupted, 9100, true), 'idle');
+        assert.equal(agent.settle(interrupted, 20000, true).finished, false);
+    }
+    // 이후 오는 신호가 우선한다.
+    const resumed = agent.noteStatus(agent.noteInput(working, '\x1b', 9000), { state: 'working', kind: null }, 9500);
+    assert.equal(resumed.signal.state, 'working');
+    // 화살표 키 시퀀스·붙여넣기·다른 키는 중단이 아니다.
+    for (const data of ['\x1b[A', '\x1b[1;5C', 'a', '\x1b\x1b', 'text\x03', '\x03\x03']) {
+        assert.equal(agent.noteInput(working, data, 9000).signal.state, 'working', JSON.stringify(data));
+    }
+    // 권한·질문 대화창에서의 Esc·Ctrl+C도 중단이다(Claude에는 중단 훅이 없어 blocked가 오래 남는다).
+    const blocked = agent.noteStatus(agent.idle(), { state: 'blocked', kind: 'permission' }, 0);
+    for (const key of ['\x1b', '\x03']) {
+        const dismissed = agent.noteInput(blocked, key, 9000);
+        assert.equal(dismissed.signal.state, 'idle');
+        assert.equal(dismissed.signal.alert, false);
+    }
+    assert.equal(agent.noteInput(blocked, '\x1b[A', 9000).signal.state, 'blocked');
+    // 일하는 중도 기다리는 중도 아닐 때의 Esc는 신호를 바꾸지 않는다.
+    for (const state of ['idle', 'done', 'error']) {
+        assert.equal(agent.noteInput(agent.noteStatus(agent.idle(), { state, kind: null }, 0), '\x1b', 9000).signal.state, state);
+    }
+    // 신호가 없는 터미널은 그대로다.
+    assert.equal(agent.noteInput(agent.idle(), '\x1b', 9000).signal, null);
+});
+
+test('C-agent-A5.3: 알린 상태와 추정 상태는 같은 working이어도 글자가 다르다', () => {
+    assert.equal(agent.stateText('working', true)[0], 'Working');
+    assert.equal(agent.stateText('working', false)[0], 'Output');
+    assert.equal(agent.stateText('blocked', true)[0], 'Needs input');
+    assert.equal(agent.stateText('idle', true)[0], 'Idle');
+    assert.equal(agent.stateText('done', true)[0], 'Idle');
+    assert.equal(agent.stateText('error', true)[0], 'Error');
+    assert.equal(agent.stateText('waiting', false)[0], 'Sent');
+    assert.equal(agent.stateText('quiet', false)[0], 'Quiet');
+    assert.equal(agent.stateText('unknown', false), null);
+    assert.equal(agent.stateText('blocked', false), null);
+});
+
+test('C-agent-A5.4: 중단 폴백이 잘못 맞아도 뒤이은 진짜 done은 일한 시간으로 알린다', () => {
+    const { MIN_BUSY_MS } = agent.ACTIVITY;
+    let a = agent.noteStatus(agent.idle(), { state: 'working', kind: null }, 0);
+    a = agent.noteInput(a, '\x1b', MIN_BUSY_MS + 1000);
+    assert.equal(a.signal.state, 'idle');
+    // claude가 실제로는 중단하지 않고 계속 일하다 끝났다.
+    a = agent.noteStatus(a, { state: 'done', kind: null }, MIN_BUSY_MS + 2000);
+    assert.equal(agent.settle(a, MIN_BUSY_MS + 2500, true).finished, true);
+    // 짧게 일하다 중단한 뒤의 done은 알리지 않는다.
+    let b = agent.noteStatus(agent.idle(), { state: 'working', kind: null }, 0);
+    b = agent.noteInput(b, '\x03', 1000);
+    b = agent.noteStatus(b, { state: 'done', kind: null }, 2000);
+    assert.equal(agent.settle(b, 2500, true).finished, false);
+    // 끝난 뒤 다시 오는 done·idle은 낡은 일한 시간으로 또 알리지 않는다.
+    let c = agent.noteStatus(agent.noteStatus(agent.idle(), { state: 'working', kind: null }, 0), { state: 'done', kind: null }, MIN_BUSY_MS + 1000);
+    c = agent.settle(c, MIN_BUSY_MS + 1100, true).activity;
+    c = agent.noteStatus(agent.noteStatus(c, { state: 'idle', kind: null }, MIN_BUSY_MS + 2000), { state: 'done', kind: null }, MIN_BUSY_MS + 3000);
+    assert.equal(agent.settle(c, MIN_BUSY_MS + 3100, true).finished, false);
+});
+
+test('C-agent-A5.5: 에이전트가 다른 에이전트로 바뀌면 낡은 신호를 지우고 에이전트가 아닌 프로그램으로의 변화는 건드리지 않는다', () => {
+    const signalled = agent.noteStatus(agent.idle(), { state: 'blocked', kind: 'permission' }, 0);
+    assert.equal(agent.noteProgram(signalled, 'claude', 'codex').signal, null);
+    assert.equal(agent.noteProgram(signalled, 'claude', 'claude').signal.state, 'blocked');
+    assert.equal(agent.noteProgram(signalled, 'claude', 'bash').signal.state, 'blocked', '셸로 돌아온 경우는 settle이 알림을 정리한다');
+    assert.equal(agent.noteProgram(signalled, undefined, 'claude').signal.state, 'blocked');
+    assert.equal(agent.noteProgram(signalled, 'bash', 'codex').signal.state, 'blocked');
+});
+
 test('AM-SOUND: a second done sound inside the cooldown is skipped', () => {
     const { shouldSound, ACTIVITY } = require('../agent-model');
     assert.equal(shouldSound(null, 1000), true);

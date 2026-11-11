@@ -201,6 +201,17 @@ class QuickSettings {
             panel.append(row);
         }
 
+        // 에이전트가 알린 상태(Working·Needs input 등)를 Work 목록에 보이는 훅. 끄면 터미널 출력으로 추정한 상태만 보인다.
+        panel.append(element('p', 'quick-title quick-section', 'Agents'));
+        const hookRow = element('label', 'quick-row');
+        const hookCheckbox = element('input', 'quick-check');
+        hookCheckbox.dataset.setting = 'paddock.agents.statusHook';
+        hookCheckbox.type = 'checkbox';
+        hookCheckbox.checked = this.workspace.agentStatusHook.isEnabled();
+        hookCheckbox.addEventListener('change', () => this.workspace.run(() => this.setPreference('paddock.agents.statusHook', hookCheckbox.checked)));
+        hookRow.append(element('span', 'quick-label', 'Agent status'), element('span', 'quick-space'), hookCheckbox);
+        panel.append(hookRow);
+
         const all = button([codicon('settings-gear'), element('span', '', 'All settings')], 'quick-all', () => {
             panel.hidePopover();
             this.workspace.run(() => this.workspace.commands.executeCommand('preferences:open'));

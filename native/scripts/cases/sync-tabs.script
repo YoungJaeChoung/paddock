@@ -1,0 +1,51 @@
+# 동기화 ① 탭 줄 초점: 탭 줄 빈 자리를 누르면 초점이 생기고 ←·→·Home·End가 탭을 고른다(PTY로 가지 않음).
+# 터미널을 누르면 초점이 풀려 같은 키가 PTY로 간다. Enter·Esc도 초점을 거둔다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-tabs"; mkdir $p, "$env:USERPROFILE\\bin" -Force | Out-Null; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"; cd $p\r
+send echo READY-TABS\r
+waitline READY-TABS @20000
+send claude.exe -n 900 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+key ctrl-shift-t
+waittabs 2 @20000
+key ctrl-shift-t
+waittabs 3 @20000
+wait 1000
+# 셋째 터미널에서 눌린 키를 그대로 보여 주는 읽기 루프를 돌린다.
+send while ($true) { $k = [Console]::ReadKey($true); Write-Host ("GOT-" + [int]$k.Key) }\r
+wait 1500
+state before-focus
+act tabbarfocus
+waitstate tab-bar-focus=yes @5000
+shot tab-bar-focused
+key right
+wait 500
+state right-from-last
+key end
+wait 500
+state end
+key home
+wait 500
+state home
+key left
+wait 500
+state left-wraps
+dumptab 3 pty-while-bar-focused
+# Esc는 초점을 거두고 소비된다.
+key escape
+waitstate tab-bar-focus=no @5000
+key right
+wait 500
+state right-after-escape
+# 터미널을 누르면(행 누름과 같은 경로) 초점이 풀리고 방향키는 PTY로 간다.
+act tabbarfocus
+waitstate tab-bar-focus=yes @5000
+act selecttab 3
+waitstate tab-bar-focus=no @5000
+key right
+waitline GOT-39 @10000
+state right-reaches-pty
+dumptab 3 pty-after-click
+quit

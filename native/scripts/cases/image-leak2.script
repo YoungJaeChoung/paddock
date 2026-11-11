@@ -1,0 +1,80 @@
+# 이미지 열고 닫기 반복(세분): 1080p png를 열고 닫기를 12번 반복하며 매번 닫은 뒤 앱 Private 메모리를 잰다. 실행 이름은 image-leak2다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send echo READY-LEAK\r
+waitline READY-LEAK @30000
+wait 3000
+mem baseline
+act openpath C:/Temp/pdk-run/home-image-leak2/proj-md/f-1080p.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+mem c1
+act openpath C:/Temp/pdk-run/home-image-leak2/proj-md/f-1080p.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+mem c2
+act openpath C:/Temp/pdk-run/home-image-leak2/proj-md/f-1080p.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+mem c3
+act openpath C:/Temp/pdk-run/home-image-leak2/proj-md/f-1080p.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+mem c4
+act openpath C:/Temp/pdk-run/home-image-leak2/proj-md/f-1080p.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+mem c5
+act openpath C:/Temp/pdk-run/home-image-leak2/proj-md/f-1080p.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+mem c6
+act openpath C:/Temp/pdk-run/home-image-leak2/proj-md/f-1080p.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+mem c7
+act openpath C:/Temp/pdk-run/home-image-leak2/proj-md/f-1080p.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+mem c8
+act openpath C:/Temp/pdk-run/home-image-leak2/proj-md/f-1080p.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+mem c9
+act openpath C:/Temp/pdk-run/home-image-leak2/proj-md/f-1080p.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+mem c10
+act openpath C:/Temp/pdk-run/home-image-leak2/proj-md/f-1080p.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+mem c11
+act openpath C:/Temp/pdk-run/home-image-leak2/proj-md/f-1080p.png
+waitstate kind=image state=image @20000
+wait 1500
+act closefile
+wait 2500
+mem c12
+quit

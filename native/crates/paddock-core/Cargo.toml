@@ -1,0 +1,15 @@
+[package]
+name = "paddock-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Pure models and rules shared by the Paddock app and daemon."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+unicode-properties.workspace = true
+chrono.workspace = true
+# 폴더 검색·바꾸기가 같은 질의 해석(`build_matcher`)을 쓰도록 검색 엔진의 일치 규칙을 core에 둔다.
+grep-regex.workspace = true
+grep-matcher.workspace = true

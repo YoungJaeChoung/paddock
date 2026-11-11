@@ -1,0 +1,6 @@
+# 재실행하면 접힌 채로 시작한다
+waittabs 2 @30000
+wait 1500
+state restarted-collapsed
+shot restarted-collapsed
+quit

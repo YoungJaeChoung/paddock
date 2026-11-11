@@ -1,0 +1,12 @@
+# 둘째 실행: Ask me later로 닫았으므로 다시 묻는다. Turn on으로 답하면 설정이 on이 되고 .bashrc에 줄이 한 개 들어간다.
+waittabs 1 @30000
+waitstate overlay: wsl-launcher @60000
+waitstate focus=overlay @5000
+act wsllauncher on
+waitstate overlay: none @5000
+waitstate usage-setup-settings memory-notice=off limit=4096 wsl-launcher=on @10000
+waitstate launcher=added @30000
+waitstate bashrc-lines=1 @5000
+files dialog-on
+state turned-on
+quit

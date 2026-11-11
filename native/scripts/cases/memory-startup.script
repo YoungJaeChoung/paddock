@@ -1,0 +1,15 @@
+# 시작 순간 메모리: 터미널 1개로 시작해 첫 표본부터 30초까지 Private 메모리가 어떻게 줄어드는지 시간 순서대로 잰다(시작 순간 최댓값의 원인 조사용)
+mem t00
+wait 700
+mem t01
+wait 1500
+mem t03
+wait 3000
+mem t06
+wait 6000
+mem t12
+wait 8000
+mem t20
+wait 10000
+mem t30
+quit

@@ -1,0 +1,8 @@
+# 가짜 codex(PowerShell)가 손자 프로세스(`ping -n 601`)를 띄우고 입력이 닫혀도 그 손자를 기다린다(덩어리 29 검토 반영).
+# 조회가 끝나면 이 조회가 만든 트리 전체가 끝나야 한다: 앱이 끝난 뒤 손자가 남는지는 바깥 실행기가 센다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+waitstate codex=Default:5h=40 @30000
+waitstate reading=no @10000
+wait 3000
+quit

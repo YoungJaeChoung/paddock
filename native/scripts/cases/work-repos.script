@@ -1,0 +1,37 @@
+# 같은 저장소의 워크트리 폴더 묶음(1/3): 임시 폴더 /tmp/paddock-repos에 git 저장소(main)와 워크트리 둘(wt1·wt2)을 만들고, 각 폴더에서 에이전트 이름의
+# 프로그램(claude로 위장한 bash)을 돌리면 세 폴더가 Work 목록에 생기고, 폴더가 둘 이상 같은 저장소라서 저장소 묶음 행(`row repo`)이 그 위에 선다.
+# 묶음 행을 접으면(현재 터미널이 묶음 밖일 때) 구성원 폴더 행이 숨는다. 접힘은 저장돼 2·3번 대본(앱을 다시 연 뒤)에서 이어진다.
+# 이 대본 묶음(work-repos.script·-2·-3)은 session-run.ps1로 같은 임시 홈에서 차례로 돌린다. 만든 폴더·위장 프로그램은 /tmp에만 둔다(3번이 지운다).
+waittabs 1 @30000
+send unset HISTFILE; mkdir -p /tmp/paddock-fake && ln -sf /bin/bash /tmp/paddock-fake/claude && export PATH=/tmp/paddock-fake:$PATH\r
+send rm -rf /tmp/paddock-repos && mkdir -p /tmp/paddock-repos/main && cd /tmp/paddock-repos/main && git init -q -b main && git -c user.name=T -c user.email=t@e.x commit -q --allow-empty -m init && git worktree add -q ../wt1 -b wt1 && git worktree add -q ../wt2 -b wt2 && echo REPOS-READY\r
+waitline REPOS-READY @60000
+state before-agents
+send claude -c 'read -t 900 -r _'\r
+waitstate name=main expanded=true n=1 current=true @30000
+act workadd
+waittabs 2 @20000
+send export PATH=/tmp/paddock-fake:$PATH; cd /tmp/paddock-repos/wt1\r
+send claude -c 'read -t 900 -r _'\r
+waitstate name=wt1 expanded=true n=1 @30000
+act workadd
+waittabs 3 @20000
+send export PATH=/tmp/paddock-fake:$PATH; cd /tmp/paddock-repos/wt2\r
+send claude -c 'read -t 900 -r _'\r
+waitstate name=wt2 expanded=true n=1 @30000
+# 폴더 셋이 한 저장소라서 묶음 행이 선다(저장소 이름 = 루트 폴더 이름, 폴더 수 3).
+waitstate row repo key= @20000
+waitstate name=main expanded=true n=3 @10000
+state repos-expanded
+shot repos-expanded
+# 현재 터미널이 묶음 밖에 있을 때 묶음을 접는다.
+act workadd
+waittabs 4 @20000
+send echo OUTSIDE\r
+waitline OUTSIDE @20000
+act repotoggle 1
+waitstate name=main expanded=false n=3 @10000
+waitnostate name=wt1 expanded @5000
+state repos-collapsed
+shot repos-collapsed
+quit

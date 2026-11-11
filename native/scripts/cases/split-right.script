@@ -1,0 +1,24 @@
+# 옆 칸 분할: Ctrl+Shift+C로 옆 칸에 새 터미널이 열리고, 탭은 그 칸 위에 놓이며, 두 터미널은 입력이 섞이지 않는다
+waittabs 1 @30000
+send echo ONE\r
+waitline ONE @20000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+send echo TWO\r
+waitline TWO @20000
+sendto 1 echo ONLY-IN-ONE\r
+wait 1500
+dumptab 1 left-pane
+dumptab 2 right-pane
+state split-right
+shot split-right
+# Ctrl+\로 한 번 더(세 칸, 같은 폭)
+key ctrl-\
+waittabs 3 @20000
+wait 1500
+state split-right-three
+shot split-right-three
+# 분할 키는 셸에 가지 않는다: 두 번째 칸의 화면에 ^\ 나 종료 흔적이 없다
+dumptab 3 third-pane
+quit

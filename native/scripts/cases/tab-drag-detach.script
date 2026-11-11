@@ -1,0 +1,49 @@
+# 탭 끌기(덩어리 37): 창 밖에 놓으면 분리 창이 생기고, 분리 창에서 끌어 본 창 칸·탭 줄에 놓으면 되돌아온다. Esc 뒤의 놓기는 아무 일도 하지 않는다.
+# 마우스 대신 합성 좌표로 끈다. `dragtab … outside`는 창 밖 지점의 MouseUp, `dragback`은 분리 창에서 시작한 끌기를 화면 좌표로 바꿔 본 창에 놓는 길이다.
+waittabs 1 @30000
+send echo B-ONE\r
+waitline B-ONE @20000
+key ctrl-shift-t
+waittabs 2 @20000
+key ctrl-shift-t
+waittabs 3 @20000
+wait 1500
+state before
+shot before
+# 탭 2를 창 밖에 놓는다: 분리 창이 생기고 본 창 탭 줄에는 흐린 탭이 남는다
+act dragtab 2 outside
+waitstate detached=2 @10000
+waitstate strip col0 tabs=1,3,2:faded @5000
+waitstate drag=none @3000
+state detached
+shot detached
+shotwin 2 detached-window
+# 분리 창에서 끌어 본 창 첫 칸 오른쪽 가장자리에 놓는다: 오른쪽 새 칸이 생기고 분리 창은 닫힌다
+act dragback 2 pane 1 right
+waitstate detached=- @10000
+waitstate strip col0 tabs=1,3 @5000
+waitstate strip col1 tabs=2 @5000
+waitstate selected: 2 @5000
+state back-right
+shot back-right
+# 탭 1을 창 밖에 놓고 본 창 탭 줄(열 0)에 끌어 놓는다: 그 열 칸의 끝에 붙는다
+act dragtab 1 outside
+waitstate detached=1 @10000
+waitstate strip col0 tabs=3 @5000
+act dragback 1 strip 0
+waitstate detached=- @10000
+waitstate strip col0 tabs=3,1 @5000
+waitstate strip col1 tabs=2 @5000
+state back-strip
+shot back-strip
+# Esc를 누른 뒤 창 밖에서 놓으면 아무 일도 없다: 분리 창이 생기지 않고 끌기 상태도 남지 않는다
+act dragtab 1 cancel
+wait 1500
+waitstate detached=- @3000
+waitstate drag=none @3000
+waitstate dock-preview=none @3000
+waitstate strip col0 tabs=3,1 @3000
+state cancelled
+shot cancelled
+act quick quitstop
+wait 3000

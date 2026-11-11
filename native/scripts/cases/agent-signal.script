@@ -1,0 +1,45 @@
+# 에이전트가 알린 상태(OSC 7501): 에이전트 이름의 프로그램(claude로 위장한 bash)이 working → blocked(권한) → error → idle 신호를 차례로 찍으면,
+# 행 상태 글자가 추정(Sent·Output·Quiet)이 아니라 알린 글자(Working·Needs input·Error·Idle)로 바뀌고, 상태 글에 `signal=`이 보인다.
+# 입력 필요(blocked) 중 Esc 한 번은 신호를 idle로 돌리고(중단 폴백), 에이전트가 끝나 셸로 돌아오면 신호가 사라진다.
+# 묶음 행의 도움말에는 입력을 기다리는 에이전트 수(`1 needs input`)가 보인다. 위장 프로그램은 /tmp에만 둔다.
+waittabs 1 @30000
+send unset HISTFILE; mkdir -p /tmp/paddock-fake && ln -sf /bin/bash /tmp/paddock-fake/claude && export PATH=/tmp/paddock-fake:$PATH\r
+send echo READY-1\r
+waitline READY-1 @20000
+state before-agent
+# 신호를 차례로 찍는 위장 에이전트: 각 신호 뒤 Enter를 기다린다.
+send claude -c 'for st in working blocked:kind=permission error idle; do printf "\\033]7501;state=%s:app=claude-code\\007" "$st"; read -t 120 -r _; done'\r
+waitstate program=claude @20000
+waitstate signal=working @20000
+waitstate status=Working @5000
+state signal-working
+shot signal-working
+send \r
+waitstate signal=blocked:permission @20000
+waitstate status=Needs_input @5000
+waitstate 1_needs_input @5000
+state signal-blocked
+shot signal-blocked
+# 입력 필요 중 Esc 한 바이트: 중단으로 보고 idle로 돌린다. 알린 상태가 없는 추정 글자(Sent·Quiet)로 돌아가지 않는다.
+key escape
+waitstate signal=idle @10000
+waitstate status=Idle @5000
+state signal-interrupted
+shot signal-interrupted
+send \r
+waitstate signal=error @20000
+waitstate status=Error @5000
+state signal-error
+shot signal-error
+send \r
+waitstate signal=idle @20000
+waitstate status=Idle @5000
+state signal-idle
+shot signal-idle
+# 마지막 Enter로 위장 에이전트가 끝나 셸로 돌아오면 신호가 사라지고 상태 칸도 없다.
+send \r
+waitstate program=bash activity=- signal=- @20000
+waitstate status=- @5000
+state signal-gone
+shot signal-gone
+quit

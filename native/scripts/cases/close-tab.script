@@ -1,0 +1,26 @@
+# 탭 × 닫기 확인: 취소하면 터미널이 유지되고, 확인하면 그 터미널만 끝난다
+waittabs 1 @30000
+send echo A\r
+waitline A @20000
+key ctrl-shift-t
+waittabs 2 @20000
+send echo B\r
+waitline B @20000
+daemonlist before
+key ctrl-shift-w
+waitoverlay close-terminal @5000
+shot close-confirm
+state confirm-open
+key escape
+waitoverlay none @5000
+daemonlist after-cancel
+state after-cancel
+key ctrl-shift-w
+waitoverlay close-terminal @5000
+key enter
+waittabs 1 @5000
+wait 500
+daemonlist after-confirm
+state after-confirm
+shot after-close
+quit

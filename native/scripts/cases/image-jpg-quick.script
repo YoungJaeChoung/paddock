@@ -1,0 +1,24 @@
+# 이미지 맞춤 표시(빠른 확인): 이미지를 열어 시간을 두고 여러 번 캡처한다. 실행 이름은 image-jpg-quick이다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send echo READY-JPG\r
+waitline READY-JPG @30000
+wait 3000
+act openpath C:/Temp/pdk-run/home-image-jpg-quick/proj-big/img/b.jpg
+waitstate kind=image state=image size=640x480 @10000
+wait 300
+shot j1
+wait 1500
+shot j2
+act openpath C:/Temp/pdk-run/home-image-jpg-quick/proj-big/img/a.png
+waitstate kind=image state=image size=320x200 @10000
+wait 800
+shot j3
+wait 3000
+shot j4
+act imgzoom
+wait 1000
+act imgzoom
+wait 1000
+shot j5
+quit

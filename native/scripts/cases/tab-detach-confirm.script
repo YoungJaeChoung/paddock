@@ -1,0 +1,29 @@
+# 분리 창에서 비롯된 닫기 확인은 본 창에 열리고 본 창이 앞으로 온다(요청 횟수 main-activations).
+waittabs 1 @30000
+send echo C-ONE\r
+waitline C-ONE @20000
+key ctrl-shift-t
+waittabs 2 @20000
+send echo C-TWO\r
+act movetowindow 2
+waitstate detached=2 @10000
+state before
+act detachedclose 2
+waitoverlay close-terminal @5000
+waitstate main-activations=1 @5000
+state confirm-open
+shot confirm-main
+key escape
+waitoverlay none @5000
+waitstate detached=2 @3000
+state confirm-cancelled
+# 분리 창의 Ctrl+Shift+W도 같은 길을 탄다(창 손잡이가 본 창이어야 한다)
+keywin 2 ctrl-shift-w
+waitoverlay close-terminal @5000
+waitstate main-activations=2 @5000
+key enter
+waittabs 1 @10000
+waitstate detached=- @10000
+state confirmed
+act quick quitstop
+wait 3000

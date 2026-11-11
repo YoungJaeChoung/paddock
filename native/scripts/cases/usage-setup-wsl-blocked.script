@@ -1,0 +1,8 @@
+# WSL ~/.bashrc가 끊어진 링크일 때: 아무것도 고치지 않고 안내만 보인다(blocked).
+waittabs 1 @30000
+waitstate wrapper=yes script=yes @60000
+act quick choose wsllauncher on
+waitstate launcher=blocked @30000
+waitstate notice=Paddock could not change your WSL ~/.bashrc because it is a broken link or not a regular file. @10000
+state blocked
+quit

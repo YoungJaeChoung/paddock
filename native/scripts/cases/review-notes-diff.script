@@ -1,0 +1,32 @@
+# 검토 메모(변경 비교 탭): 비교에서 고른 줄(새 쪽)에 Ctrl+Alt+M로 메모를 남기면 파일은 작업 폴더 기준 상대 경로, 줄은 새 쪽 줄이다.
+# 실행기가 임시 홈의 네이티브 설정에 기본 셸을 PowerShell로 둬야 한다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+send $p = "$env:USERPROFILE\\proj-notes"; mkdir $p, "$env:USERPROFILE\\bin" -Force | Out-Null; cd $p; git init -q -b main; git config user.name Tester; git config user.email t@example.com; Set-Content a.txt (1..10 | ForEach-Object { "l$_" }); git add -A; git commit -q -m base; Copy-Item C:\\Windows\\System32\\PING.EXE "$env:USERPROFILE\\bin\\claude.exe"\r
+send echo READY-DN\r
+waitline READY-DN @30000
+send claude.exe -n 400 127.0.0.1\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate scm state=ready @15000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+send Set-Content a.txt (1..10 | ForEach-Object { if ($_ -in 2,3) { "x$_" } else { "l$_" } }); Write-Host EDITED-DN\r
+waitline EDITED-DN @10000
+waitstate changes=1 @10000
+act view scm
+waitstate view=scm @5000
+act scmrow 1
+waitstate file-view kind=diff state=diff @10000
+wait 800
+act selectlines 2 3
+wait 500
+key ctrl-alt-m
+waitoverlay review-note @3000
+text rename these
+key enter
+waitoverlay none @3000
+waitstate review-notes=1 @3000
+state diff-note
+quit

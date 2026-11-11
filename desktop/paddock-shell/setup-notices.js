@@ -9,21 +9,20 @@ const { WSL_LAUNCHER_KEY, wslLauncherPlan } = require('./wsl-launcher-plan');
 /** WSL ~/.bashrc에 줄을 넣어도 되는지 묻는 창. 값은 'add'·'decline'이고, 닫으면 `undefined`(다음에 다시 묻는다)다. */
 class WslLauncherDialog extends AbstractDialog {
     constructor() {
-        super({ title: 'Use Paddock settings for claude in WSL terminals', maxWidth: 600 });
+        super({ title: 'Show Claude usage in WSL terminals too?', maxWidth: 520 });
         this.chosen = undefined;
         const document = this.node.ownerDocument;
         const message = document.createElement('p');
-        message.textContent = 'Paddock shows Claude usage in the status line and can warn agents about low memory. For a claude you type yourself in a WSL terminal, that needs one line in your WSL ~/.bashrc that puts Paddock\'s claude launcher first in PATH.';
-        const detail = document.createElement('p');
-        detail.textContent = 'The line ends with the comment "# paddock-claude-wrapper" so you can find it, and it is added only once. You can change this later in Settings under "Paddock › Wsl: Claude Launcher" (paddock.wsl.claudeLauncher); turning it off removes exactly that line. Claude in Paddock account terminals works without it.';
-        this.contentNode.append(message, detail);
+        // 묻는 것은 얻는 것(사용량 표시·메모리 경고)과 바뀌는 것(.bashrc 한 줄)뿐이다. 줄의 표지·설정 키 이름은 설정 화면 설명에 둔다.
+        message.textContent = 'When you run claude in a regular WSL terminal, Paddock can show your usage and tell Claude when memory runs low. This adds one line to your ~/.bashrc. You can undo it in Settings.';
+        this.contentNode.append(message);
         this.appendCloseButton('Ask me later');
         this.declineButton = this.appendButton('No thanks', false);
         this.declineButton.addEventListener('click', () => {
             this.chosen = 'decline';
             void this.accept();
         });
-        this.addButton = this.appendButton('Add to ~/.bashrc', true);
+        this.addButton = this.appendButton('Turn on', true);
         this.addButton.addEventListener('click', () => {
             this.chosen = 'add';
             void this.accept();
@@ -106,7 +105,10 @@ class PaddockSetupNotices {
         return isReady;
     }
 
-    /** 백엔드에 WSL ~/.bashrc의 PATH 줄을 넣거나 빼라고 하고, 결과를 알린다. 실패하면 알리기만 하고 설정은 바꾸지 않는다. */
+    /**
+     * 백엔드에 WSL ~/.bashrc의 PATH 줄을 넣거나 빼라고 한다. 사용자가 방금 고른 일이라 성공은 알리지 않는다.
+     * 알리는 것은 사용자가 할 일이 있을 때뿐이다 — 실패했을 때, 그리고 .bashrc가 저장소 파일로 가는 링크라 그 저장소에 올려야 할 때.
+     */
     async applyWslLauncher(
         isEnabled,
     ) {
@@ -115,12 +117,10 @@ class PaddockSetupNotices {
             const response = await fetch(this.endpoint('/paddock/wsl-claude-path', `?enabled=${isEnabled}`), { method: 'POST' });
             const result = await response.json();
             if (!response.ok) throw new Error(result.error || 'The WSL ~/.bashrc could not be changed.');
-            const link = result.isLinked ? ` It is a link to ${result.file}; that file changed, so upload it if it is kept in a repository (for example with sync.sh).` : '';
-            if (result.state === 'added') void messages.info(`Added Paddock's claude launcher to ${result.file || 'WSL ~/.bashrc'}. New WSL terminals use it.${link}`);
-            else if (result.state === 'removed') void messages.info(`Removed Paddock's claude launcher line from ${result.file || 'WSL ~/.bashrc'}.${link}`);
-            else if (result.state === 'blocked') void messages.warn('The WSL ~/.bashrc could not be changed because it is a broken link or not a regular file.');
+            if (result.isLinked && (result.state === 'added' || result.state === 'removed')) void messages.info(`${result.file} changed. If you keep it in a repository, commit or sync it.`);
+            else if (result.state === 'blocked') void messages.warn('Paddock could not change your WSL ~/.bashrc because it is a broken link or not a regular file.');
         } catch (error) {
-            void messages.warn(`Paddock's claude launcher could not be updated in WSL: ${error instanceof Error ? error.message : String(error)}`);
+            void messages.warn(`Paddock could not change your WSL ~/.bashrc: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 
@@ -145,12 +145,10 @@ class PaddockSetupNotices {
         }
     }
 
-    /** 이미 허락한 줄이 .bashrc에 남아 있는지 확인한다. 줄이 이미 있으면 아무 알림도 없고, 없어서 다시 넣었을 때만 알린다. */
+    /** 이미 허락한 줄이 .bashrc에 남아 있는지 확인하고, 없으면 조용히 다시 넣는다. 사용자가 이미 켠 기능을 유지하는 일이라 알리지 않는다. */
     async applyWslLauncherQuietly() {
         try {
-            const response = await fetch(this.endpoint('/paddock/wsl-claude-path', '?enabled=true'), { method: 'POST' });
-            const result = await response.json();
-            if (response.ok && result.state === 'added') void this.container.get(MessageService).info(`Added Paddock's claude launcher back to ${result.file || 'WSL ~/.bashrc'} (it was missing).`);
+            await fetch(this.endpoint('/paddock/wsl-claude-path', '?enabled=true'), { method: 'POST' });
         } catch {
             // 다음 시작에 다시 확인한다.
         }

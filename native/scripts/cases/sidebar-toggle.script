@@ -1,0 +1,42 @@
+# 사이드바 접기: Ctrl+B로 접으면 본문이 사이드바 폭만큼 넓어지고 터미널 입력·선택이 유지되며, 다시 누르면 같은 폭으로 돌아온다.
+# 작업 폴더의 터미널에서 시작하므로 사이드바에 파일 목록(FILES)도 있다: 접힌 동안은 폴더를 읽지 않고(files-loaded=false), 펼치면 다시 읽어 행이 돌아온다.
+waittabs 1 @30000
+send unset HISTFILE; mkdir -p /tmp/paddock-fake/proj-side/src && touch /tmp/paddock-fake/proj-side/README.md && ln -sf /bin/bash /tmp/paddock-fake/claude && export PATH=/tmp/paddock-fake:$PATH && cd /tmp/paddock-fake/proj-side\r
+send echo READY-SIDE\r
+waitline READY-SIDE @20000
+send claude -c 'for i in $(seq 1 1200); do echo work $i; sleep 0.5; done'\r
+waitstate program=claude @20000
+waitstate row folder @20000
+waitstate files-loaded=true @10000
+key ctrl-shift-c
+waittabs 2 @20000
+wait 1500
+send echo BEFORE\r
+waitline BEFORE @20000
+wait 1000
+state shown
+shot sidebar-shown
+key ctrl-b
+wait 1500
+state collapsed
+shot sidebar-collapsed
+# 접힌 채 터미널에 입력해도 그대로 들어간다(Ctrl+B가 셸로 가지 않았다)
+send echo WHILE-COLLAPSED\r
+waitline WHILE-COLLAPSED @20000
+dump collapsed
+act sidebar
+wait 1500
+waitstate files-loaded=true @10000
+state expanded
+shot sidebar-expanded
+send echo AFTER\r
+waitline AFTER @20000
+dump expanded
+# 접은 상태도 저장된다: 접고 종료한다
+key ctrl-b
+wait 1000
+state collapsed-before-quit
+closewindow
+waitoverlay quit @5000
+key enter
+wait 3000

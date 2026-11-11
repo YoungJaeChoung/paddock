@@ -1,0 +1,30 @@
+# 분리 창의 터미널에서 계정으로 시작하면 새 터미널이 같은 분리 창에 들어간다(창을 닫고 다시 열지 않는다). 준비물은 account-switch-fixture.sh다.
+waittabs 1 @30000
+waitstate cwd=C: @30000
+act tabadd
+waittabs 2 @30000
+act movetowindow 2
+waitstate detached=2 @10000
+sendto 2 echo SW-READY\r
+wait 5000
+state before-switch
+act startwin 1 A
+act movetowindow 1
+state switching-refused
+waitstate status=Wait for the account switch to finish before moving this tab. @5000
+waitnostate detached=1 @1000
+waitstate account-switch switching=no @30000
+wait 4000
+act startwin 2 A
+waitstate detached=4 @30000
+waitstate account-switch switching=no @30000
+wait 4000
+state after-switch
+textwin 4 echo after-switch-key
+keywin 4 enter
+wait 1500
+dumptab 2 switched-grid
+shot after-switch
+shotwin 2 detached-after-switch
+act quick quitstop
+wait 3000

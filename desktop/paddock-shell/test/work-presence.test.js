@@ -12,6 +12,13 @@ test('창은 다른 창의 터미널 목록만 받고 화면 데이터는 받지
     assert.deepEqual(registry.list('second', 1002), []);
 });
 
+test('다른 창에 보내는 폴더에는 저장소 키(repo)를 실어 창마다 묶음이 같게 한다', () => {
+    const registry = new WorkPresenceRegistry();
+    registry.update('first', { folders: [{ key: 'file:///r/wt', expanded: true, repo: 'file:///r/main' }, { key: 'file:///x', repo: 7 }], terminals: [] }, 1000);
+    const others = registry.update('second', { folders: [], terminals: [] }, 1001);
+    assert.deepEqual(others[0].folders, [{ key: 'file:///r/wt', expanded: true, label: '', repo: 'file:///r/main' }, { key: 'file:///x', expanded: true, label: '' }]);
+});
+
 test('닫힌 창의 목록은 종료 신호가 없어도 만료된다', () => {
     const registry = new WorkPresenceRegistry();
     registry.update('closed', { folders: [], terminals: [] }, 1000);
