@@ -7,7 +7,8 @@
 #   Info.plist 작성 → codesign --force --deep -s - → 서명 검사
 #
 # 세 실행 파일은 Windows 설치 폴더와 같이 한 폴더(Contents/MacOS)에 나란히 둔다. 앱은 자기 실행 파일 옆에서
-# 데몬(paddock-daemon)과 pen-mcp를 찾는다. 앱은 gui 기본 기능으로만 빌드한다(자동 점검 기능 없음).
+# 데몬(paddock-daemon)과 pen-mcp를 찾는다(pen-mcp는 macOS에서 pen_open만 동작하고 pen_save·pen_close는 거부한다).
+# 앱은 gui 기본 기능으로만 빌드한다(자동 점검 기능 없음).
 # Windows 빌드의 셰이더 사전 컴파일(fxc)은 macOS가 Metal 셰이더를 쓰므로 해당 없다.
 #
 # 서명: 개발자 인증서가 없어 임시 서명만 한다. 서명하지 않은 실행 파일은 이 macOS에서 실행 즉시 종료된다.
@@ -80,7 +81,9 @@ PLIST
 # rustup이 설치하는 위치. 셸 설정을 읽지 않는 실행(IDE·cron)에서도 cargo를 찾게 한다.
 PATH="$HOME/.cargo/bin:$PATH"
 cd "$native_dir"
-cargo build --release -p paddock-app -p paddock-daemon -p paddock-pen-mcp
+# 실행 파일이 요구하는 최소 macOS 버전을 Info.plist의 LSMinimumSystemVersion과 같게 맞춘다(안 주면 10.12로 찍힌다).
+# 이 값은 cargo의 재빌드 판정에 들어가지 않아, 값을 바꾼 뒤에는 `cargo clean --release`로 다시 빌드해야 이미 만든 결과물에도 반영된다.
+MACOSX_DEPLOYMENT_TARGET="$min_macos" cargo build --release -p paddock-app -p paddock-daemon -p paddock-pen-mcp
 
 # 묶음은 매번 새로 만든다(남은 파일이 서명 봉인에 섞이지 않게).
 rm -rf "$bundle"

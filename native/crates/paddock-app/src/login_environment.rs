@@ -4,7 +4,8 @@
 //! Homebrew나 `~/.local/bin`(claude 등)에 있는 프로그램을 앱이 직접 띄우는 명령(`bash -ic` 사용량 조회, git)과
 //! 앱이 데몬에 실어 보내는 새 터미널 환경이 찾지 못한다. 앱이 시작할 때 사용자의 로그인 셸을 한 번 띄워
 //! 그 셸이 만든 PATH를 읽어 앱 자신의 PATH로 쓴다. 터미널에서 띄운 앱은 이미 그 PATH를 물려받으므로 건드리지 않는다.
-use std::io::Read;
+use std::io::{BufRead, BufReader};
+use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -45,25 +46,45 @@ pub fn adopt_login_shell_path() {
 /// 셸이 실패하거나 `SHELL_TIMEOUT` 안에 답하지 않으면 None이다.
 fn read_login_shell_path(shell: &str) -> Option<String> {
     let script = format!("echo {}; printenv PATH; echo {}", marker::BEGIN, marker::END);
-    let mut child = Command::new(shell)
-        .args(["-l", "-i", "-c", &script])
+    run_for_marked_path(shell, &["-l", "-i", "-c", &script])
+}
+
+/// `program`을 자기 프로세스 그룹으로 띄워 출력의 표지 사이 값을 읽고, 끝나면 그 그룹 전체를 끝낸다.
+///
+/// 닫힘(EOF)이 아니라 끝 표지를 읽는 즉시 답한다: 셸 초기화 파일이 `(cmd &)`처럼 출력 통로를 쥔 백그라운드 프로세스를
+/// 남기면 EOF가 그 프로세스가 끝날 때까지 오지 않아 매번 시간 한도를 다 기다리게 된다.
+/// 그룹 전체를 끝내므로 그런 백그라운드 프로세스도 남지 않는다. 표지가 오기 전에 한도가 지나면 None이다.
+fn run_for_marked_path(
+    program: &str,
+    args: &[&str],
+) -> Option<String> {
+    let mut child = Command::new(program)
+        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
+        .process_group(0)
         .spawn()
         .ok()?;
-    let mut stdout = child.stdout.take()?;
+    let stdout = child.stdout.take()?;
     let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
         let mut output = String::new();
-        let _ = stdout.read_to_string(&mut output);
-        let _ = sender.send(output);
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            output.push_str(&line);
+            output.push('\n');
+            if line.contains(marker::END) {
+                break;
+            }
+        }
+        let _ = sender.send(marked_path(&output));
     });
-    let output = receiver.recv_timeout(SHELL_TIMEOUT).ok();
-    // 답을 받았든 시간이 지났든 셸을 끝내고 거둔다.
-    let _ = child.kill();
+    let path = receiver.recv_timeout(SHELL_TIMEOUT).ok().flatten();
+    // 답을 받았든 시간이 지났든 셸과 그 자손을 끝내고 셸을 거둔다. 그룹 번호는 셸의 프로세스 번호와 같다.
+    // SAFETY: 프로세스 그룹 번호와 신호만 넘기며 메모리를 건드리지 않는다.
+    unsafe { libc::killpg(child.id() as libc::pid_t, libc::SIGKILL) };
     let _ = child.wait();
-    output.and_then(|text| marked_path(&text))
+    path
 }
 
 /// 셸 출력에서 표지 사이의 PATH 값을 꺼낸다. 표지가 없거나 값이 비면 None이다.
@@ -124,6 +145,29 @@ mod tests {
         assert_eq!(merge_path("/opt/bin:/usr/bin", Some("/usr/bin:/bin")), "/opt/bin:/usr/bin:/bin");
         assert_eq!(merge_path("/opt/bin", None), "/opt/bin");
         assert_eq!(merge_path("/a::/b", Some("/b:")), "/a:/b");
+    }
+
+    #[test]
+    fn test_a_background_process_holding_the_output_neither_delays_the_answer_nor_outlives_it() {
+        let marker_file = std::env::temp_dir().join(format!("paddock-login-env-{}", std::process::id()));
+        let script = format!(
+            "(sleep 1; touch '{}') & echo {}; echo /x:/y; echo {}",
+            marker_file.display(),
+            marker::BEGIN,
+            marker::END
+        );
+        let started = std::time::Instant::now();
+        let path = run_for_marked_path("/bin/sh", &["-c", &script]);
+        assert_eq!(path.as_deref(), Some("/x:/y"));
+        assert!(started.elapsed() < Duration::from_millis(900), "{:?}", started.elapsed());
+        // 백그라운드 프로세스가 살아 있었다면 1초 뒤 표지 파일을 만든다.
+        std::thread::sleep(Duration::from_millis(1500));
+        assert!(!marker_file.exists(), "the background process was not ended");
+    }
+
+    #[test]
+    fn test_a_shell_that_never_prints_the_markers_gives_none_when_it_exits() {
+        assert_eq!(run_for_marked_path("/bin/sh", &["-c", "echo hello"]), None);
     }
 
     #[test]

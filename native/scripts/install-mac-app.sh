@@ -14,18 +14,26 @@ set -euo pipefail
 native_dir="$(cd "$(dirname "$0")/.." && pwd)"
 source_bundle="$native_dir/target/mac/Paddock Native.app"
 install_dir="${PADDOCK_MAC_INSTALL_DIR:-$HOME/Applications}"
+
+# 설치 폴더를 심볼릭 링크를 푼 실제 경로로 바꾼다. 실행 중인 앱의 실제 경로와 비교하려면 같은 꼴이어야 한다.
+# 폴더가 아직 없으면(첫 설치) 그대로 둔다.
+if [ -d "$install_dir" ]; then
+    install_dir="$(cd "$install_dir" && pwd -P)"
+fi
 dest="$install_dir/Paddock Native.app"
 app_exe="$dest/Contents/MacOS/paddock-app"
 
 # 설치할 자리의 앱 실행 파일로 도는 프로세스의 번호를 줄마다 하나씩 낸다. 다른 폴더의 앱(개발 빌드, 시험 사본)은 세지 않는다.
-# ps의 comm 열은 실행 파일의 전체 경로이고, 경로의 공백도 그대로 나온다.
+# ps의 comm 열은 프로세스를 띄울 때 쓴 경로(상대 경로·심볼릭 링크 포함)라 비교에 쓸 수 없다. 이름이 paddock-app인 프로세스만
+# 골라, 커널이 아는 실제 실행 파일 경로(lsof의 txt 항목 중 첫 번째)를 `app_exe`와 비교한다.
 running_app_pids() {
-    ps -axo pid=,comm= | awk -v exe="$app_exe" '{
-        pid = $1
-        $1 = ""
-        sub(/^ /, "")
-        if ($0 == exe) print pid
-    }'
+    local pid image
+    for pid in $(ps -axo pid=,comm= | awk '{ pid = $1; sub(/^ *[0-9]+ /, "", $0); n = split($0, parts, "/"); if (parts[n] == "paddock-app") print pid }'); do
+        image="$(lsof -a -p "$pid" -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)"
+        if [ "$image" = "$app_exe" ]; then
+            echo "$pid"
+        fi
+    done
 }
 
 refuse_if_running() {
@@ -46,9 +54,21 @@ fi
 [ -d "$source_bundle" ] || { echo "install-mac-app: $source_bundle not found; run 'make native-mac' first" >&2; exit 1; }
 
 mkdir -p "$install_dir"
+install_dir="$(cd "$install_dir" && pwd -P)"
+dest="$install_dir/Paddock Native.app"
 staging="$install_dir/.Paddock Native.app.new.$$"
 retired="$install_dir/.Paddock Native.app.old.$$"
-trap 'rm -rf "$staging"' EXIT
+
+# 끝날 때(실패·Ctrl-C 포함) 임시 묶음을 지우고, 옛 묶음을 옮긴 뒤 새 묶음을 놓기 전에 멈췄으면 옛 묶음을 제자리로 돌려놓는다.
+restore_on_exit() {
+    if [ ! -e "$dest" ] && [ -e "$retired" ]; then
+        mv "$retired" "$dest"
+        echo "install-mac-app: the install did not finish; the previous app was put back" >&2
+    fi
+    rm -rf "$staging"
+}
+trap restore_on_exit EXIT
+trap 'exit 130' INT TERM
 
 # 새 묶음을 설치 폴더 안(같은 볼륨)에 완성해 둔다. ditto는 서명 봉인에 필요한 속성과 권한을 그대로 옮긴다.
 rm -rf "$staging"
