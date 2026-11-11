@@ -86,14 +86,25 @@ pub fn create_listener(endpoint: &str) -> io::Result<Listener> {
     };
     #[cfg(unix)]
     let options = {
+        #[cfg(target_os = "linux")]
         use interprocess::os::unix::local_socket::ListenerOptionsExt;
         if let Some(dir) = std::path::Path::new(endpoint).parent() {
             verify_own_folder(dir)?;
             crate::daemon_info::ensure_private_dir(dir)?;
         }
-        options.mode(0o600).try_overwrite(true)
+        // 소켓 파일 권한을 만들 때 정하는 방식(`mode`)은 Linux만 지원한다. macOS는 만든 뒤 0600으로 바꾼다 —
+        // 그 사이에도 폴더가 0700이라 다른 사용자는 소켓에 닿지 못한다.
+        #[cfg(target_os = "linux")]
+        let options = options.mode(0o600);
+        options.try_overwrite(true)
     };
-    options.create_sync()
+    let listener = options.create_sync()?;
+    #[cfg(all(unix, not(target_os = "linux")))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(endpoint, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(listener)
 }
 
 /// 데몬 파이프를 만들 때 거는 접근 권한(SDDL). 보호된(P) DACL에 현재 사용자 SID 하나만 모든 권한을 준다.
