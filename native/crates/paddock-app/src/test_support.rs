@@ -87,7 +87,7 @@ pub fn daemon_exe() -> PathBuf {
         Some(path) => path,
         None => {
             let status = std::process::Command::new(env!("CARGO"))
-                .args(["build", "-p", "paddock-daemon"])
+                .args(["build", "-p", "paddock-daemon", "--features", "test-hooks"])
                 .current_dir(env!("CARGO_MANIFEST_DIR"))
                 .status()
                 .expect("run cargo build");

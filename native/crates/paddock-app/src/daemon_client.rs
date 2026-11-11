@@ -391,18 +391,32 @@ pub fn ensure(
 
 /// 멈춘 데몬을 끝내고 새 데몬을 띄워 연결한다. 그 데몬의 터미널은 사라진다.
 ///
+/// 끝내기 전에 지금도 멈춰 있는지 다시 확인한다. 안내를 띄운 뒤 데몬이 회복했거나 다른 앱이 새 데몬을 띄웠으면
+/// 끝내지 않고 그 데몬에 붙는다 — 정상 데몬을 끝내면 그 터미널이 함께 사라진다. 그래서 다시 확인하는 동안
+/// 인사 대기 시간만큼 더 걸린다.
 /// 멈춘 데몬은 종료 요청에도 답하지 못하므로 프로세스를 직접 끝낸다. `daemon.json`의 pid가 데몬 실행 파일의
 /// 프로세스일 때만 끝낸다 — 그 번호를 다른 프로그램이 물려받았을 수 있기 때문이다.
 pub fn restart_stalled_daemon(daemon_exe: &Path) -> io::Result<DaemonConnection> {
     let expected = fingerprint_of(daemon_exe)?;
-    if let Some(info) = read_info() {
-        app_log::event(&format!("restarting stalled daemon pid {}", info.pid));
-        if info.is_running() {
-            terminate_and_wait(&info, daemon_exe)?;
+    let ensure = match connect_existing(daemon_exe, &expected, Policy::Keep)? {
+        Existing::Ready(Ensure::Stalled { pid }) => {
+            // 다시 확인한 그 데몬(같은 pid의 daemon.json)만 끝낸다.
+            if let Some(info) = read_info().filter(|info| info.pid == pid) {
+                app_log::event(&format!("restarting stalled daemon pid {}", info.pid));
+                if info.is_running() {
+                    terminate_and_wait(&info, daemon_exe)?;
+                }
+                remove_info_owned_by(info.pid);
+            }
+            launch_and_connect(daemon_exe, &expected)?
         }
-        remove_info_owned_by(info.pid);
-    }
-    match launch_and_connect(daemon_exe, &expected)? {
+        Existing::Ready(ensure) => {
+            app_log::event("stalled daemon answered on the second try, not restarting");
+            ensure
+        }
+        Existing::Absent => launch_and_connect(daemon_exe, &expected)?,
+    };
+    match ensure {
         Ensure::Connected(connection) => Ok(connection),
         Ensure::ProtocolMismatch { .. } | Ensure::Stalled { .. } => {
             Err(io::Error::other("Another terminal daemon started first and cannot be used"))
@@ -450,7 +464,7 @@ fn connect_existing(
                     connection.daemon_protocol_version, connection.daemon_pid,
                 ));
                 match policy {
-                    Policy::Replace => shut_down(&connection, &info).map(|()| Existing::Absent),
+                    Policy::Replace => shut_down(connection, &info).map(|()| Existing::Absent),
                     Policy::Keep | Policy::ReplaceIfIdle => {
                         let (pid, daemon_version) = (connection.daemon_pid, Some(connection.daemon_protocol_version));
                         connection.close();
@@ -474,7 +488,7 @@ fn connect_existing(
                         short(expected_fingerprint),
                         connection.daemon_pid,
                     ));
-                    shut_down(&connection, &info).map(|()| Existing::Absent)
+                    shut_down(connection, &info).map(|()| Existing::Absent)
                 } else {
                     app_log::event(&format!(
                         "outdated daemon kept: daemon {}.. app {}.. (pid {}){}",
@@ -489,6 +503,9 @@ fn connect_existing(
             }
             // 인사의 버전을 따지는 옛 데몬(버전 1)은 우리 인사를 거절하고 연결을 닫아 종료 요청도 보낼 수 없다.
             // 교체를 고른 경우에만 프로세스를 직접 끝낸다(마지막 몇 초의 터미널 기록이 사라질 수 있다).
+            // 토큰은 확인하지 못한다 — 옛 데몬은 버전을 토큰보다 먼저 보므로 daemon.json이 다른 데몬의 것이어도 같은 답이 온다.
+            // 끝낼 대상의 근거는 소유자가 확인된 엔드포인트의 이 답과, daemon.json의 pid가 데몬 실행 파일의 프로세스라는
+            // 사실뿐이다. 버전 1에서 옮겨 올 때 한 번만 지나는 길이라 감수한다(버전 2 데몬은 토큰을 먼저 봐 여기 오지 않는다).
             Err(error) if is_unsupported_protocol(&error) => {
                 app_log::event(&format!("daemon pid {} refused the hello: {error}, policy {policy:?}", info.pid));
                 match policy {
@@ -550,8 +567,9 @@ pub fn request_shutdown(
 /// 옛 데몬에 종료를 요청하고 프로세스가 사라지기를 기다린다. 사라지지 않으면 오류다.
 ///
 /// 요청이 쓰이지 않았거나 답이 없어도 프로세스가 사라지면 성공이다 — 다른 앱이 같은 데몬을 먼저 끝내는 중일 수 있다.
+/// 확인용 연결은 넘겨받아 결과와 상관없이 닫는다.
 fn shut_down(
-    connection: &DaemonConnection,
+    connection: DaemonConnection,
     info: &DaemonInfo,
 ) -> io::Result<()> {
     app_log::event(&format!("replacing daemon pid {}", info.pid));
@@ -559,7 +577,10 @@ fn shut_down(
         let _ = connection.wait_for_any(&[kind::STATUS], timeout::SHUTDOWN_REPLY);
     }
     wait_until_gone(info);
-    if info.is_running() { Err(io::Error::other("The old daemon did not exit")) } else { Ok(()) }
+    let outcome = if info.is_running() { Err(io::Error::other("The old daemon did not exit")) } else { Ok(()) };
+    // 데몬이 끝나지 않았으면 이 연결이 소켓을 쥔 채 남지 않게 닫는다(끝났으면 보낼 곳이 없어 아무 일도 없다).
+    connection.close();
+    outcome
 }
 
 /// 데몬을 띄우고 그 데몬이 `daemon.json`을 쓰면 연결한다. 시간 안에 뜨지 않으면 오류다.
@@ -773,6 +794,24 @@ mod tests {
         assert_eq!(used.daemon_fingerprint, fingerprint_of(&exe).unwrap());
         assert_eq!(status_of(&used).n_terminals, 1, "the terminal must still be alive");
         assert_eq!(read_info().unwrap().pid, old_pid);
+        assert!(app_log_text().contains("outdated daemon kept"), "{}", app_log_text());
+    }
+
+    #[test]
+    fn test_c7_replace_keeps_an_outdated_daemon_that_still_has_terminals() {
+        let home = TempHome::new();
+        let _cleanup = DaemonCleanup;
+        let exe = daemon_exe();
+        let running = connected(ensure(&exe, Policy::Keep).unwrap());
+        let old_pid = running.daemon_pid;
+        let _terminal = open_terminal(running);
+
+        // Replace도 프로토콜이 같고 지문만 다른 데몬은 터미널이 있으면 끝내지 않는다 — 강제 교체는 프로토콜이 다를 때만이다.
+        let altered = altered_copy(&exe, home.dir.path());
+        let used = connected(ensure(&altered, Policy::Replace).unwrap());
+        assert_eq!(used.daemon_pid, old_pid);
+        assert!(used.outdated);
+        assert_eq!(status_of(&used).n_terminals, 1, "the terminal must still be alive");
         assert!(app_log_text().contains("outdated daemon kept"), "{}", app_log_text());
     }
 
@@ -1038,6 +1077,26 @@ mod tests {
         let restarted = restart_stalled_daemon(&exe).unwrap();
         assert_ne!(restarted.daemon_pid, running.daemon_pid);
         assert_eq!(status_of(&restarted).pid, restarted.daemon_pid);
+    }
+
+    /// 멈춤 안내 뒤 데몬이 회복했으면 다시 시작하지 않고 그 데몬에 붙는다 — 정상 데몬의 터미널을 끝내지 않는다.
+    #[cfg(unix)]
+    #[test]
+    fn test_restart_of_a_daemon_that_recovered_reuses_it() {
+        let _home = TempHome::new();
+        let _cleanup = DaemonCleanup;
+        let exe = daemon_exe();
+        let running = connected(ensure(&exe, Policy::Keep).unwrap());
+        let old_pid = running.daemon_pid;
+        let _terminal = open_terminal(running);
+        unsafe { libc::kill(old_pid as i32, libc::SIGSTOP) };
+        let outcome = ensure(&exe, Policy::Keep).unwrap();
+        assert!(matches!(outcome, Ensure::Stalled { pid } if pid == old_pid));
+        unsafe { libc::kill(old_pid as i32, libc::SIGCONT) };
+        let reused = restart_stalled_daemon(&exe).unwrap();
+        assert_eq!(reused.daemon_pid, old_pid);
+        assert_eq!(status_of(&reused).n_terminals, 1, "the terminal must still be alive");
+        assert!(app_log_text().contains("answered on the second try"), "{}", app_log_text());
     }
 
     /// 죽은 데몬의 pid를 다른 프로세스가 물려받고 소켓 파일만 남았을 때: 접속은 거부되고 `NotFound`가 아니다.
