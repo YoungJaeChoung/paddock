@@ -18,9 +18,11 @@ use gpui_kit::{
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Render, ScrollWheelEvent,
     StatefulInteractiveElement, Styled, Subscription, UTF16Selection, Window, canvas, div, point, px, size,
 };
-use paddock_core::app_shortcut::terminal_key_bytes;
+use paddock_core::app_shortcut::{makes_text, terminal_key_bytes};
 use paddock_core::incoming::{Incoming, incoming_of};
-use paddock_core::key_encoding::{ClipboardKey, KeyInput, clipboard_key, copy_on_selection_text, paste_bytes};
+use paddock_core::key_encoding::{
+    ClipboardKey, KeyInput, ShortcutScheme, clipboard_key, copy_on_selection_text, paste_bytes,
+};
 use paddock_core::paste_paths::{ImageKind, PastePlace, paste_path_text};
 use paddock_core::theme::terminal as terminal_size;
 
@@ -67,11 +69,11 @@ pub struct TerminalView {
     selecting: bool,
     /// 한글 조합 상태. 조합 중 글자는 확정될 때까지 PTY에 보내지 않는다.
     ime: ImeState,
-    /// Ctrl을 누른 채 올린 글자가 실제 파일을 가리킬 때의 링크. 밑줄이 그어지고 Ctrl+클릭이 이 파일을 연다.
+    /// 링크 키(Windows·Linux는 Ctrl, macOS는 Cmd)를 누른 채 올린 글자가 실제 파일을 가리킬 때의 링크. 밑줄이 그어지고 링크 키+클릭이 이 파일을 연다.
     link: Option<HoverLink>,
-    /// 마우스의 마지막 위치와 Ctrl이 눌려 있는지. Ctrl만 누르거나 떼도 링크를 다시 정하는 데 쓴다.
+    /// 마우스의 마지막 위치와 링크 키가 눌려 있는지. 링크 키만 누르거나 떼도 링크를 다시 정하는 데 쓴다.
     pointer: Option<(Pixels, Pixels)>,
-    ctrl: bool,
+    link_key_down: bool,
     /// 경로가 파일인지 확인한 결과(확인한 시각, 파일 여부). 확인은 작업 스레드에서 하고 창은 결과만 쓴다.
     file_checks: HashMap<String, (Instant, bool)>,
     /// 지금 확인 중인 경로.
@@ -121,7 +123,7 @@ impl TerminalView {
             ime: ImeState::new(already_sent),
             link: None,
             pointer: None,
-            ctrl: false,
+            link_key_down: false,
             file_checks: HashMap::new(),
             checks_in_flight: HashSet::new(),
             paste_place,
@@ -203,7 +205,7 @@ impl TerminalView {
         (GridPoint::new(Line(row - display_offset), Column(col)), side)
     }
 
-    /// 마우스 아래 글자가 실제 파일을 가리키는 경로이고 Ctrl이 눌려 있으면 링크로 정하고, 아니면 링크를 지운다.
+    /// 마우스 아래 글자가 실제 파일을 가리키는 경로이고 링크 키가 눌려 있으면 링크로 정하고, 아니면 링크를 지운다.
     /// 파일 여부는 작업 스레드에서 확인한다 — 확인 결과가 오기 전에는 링크가 없고, 오면 다시 이 함수가 불려 밑줄이 생긴다.
     fn refresh_link(
         &mut self,
@@ -211,7 +213,7 @@ impl TerminalView {
     ) {
         let before = self.link.as_ref().map(|link| (link.row, link.columns.clone()));
         let mut found: Option<HoverLink> = None;
-        if let (true, Some((x, y))) = (self.ctrl, self.pointer) {
+        if let (true, Some((x, y))) = (self.link_key_down, self.pointer) {
             let (point, _) = self.cell_at(x, y);
             let row = point.line.0 + self.grid.term.lock().grid().display_offset() as i32;
             let (text, columns) = self.grid.row_cells(row);
@@ -299,10 +301,13 @@ impl TerminalView {
             control: keystroke.modifiers.control,
             shift: keystroke.modifiers.shift,
             alt: keystroke.modifiers.alt,
+            command: keystroke.modifiers.platform,
         };
-        // Ctrl+C는 선택한 글자가 있을 때만 복사이고 없으면 셸의 ^C다. Ctrl+V는 붙여넣기다. Ctrl+Shift+C는 분할 키라 복사가 아니다.
+        let scheme = ShortcutScheme::NATIVE;
+        // Windows·Linux: Ctrl+C는 선택한 글자가 있을 때만 복사이고 없으면 셸의 ^C다. Ctrl+V는 붙여넣기다. Ctrl+Shift+C는 분할 키라 복사가 아니다.
+        // macOS: Cmd+C는 선택한 글자가 있을 때만 복사(없으면 아무 일 없음)이고 Cmd+V는 붙여넣기다. Ctrl+C는 항상 셸의 ^C다.
         let selected = self.grid.term.lock().selection_to_string();
-        let clipboard = clipboard_key(&input, selected.is_some());
+        let clipboard = clipboard_key(&input, selected.is_some(), scheme);
         if clipboard == Some(ClipboardKey::Copy) {
             if let Some(text) = selected {
                 cx.write_to_clipboard(ClipboardItem::new_string(text));
@@ -311,10 +316,9 @@ impl TerminalView {
             self.paste_clipboard(cx);
         } else {
             let app_cursor = self.grid.term.lock().mode().contains(TermMode::APP_CURSOR);
-            // 글자를 만드는 키(Ctrl·Alt 없이 누른 글자, AltGr 조합)는 여기서 보내지 않는다.
+            // 글자를 만드는 키(Ctrl·Alt 없이 누른 글자, AltGr 조합, macOS의 Option 조합)는 여기서 보내지 않는다.
             // 같은 글자가 입력 방식(IME) 경로로 한 번 더 오므로, 그쪽이 보내야 두 번 나가지 않는다.
-            let makes_text = keystroke.key_char.as_deref().is_some_and(|text| !text.chars().any(char::is_control))
-                && ((!input.control && !input.alt) || event.prefer_character_input);
+            let makes_text = makes_text(&input, event.prefer_character_input, scheme);
             #[cfg(feature = "automation")]
             crate::automation::event(&format!(
                 "key {:?} char={:?} text_path={makes_text} marked={:?}",
@@ -323,7 +327,7 @@ impl TerminalView {
                 self.ime.marked()
             ));
             if !makes_text {
-                let key_bytes = terminal_key_bytes(&input, app_cursor);
+                let key_bytes = terminal_key_bytes(&input, app_cursor, scheme);
                 let plan = self.ime.plan_key(keystroke.key.as_str(), key_bytes.is_some());
                 let mut bytes = plan.flushed;
                 if plan.send_key {
@@ -425,6 +429,14 @@ impl TerminalView {
             self.send(bytes, cx);
         }
         cx.notify();
+    }
+}
+
+/// 파일 경로 링크를 여는 수식 키가 눌렸는지. Windows·Linux는 Ctrl이고, macOS는 Cmd다(Ctrl+클릭은 macOS에서 오른쪽 클릭이다).
+fn link_key(modifiers: &gpui_kit::Modifiers) -> bool {
+    match ShortcutScheme::NATIVE {
+        ShortcutScheme::Ctrl => modifiers.control,
+        ShortcutScheme::Command => modifiers.platform,
     }
 }
 
@@ -585,8 +597,9 @@ impl Render for TerminalView {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, event: &MouseDownEvent, _window, cx| {
-                    // Ctrl+클릭이 파일 경로 위면 그 파일을 열고, 그 밖의 클릭은 글자 선택을 시작한다.
-                    let opened = this.link.as_ref().filter(|_| event.modifiers.control).map(|link| link.target.clone());
+                    // 링크 키(Windows·Linux Ctrl, macOS Cmd)+클릭이 파일 경로 위면 그 파일을 열고, 그 밖의 클릭은 글자 선택을 시작한다.
+                    let opened =
+                        this.link.as_ref().filter(|_| link_key(&event.modifiers)).map(|link| link.target.clone());
                     if let Some(target) = opened {
                         cx.emit(OpenLink { target });
                     } else {
@@ -606,7 +619,7 @@ impl Render for TerminalView {
                     cx.notify();
                 }
                 this.pointer = Some((event.position.x, event.position.y));
-                this.ctrl = event.modifiers.control;
+                this.link_key_down = link_key(&event.modifiers);
                 this.refresh_link(cx);
             }))
             .on_hover(cx.listener(|this, hovered: &bool, _window, cx| {
@@ -617,7 +630,7 @@ impl Render for TerminalView {
                 }
             }))
             .on_modifiers_changed(cx.listener(|this, event: &ModifiersChangedEvent, _window, cx| {
-                this.ctrl = event.modifiers.control;
+                this.link_key_down = link_key(&event.modifiers);
                 this.refresh_link(cx);
             }))
             .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _window, cx| {

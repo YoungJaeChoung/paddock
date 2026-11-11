@@ -10,6 +10,43 @@ pub struct KeyInput<'a> {
     pub control: bool,
     pub shift: bool,
     pub alt: bool,
+    /// macOS의 Cmd(Windows의 Win 키). `encode_key`는 읽지 않고, 앱 단축키·클립보드 키 판정과 `terminal_key_bytes`가 읽는다.
+    pub command: bool,
+}
+
+/// 앱 단축키의 수식 키 체계. Windows·Linux는 Ctrl(셸과 겹치지 않게 Shift를 더한다), macOS는 Cmd다.
+/// macOS에서 Ctrl 조합은 앱이 가로채지 않고 모두 터미널로 간다(Terminal·iTerm과 같다).
+/// 두 체계의 규칙을 한 운영체제에서 모두 시험할 수 있게, 키 판정 함수는 체계를 인자로 받는다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShortcutScheme {
+    /// Windows·Linux: Ctrl이 앱 키의 수식 키다.
+    Ctrl,
+    /// macOS: Cmd가 앱 키의 수식 키다.
+    Command,
+}
+
+impl ShortcutScheme {
+    /// 이 실행 파일이 도는 운영체제의 체계.
+    pub const NATIVE: Self = if cfg!(target_os = "macos") { Self::Command } else { Self::Ctrl };
+
+    /// Cmd(Win) 키가 든 키 누름을 앱이 처리하는지. Cmd 체계는 처리하고, Ctrl 체계(Windows·Linux)는 Win 키 조합을 시스템 몫으로 보고 건드리지 않는다.
+    pub fn accepts_command_key(
+        self,
+        command: bool,
+    ) -> bool {
+        self == Self::Command || !command
+    }
+
+    /// 이 체계의 수식 키만 눌렸는지. Ctrl 체계는 Ctrl이 있고 Cmd·Win이 없을 때, Cmd 체계는 Cmd가 있고 Ctrl이 없을 때 참이다. Shift·Alt는 보지 않는다.
+    pub fn primary(
+        self,
+        input: &KeyInput<'_>,
+    ) -> bool {
+        match self {
+            Self::Ctrl => input.control && !input.command,
+            Self::Command => input.command && !input.control,
+        }
+    }
 }
 
 /// 키 누름이 터미널에 보낼 바이트. 보낼 것이 없는 키(수정 키만 누름 등)는 None이다.
@@ -81,14 +118,21 @@ pub fn encode_key(
     let key = input.key.as_bytes();
     let mut result = named.map(String::into_bytes);
     if result.is_none() && input.control && key.len() == 1 {
-        // Ctrl+글자는 0x01~0x1a, Ctrl+[ \\ ] ^ _ / 는 0x1b~0x1f 제어 바이트다.
+        // Ctrl+글자는 0x01~0x1a, Ctrl+[ \\ ] ^ _ / 와 Ctrl+숫자·기호는 0x1b~0x1f·0x00·0x7f 제어 바이트다.
         let control_byte = match key[0] {
             letter if letter.is_ascii_alphabetic() => Some(letter.to_ascii_lowercase() - b'a' + 1),
             b'[' => Some(0x1b),
             b'\\' => Some(0x1c),
             b']' => Some(0x1d),
             b'^' => Some(0x1e),
-            b'_' | b'/' => Some(0x1f),
+            b'_' | b'/' | b'7' | b'-' => Some(0x1f),
+            // xterm 관례: Ctrl+2·Ctrl+@는 NUL, Ctrl+3~6은 ESC·FS·GS·RS, Ctrl+8·Ctrl+?는 DEL이다.
+            b'2' | b'@' => Some(0x00),
+            b'3' => Some(0x1b),
+            b'4' => Some(0x1c),
+            b'5' => Some(0x1d),
+            b'6' => Some(0x1e),
+            b'8' | b'?' => Some(0x7f),
             _ => None,
         };
         result = control_byte.map(|byte| {
@@ -124,32 +168,43 @@ pub enum ClipboardKey {
 
 /// 키 누름이 복사·붙여넣기인지. 아니면 None이고, 그 키는 터미널로 간다.
 ///
-/// 기존 앱(Theia)과 같다: Ctrl+C는 선택한 글자가 있을 때만 복사이고 없으면 셸의 `^C`다. Ctrl+V는 붙여넣기다.
+/// Windows·Linux(`Ctrl` 체계)는 기존 앱(Theia)과 같다: Ctrl+C는 선택한 글자가 있을 때만 복사이고 없으면 셸의 `^C`다. Ctrl+V는 붙여넣기다.
 /// `Ctrl+Insert`(복사)·`Ctrl+Shift+V`·`Shift+Insert`(붙여넣기)는 보조 키다. `Ctrl+Shift+C`는 옆 칸 분할 키라 복사가 아니다.
+/// macOS(`Command` 체계)는 Cmd+C(선택이 없으면 아무 일 없음)·Cmd+V다. Ctrl+C·Ctrl+V는 터미널의 `^C`·`^V`로 간다. `Shift+Insert`는 두 체계 공통이다.
 ///
 /// Examples
 /// --------
-/// | 키               | 선택 있음 | 결과           |
-/// |------------------|-----------|----------------|
-/// | Ctrl+C           | 예        | `Copy`         |
-/// | Ctrl+C           | 아니오    | None(`^C`)     |
-/// | Ctrl+Insert      | 예        | `Copy`         |
-/// | Ctrl+V           | (무관)    | `Paste`        |
-/// | Ctrl+Shift+V     | (무관)    | `Paste`        |
-/// | Shift+Insert     | (무관)    | `Paste`        |
-/// | Ctrl+Shift+C     | (무관)    | None           |
+/// | 체계    | 키               | 선택 있음 | 결과           |
+/// |---------|------------------|-----------|----------------|
+/// | Ctrl    | Ctrl+C           | 예        | `Copy`         |
+/// | Ctrl    | Ctrl+C           | 아니오    | None(`^C`)     |
+/// | Ctrl    | Ctrl+Insert      | 예        | `Copy`         |
+/// | Ctrl    | Ctrl+V           | (무관)    | `Paste`        |
+/// | Ctrl    | Ctrl+Shift+V     | (무관)    | `Paste`        |
+/// | Ctrl    | Shift+Insert     | (무관)    | `Paste`        |
+/// | Ctrl    | Ctrl+Shift+C     | (무관)    | None           |
+/// | Command | Cmd+C            | 예        | `Copy`         |
+/// | Command | Cmd+C            | 아니오    | None           |
+/// | Command | Cmd+V            | (무관)    | `Paste`        |
+/// | Command | Ctrl+C·Ctrl+V    | (무관)    | None(터미널로) |
 pub fn clipboard_key(
     input: &KeyInput<'_>,
     has_selection: bool,
+    scheme: ShortcutScheme,
 ) -> Option<ClipboardKey> {
-    let ctrl_only = input.control && !input.shift && !input.alt;
-    match input.key {
-        "c" if ctrl_only && has_selection => Some(ClipboardKey::Copy),
-        "insert" if ctrl_only && has_selection => Some(ClipboardKey::Copy),
-        "v" if input.control && !input.alt => Some(ClipboardKey::Paste),
-        "insert" if input.shift && !input.control && !input.alt => Some(ClipboardKey::Paste),
+    let shift_insert = input.key == "insert" && input.shift && !input.control && !input.alt && !input.command;
+    let plain_primary = scheme.primary(input) && !input.shift && !input.alt;
+    let mut result = match (scheme, input.key) {
+        (ShortcutScheme::Ctrl, "c" | "insert") if plain_primary && has_selection => Some(ClipboardKey::Copy),
+        (ShortcutScheme::Ctrl, "v") if scheme.primary(input) && !input.alt => Some(ClipboardKey::Paste),
+        (ShortcutScheme::Command, "c") if plain_primary && has_selection => Some(ClipboardKey::Copy),
+        (ShortcutScheme::Command, "v") if plain_primary => Some(ClipboardKey::Paste),
         _ => None,
+    };
+    if shift_insert {
+        result = Some(ClipboardKey::Paste);
     }
+    result
 }
 
 /// 붙여넣을 글자가 터미널에 나갈 바이트. 줄바꿈(`\n`·`\r\n`)은 Enter(`\r`) 하나로 바꾼다(xterm.js와 같다).
@@ -201,26 +256,55 @@ mod tests {
     use super::*;
 
     fn key(name: &str) -> KeyInput<'_> {
-        KeyInput { key: name, key_char: None, control: false, shift: false, alt: false }
+        KeyInput { key: name, key_char: None, control: false, shift: false, alt: false, command: false }
     }
 
     #[test]
     fn test_clipboard_keys_follow_the_old_app_ctrl_c_copies_only_with_a_selection_and_ctrl_v_pastes() {
-        let ctrl = |name, shift| KeyInput { key: name, key_char: None, control: true, shift, alt: false };
-        assert_eq!(clipboard_key(&ctrl("c", false), true), Some(ClipboardKey::Copy));
-        assert_eq!(clipboard_key(&ctrl("c", false), false), None, "without a selection Ctrl+C is the shell's ^C");
-        assert_eq!(clipboard_key(&ctrl("insert", false), true), Some(ClipboardKey::Copy));
-        assert_eq!(clipboard_key(&ctrl("insert", false), false), None);
+        let ctrl =
+            |name, shift| KeyInput { key: name, key_char: None, control: true, shift, alt: false, command: false };
+        assert_eq!(clipboard_key(&ctrl("c", false), true, ShortcutScheme::Ctrl), Some(ClipboardKey::Copy));
+        assert_eq!(
+            clipboard_key(&ctrl("c", false), false, ShortcutScheme::Ctrl),
+            None,
+            "without a selection Ctrl+C is the shell's ^C"
+        );
+        assert_eq!(clipboard_key(&ctrl("insert", false), true, ShortcutScheme::Ctrl), Some(ClipboardKey::Copy));
+        assert_eq!(clipboard_key(&ctrl("insert", false), false, ShortcutScheme::Ctrl), None);
         for has_selection in [true, false] {
-            assert_eq!(clipboard_key(&ctrl("v", false), has_selection), Some(ClipboardKey::Paste));
-            assert_eq!(clipboard_key(&ctrl("v", true), has_selection), Some(ClipboardKey::Paste));
-            let shift_insert = KeyInput { key: "insert", key_char: None, control: false, shift: true, alt: false };
-            assert_eq!(clipboard_key(&shift_insert, has_selection), Some(ClipboardKey::Paste));
+            assert_eq!(
+                clipboard_key(&ctrl("v", false), has_selection, ShortcutScheme::Ctrl),
+                Some(ClipboardKey::Paste)
+            );
+            assert_eq!(clipboard_key(&ctrl("v", true), has_selection, ShortcutScheme::Ctrl), Some(ClipboardKey::Paste));
+            let shift_insert =
+                KeyInput { key: "insert", key_char: None, control: false, shift: true, alt: false, command: false };
+            assert_eq!(clipboard_key(&shift_insert, has_selection, ShortcutScheme::Ctrl), Some(ClipboardKey::Paste));
             // Ctrl+Shift+C는 분할 키라 클립보드 키가 아니다.
-            assert_eq!(clipboard_key(&ctrl("c", true), has_selection), None);
-            assert_eq!(clipboard_key(&key("c"), has_selection), None);
-            assert_eq!(clipboard_key(&key("v"), has_selection), None);
+            assert_eq!(clipboard_key(&ctrl("c", true), has_selection, ShortcutScheme::Ctrl), None);
+            assert_eq!(clipboard_key(&key("c"), has_selection, ShortcutScheme::Ctrl), None);
+            assert_eq!(clipboard_key(&key("v"), has_selection, ShortcutScheme::Ctrl), None);
         }
+    }
+
+    #[test]
+    fn test_clipboard_keys_on_macos_are_cmd_c_and_cmd_v_and_ctrl_c_stays_with_the_shell() {
+        let command = |name| KeyInput { command: true, ..key(name) };
+        let ctrl = |name| KeyInput { control: true, ..key(name) };
+        let scheme = ShortcutScheme::Command;
+        assert_eq!(clipboard_key(&command("c"), true, scheme), Some(ClipboardKey::Copy));
+        assert_eq!(clipboard_key(&command("c"), false, scheme), None, "without a selection Cmd+C does nothing");
+        for has_selection in [true, false] {
+            assert_eq!(clipboard_key(&command("v"), has_selection, scheme), Some(ClipboardKey::Paste));
+            assert_eq!(clipboard_key(&ctrl("c"), has_selection, scheme), None, "Ctrl+C is the shell's ^C");
+            assert_eq!(clipboard_key(&ctrl("v"), has_selection, scheme), None);
+            assert_eq!(clipboard_key(&ctrl("insert"), has_selection, scheme), None);
+            assert_eq!(clipboard_key(&KeyInput { shift: true, ..command("c") }, has_selection, scheme), None);
+            let shift_insert = KeyInput { shift: true, ..key("insert") };
+            assert_eq!(clipboard_key(&shift_insert, has_selection, scheme), Some(ClipboardKey::Paste));
+        }
+        // Windows·Linux 체계에서 Cmd(Win) 키는 복사·붙여넣기 키가 아니다.
+        assert_eq!(clipboard_key(&command("v"), true, ShortcutScheme::Ctrl), None);
     }
 
     fn bytes(
@@ -253,6 +337,29 @@ mod tests {
         assert_eq!(bytes(&KeyInput { control: true, ..key("c") }, false), Some(vec![0x03]));
         assert_eq!(bytes(&KeyInput { control: true, ..key("a") }, false), Some(vec![0x01]));
         assert_eq!(bytes(&KeyInput { control: true, ..key("space") }, false), Some(vec![0]));
+    }
+
+    #[test]
+    fn test_control_digits_and_symbols_follow_xterm() {
+        for (name, byte) in [
+            ("2", 0x00),
+            ("@", 0x00),
+            ("3", 0x1b),
+            ("4", 0x1c),
+            ("5", 0x1d),
+            ("6", 0x1e),
+            ("7", 0x1f),
+            ("-", 0x1f),
+            ("8", 0x7f),
+            ("?", 0x7f),
+        ] {
+            let input = KeyInput { control: true, ..key(name) };
+            assert_eq!(bytes(&input, false), Some(vec![byte]), "ctrl+{name}");
+        }
+        let alt = KeyInput { control: true, alt: true, ..key("3") };
+        assert_eq!(bytes(&alt, false), Some(vec![0x1b, 0x1b]));
+        // Ctrl 없이 누른 숫자는 제어 바이트가 아니다.
+        assert_eq!(bytes(&key("5"), false), None);
     }
 
     #[test]

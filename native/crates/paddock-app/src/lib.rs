@@ -6,6 +6,8 @@
 pub mod accounts;
 pub mod agent_view;
 pub mod app_log;
+#[cfg(all(feature = "gui", target_os = "macos"))]
+pub mod app_menu;
 #[cfg(feature = "automation")]
 pub mod automation;
 #[cfg(feature = "gui")]

@@ -17,6 +17,8 @@ pub enum TabTarget {
     Next,
     First,
     Last,
+    /// 줄의 `index`번째(0부터) 탭. 그 자리에 탭이 없으면 옮기지 않는다.
+    Index(usize),
 }
 
 /// 사이드바 순서의 터미널 묶음. `ids`에는 지금 열 수 있는 터미널만 든다.
@@ -37,6 +39,8 @@ pub struct TerminalGroup<T> {
 /// | a, b, c   | a       | Previous   | `Some(c)` |
 /// | a, b, c   | b       | Last       | `Some(c)` |
 /// | a, b      | x       | Next       | `None`    |
+/// | a, b, c   | a       | Index(2)   | `Some(c)` |
+/// | a, b      | a       | Index(5)   | `None`    |
 pub fn tab_target<'a, T: PartialEq>(
     ids: &'a [T],
     current: &T,
@@ -51,6 +55,7 @@ pub fn tab_target<'a, T: PartialEq>(
             TabTarget::Next => (index + 1) % n_tabs,
             TabTarget::First => 0,
             TabTarget::Last => n_tabs - 1,
+            TabTarget::Index(wanted) => wanted,
         };
         result = ids.get(position);
     }
@@ -1340,6 +1345,8 @@ mod tests {
         assert_eq!(tab_target(&ids, &"c", TabTarget::Next), Some(&"a"));
         assert_eq!(tab_target(&ids, &"b", TabTarget::First), Some(&"a"));
         assert_eq!(tab_target(&ids, &"b", TabTarget::Last), Some(&"c"));
+        assert_eq!(tab_target(&ids, &"a", TabTarget::Index(2)), Some(&"c"));
+        assert_eq!(tab_target(&ids, &"a", TabTarget::Index(3)), None, "no tab at that number");
     }
 
     #[test]

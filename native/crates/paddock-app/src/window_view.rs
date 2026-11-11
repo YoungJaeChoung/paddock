@@ -22,7 +22,7 @@ use paddock_core::entry_name::{EntryNameCheck, validate_entry_name};
 use paddock_core::file_tree::{files_folder, initial_selection};
 #[cfg(feature = "automation")]
 use paddock_core::git_status::Change;
-use paddock_core::key_encoding::KeyInput;
+use paddock_core::key_encoding::{KeyInput, ShortcutScheme};
 use paddock_core::layout_model::{Orientation, drag_boundary};
 #[cfg(feature = "automation")]
 use paddock_core::markdown_view::View;
@@ -93,17 +93,30 @@ use crate::work::repo_read::RepoReader;
 use crate::work::terminal_row::RowTarget;
 use crate::workspace::{TabRef, Workspace};
 
-gpui_kit::actions!(paddock_window, [StepPreviousTab, StepNextTab]);
+gpui_kit::actions!(paddock_window, [StepPreviousTab, StepNextTab, SearchInFolderFromEditor]);
 
 /// 텍스트 보기 편집기가 쥔 `Ctrl+←/→`(단어 이동)를 앱의 탭 이동으로 되돌리는 키 연결을 등록한다. 앱 시작 때 한 번 부른다.
 ///
 /// 키 연결은 키 누름 처리기보다 먼저 실행되므로, 편집기에 포커스가 있으면 `capture_key_down`의 앱 단축키가 이 두 키를 받지 못한다.
 /// 읽기 전용 보기에서는 글자 단위 이동이 필요 없고 탭 이동은 터미널과 같은 키여야 하므로 편집기 문맥에서만 앱 동작으로 덮는다.
+///
+/// macOS는 탭 이동(Cmd+Shift+[ / ])을 편집기 부품이 쓰지 않아 덮을 키 연결이 없고 Ctrl+←/→는 앱이 가로채지 않는다.
+/// 대신 편집기 부품이 쥔 Cmd+Shift+F(찾아 바꾸기)를 앱의 폴더 검색으로 덮고, 찾아 바꾸기는 Cmd+Option+F로 옮긴다(VS Code 맥 관례).
 pub fn bind_keys(cx: &mut gpui_kit::App) {
-    cx.bind_keys([
-        gpui_kit::KeyBinding::new("ctrl-left", StepPreviousTab, Some("Input && mode == editor")),
-        gpui_kit::KeyBinding::new("ctrl-right", StepNextTab, Some("Input && mode == editor")),
-    ]);
+    match ShortcutScheme::NATIVE {
+        ShortcutScheme::Ctrl => cx.bind_keys([
+            gpui_kit::KeyBinding::new("ctrl-left", StepPreviousTab, Some("Input && mode == editor")),
+            gpui_kit::KeyBinding::new("ctrl-right", StepNextTab, Some("Input && mode == editor")),
+        ]),
+        ShortcutScheme::Command => cx.bind_keys([
+            gpui_kit::KeyBinding::new("cmd-shift-f", SearchInFolderFromEditor, Some("Input && mode == editor")),
+            gpui_kit::KeyBinding::new(
+                "cmd-alt-f",
+                gpui_kit::component::input::Replace,
+                Some("Input && mode == editor"),
+            ),
+        ]),
+    }
 }
 
 /// 터미널 상태(에이전트 활동·완료 알림)가 바뀌었는지 확인하는 간격. 바뀐 것이 있을 때만 목록을 다시 그린다.
@@ -2411,6 +2424,22 @@ impl WorkWindow {
         close_now
     }
 
+    /// 앱 종료 요청(macOS의 Cmd+Q·메뉴 Quit): 창 닫기 버튼과 같은 흐름(저장 안 한 파일·종료 묻기)을 타고, 닫아도 되면 창을 닫는다.
+    /// 묻기 창이 떠야 하면 창은 그대로 두고 사용자의 선택을 기다린다.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn request_quit(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.on_close_requested(window, cx) {
+            window.remove_window();
+        } else {
+            // 묻기 창은 본 창에 뜨므로, 분리 창이나 다른 앱에서 눌렀어도 본 창을 앞으로 가져와 보이게 한다.
+            self.activate_main(window);
+        }
+    }
+
     /// 창 전체가 받는 키: 앱 단축키(탭 이동·분할·새 터미널·닫기·사이드바 접기)와 묻기 창의 Enter·Esc. 터미널보다 먼저 받는다.
     fn on_capture_key(
         &mut self,
@@ -2501,22 +2530,24 @@ impl WorkWindow {
             // 검색 입력칸에서 Esc: 검색 보기를 닫고 키 입력을 선택한 탭으로 돌린다.
             self.close_search(window, cx);
             cx.stop_propagation();
-        } else if !modifiers.platform {
+        } else if ShortcutScheme::NATIVE.accepts_command_key(modifiers.platform) {
+            let scheme = ShortcutScheme::NATIVE;
             let input = KeyInput {
                 key,
                 key_char: keystroke.key_char.as_deref(),
                 control: modifiers.control,
                 shift: modifiers.shift,
                 alt: modifiers.alt,
+                command: modifiers.platform,
             };
-            // 목록이 키를 받는 동안의 F2(이름 바꾸기)·Ctrl+V(붙여넣기). 아니면 이 키들은 터미널로 가고, 다른 키는 목록이 키를 거두게 한다.
-            let list_modifiers = (modifiers.control, modifiers.shift, modifiers.alt);
+            // 목록이 키를 받는 동안의 F2(이름 바꾸기)·Ctrl+V(붙여넣기, macOS는 Cmd+V). 아니면 이 키들은 터미널로 가고, 다른 키는 목록이 키를 거두게 한다.
+            let list_modifiers = (scheme.primary(&input), modifiers.shift, modifiers.alt);
             if self.list_key_pressed(key, list_modifiers, window, cx)
-                || self.tab_bar_key_pressed(key, modifiers.control, modifiers.alt, window, cx)
-                || self.run_file_shortcut(file_shortcut(&input), window, cx)
+                || self.tab_bar_key_pressed(key, modifiers.control || modifiers.platform, modifiers.alt, window, cx)
+                || self.run_file_shortcut(file_shortcut(&input, scheme), window, cx)
             {
                 cx.stop_propagation();
-            } else if let Some(shortcut) = app_shortcut(&input) {
+            } else if let Some(shortcut) = app_shortcut(&input, scheme) {
                 self.run_shortcut(shortcut, window, cx);
                 cx.stop_propagation();
             }
@@ -2535,6 +2566,9 @@ impl WorkWindow {
             AppShortcut::NextTab => self.step_tab(TabTarget::Next, window, cx),
             AppShortcut::FirstTab => self.step_tab(TabTarget::First, window, cx),
             AppShortcut::LastTab => self.step_tab(TabTarget::Last, window, cx),
+            AppShortcut::TabAt(index) => self.step_tab(TabTarget::Index(index), window, cx),
+            AppShortcut::FontLarger => self.quick_step(Row::FontSize, 1, window, cx),
+            AppShortcut::FontSmaller => self.quick_step(Row::FontSize, -1, window, cx),
             AppShortcut::NewTerminalHere => self.new_terminal_here(window, cx),
             AppShortcut::SplitRight => self.split_selected(Orientation::Horizontal, window, cx),
             AppShortcut::SplitDown => self.split_selected(Orientation::Vertical, window, cx),
@@ -4226,6 +4260,7 @@ impl Render for WorkWindow {
                 cx.listener(|this, _: &StepPreviousTab, window, cx| this.step_tab(TabTarget::Previous, window, cx)),
             )
             .on_action(cx.listener(|this, _: &StepNextTab, window, cx| this.step_tab(TabTarget::Next, window, cx)))
+            .on_action(cx.listener(|this, _: &SearchInFolderFromEditor, window, cx| this.toggle_search(window, cx)))
             .capture_key_down(cx.listener(Self::on_capture_key))
             .capture_any_mouse_down(
                 cx.listener(|this, _event: &MouseDownEvent, window, cx| this.reset_tab_drag(window, cx)),

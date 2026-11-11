@@ -33,6 +33,8 @@ fn main() {
     application().with_assets(Assets).run(move |cx| {
         init(cx);
         paddock_app::window_view::bind_keys(cx);
+        #[cfg(target_os = "macos")]
+        paddock_app::app_menu::install(cx);
         paddock_app::chrome::sync_component_theme(cx);
         cx.on_window_closed(|cx, _window_id| {
             if cx.windows().is_empty() {
@@ -91,7 +93,7 @@ fn open_main_window(cx: &mut App) {
         paddock_app::automation::run(path, hooks.clone());
         Some(hooks)
     });
-    open_window(options, cx, move |window, cx| {
+    let (window_handle, view) = open_window(options, cx, move |window, cx| {
         let view = cx.new(|cx| WorkWindow::new(window, cx));
         #[cfg(feature = "automation")]
         if let Some(hooks) = hooks {
@@ -100,6 +102,10 @@ fn open_main_window(cx: &mut App) {
         view
     })
     .expect("Failed to open window");
+    #[cfg(target_os = "macos")]
+    paddock_app::app_menu::register_main_window(window_handle, view.downgrade(), cx);
+    #[cfg(not(target_os = "macos"))]
+    let _ = (window_handle, view);
     if should_activate {
         cx.activate(true);
     }

@@ -19,7 +19,7 @@ use gpui_kit::{
 use paddock_core::app_shortcut::file_shortcut;
 use paddock_core::app_shortcut::{AppShortcut, app_shortcut};
 use paddock_core::file_kind::file_name_of;
-use paddock_core::key_encoding::KeyInput;
+use paddock_core::key_encoding::{KeyInput, ShortcutScheme};
 use paddock_core::tab_drop::{HINT_MOVE_BACK, HINT_MOVE_BACK_FILE};
 use paddock_core::theme::{editor, file_tab, menu as menu_size, tab, tab_drag as drag_size, text};
 use paddock_core::window_point::is_outside;
@@ -467,7 +467,7 @@ impl DetachedWindow {
         cx.notify();
     }
 
-    /// 창 전체가 받는 키: 메뉴가 열려 있으면 Esc로 닫고, `Ctrl+Shift+W`는 이 터미널 닫기를 요청한다. 나머지는 터미널이 받는다.
+    /// 창 전체가 받는 키: 메뉴가 열려 있으면 Esc로 닫고, `Ctrl+Shift+W`(macOS는 Cmd+W)는 이 터미널 닫기를 요청한다. 나머지는 터미널이 받는다.
     fn on_capture_key(
         &mut self,
         event: &KeyDownEvent,
@@ -492,14 +492,18 @@ impl DetachedWindow {
             }
             cx.stop_propagation();
         } else if let DetachedBody::File { key } = &self.body
-            && !modifiers.platform
-            && let Some(shortcut) = file_shortcut(&KeyInput {
-                key: &key_name,
-                key_char: event.keystroke.key_char.as_deref(),
-                control: modifiers.control,
-                shift: modifiers.shift,
-                alt: modifiers.alt,
-            })
+            && ShortcutScheme::NATIVE.accepts_command_key(modifiers.platform)
+            && let Some(shortcut) = file_shortcut(
+                &KeyInput {
+                    key: &key_name,
+                    key_char: event.keystroke.key_char.as_deref(),
+                    control: modifiers.control,
+                    shift: modifiers.shift,
+                    alt: modifiers.alt,
+                    command: modifiers.platform,
+                },
+                ShortcutScheme::NATIVE,
+            )
         {
             // 저장·줄로 가기·검토 메모: 본 창이 이 파일을 "지금 파일"로 두고 실행한다(묻기 창은 본 창에 열린다).
             let key = key.clone();
@@ -511,14 +515,18 @@ impl DetachedWindow {
             if handled {
                 cx.stop_propagation();
             }
-        } else if !modifiers.platform
-            && let Some(shortcut) = app_shortcut(&KeyInput {
-                key: &key_name,
-                key_char: event.keystroke.key_char.as_deref(),
-                control: modifiers.control,
-                shift: modifiers.shift,
-                alt: modifiers.alt,
-            })
+        } else if ShortcutScheme::NATIVE.accepts_command_key(modifiers.platform)
+            && let Some(shortcut) = app_shortcut(
+                &KeyInput {
+                    key: &key_name,
+                    key_char: event.keystroke.key_char.as_deref(),
+                    control: modifiers.control,
+                    shift: modifiers.shift,
+                    alt: modifiers.alt,
+                    command: modifiers.platform,
+                },
+                ShortcutScheme::NATIVE,
+            )
         {
             match shortcut {
                 // 이 창의 터미널을 닫는다(확인 창은 본 창에 열린다).
