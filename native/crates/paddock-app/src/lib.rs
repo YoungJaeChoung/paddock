@@ -22,6 +22,8 @@ pub mod done_sound;
 pub mod fatal_report;
 pub mod files;
 pub mod git;
+#[cfg(target_os = "macos")]
+pub mod login_environment;
 pub mod look;
 #[cfg(feature = "gui")]
 pub mod overlay;

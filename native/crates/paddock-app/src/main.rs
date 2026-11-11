@@ -23,6 +23,9 @@ mod window_size {
 const WINDOW_TITLE: &str = "Paddock";
 
 fn main() {
+    // Finder·Dock으로 연 macOS 앱은 launchd의 기본 PATH를 받는다. 다른 스레드가 생기기 전에 로그인 셸의 PATH로 바꾼다.
+    #[cfg(target_os = "macos")]
+    paddock_app::login_environment::adopt_login_shell_path();
     // 자동 점검의 화면 밖 실행은 사용자 화면에 오류 창을 띄우지 않는다.
     let quiet = cfg!(feature = "automation") && std::env::args().any(|arg| arg == "--offscreen");
     fatal_report::install(!quiet);
