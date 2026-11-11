@@ -128,6 +128,27 @@ mod windows {
         }
     }
 
+    /// 프로세스의 실행 파일 경로. Linux는 `/proc/<pid>/exe`, macOS는 `proc_pidpath`로 읽는다.
+    #[cfg(target_os = "macos")]
+    fn image_of(pid: u32) -> std::io::Result<std::path::PathBuf> {
+        use std::os::unix::ffi::OsStringExt;
+        let mut buffer = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+        // SAFETY: 버퍼는 `buffer.len()` 바이트이고 커널은 그 크기까지만 쓴다.
+        let n_bytes =
+            unsafe { libc::proc_pidpath(pid as libc::c_int, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
+        if n_bytes > 0 {
+            buffer.truncate(n_bytes as usize);
+            Ok(std::path::PathBuf::from(std::ffi::OsString::from_vec(buffer)))
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn image_of(pid: u32) -> std::io::Result<std::path::PathBuf> {
+        std::fs::read_link(format!("/proc/{pid}/exe"))
+    }
+
     /// `pid` 프로세스가 `exe`와 같은 이름의 실행 파일이면 끝낸다.
     pub fn terminate(
         pid: u32,
@@ -167,12 +188,33 @@ mod unix {
 
     use super::LaunchedDaemon;
 
+    /// 프로세스의 실행 파일 경로. Linux는 `/proc/<pid>/exe`, macOS는 `proc_pidpath`로 읽는다.
+    #[cfg(target_os = "macos")]
+    fn image_of(pid: u32) -> std::io::Result<std::path::PathBuf> {
+        use std::os::unix::ffi::OsStringExt;
+        let mut buffer = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+        // SAFETY: 버퍼는 `buffer.len()` 바이트이고 커널은 그 크기까지만 쓴다.
+        let n_bytes =
+            unsafe { libc::proc_pidpath(pid as libc::c_int, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
+        if n_bytes > 0 {
+            buffer.truncate(n_bytes as usize);
+            Ok(std::path::PathBuf::from(std::ffi::OsString::from_vec(buffer)))
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn image_of(pid: u32) -> std::io::Result<std::path::PathBuf> {
+        std::fs::read_link(format!("/proc/{pid}/exe"))
+    }
+
     /// `pid` 프로세스가 `exe`와 같은 이름의 실행 파일이면 끝낸다.
     pub fn terminate(
         pid: u32,
         exe: &Path,
     ) -> std::io::Result<()> {
-        let image = std::fs::read_link(format!("/proc/{pid}/exe"));
+        let image = image_of(pid);
         match image {
             Ok(image) if super::same_file_name(&image, exe) => {
                 // SAFETY: 프로세스 번호와 신호만 넘기며 메모리를 건드리지 않는다.

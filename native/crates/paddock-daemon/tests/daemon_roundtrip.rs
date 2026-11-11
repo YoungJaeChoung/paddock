@@ -857,7 +857,7 @@ fn test_c_d77_the_state_carries_the_running_claudes_conversation_and_stop_agent_
     let attached = client.new_terminal(None, 100, 24);
     let bin = daemon.home.path().join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    std::os::unix::fs::symlink("/bin/bash", bin.join("claude")).unwrap();
+    install_fake_claude(&bin);
     let config = daemon.home.path().join("claude-config");
     let session = "0b9f2f77-6a1e-4a4c-9d33-2f7a5d1c1a10";
     type_line(&mut client, &format!("PATH={}:$PATH\r", bin.display()));
@@ -865,7 +865,7 @@ fn test_c_d77_the_state_carries_the_running_claudes_conversation_and_stop_agent_
     type_line(
         &mut client,
         &format!(
-            "CLAUDE_CONFIG_DIR={config} claude -c 'mkdir -p $CLAUDE_CONFIG_DIR/sessions; printf \"{{\\\"pid\\\":%s,\\\"sessionId\\\":\\\"{session}\\\",\\\"kind\\\":\\\"interactive\\\",\\\"cwd\\\":\\\"/w\\\",\\\"startedAt\\\":%s}}\" $$ $(date +%s%3N) > $CLAUDE_CONFIG_DIR/sessions/$$.json; echo READY; while :; do sleep 0.2; done'\r",
+            "CLAUDE_CONFIG_DIR={config} claude -c 'mkdir -p $CLAUDE_CONFIG_DIR/sessions; printf \"{{\\\"pid\\\":%s,\\\"sessionId\\\":\\\"{session}\\\",\\\"kind\\\":\\\"interactive\\\",\\\"cwd\\\":\\\"/w\\\",\\\"startedAt\\\":%s}}\" $$ $(( $(date +%s) * 1000 )) > $CLAUDE_CONFIG_DIR/sessions/$$.json; echo READY; while :; do sleep 0.2; done'\r",
             config = config.display()
         ),
     );
@@ -990,9 +990,34 @@ impl TestDaemon {
     }
 }
 
-/// 프로세스가 쓰는 실제 메모리 바이트(Linux는 RSS, Windows는 작업 집합).
+/// 가짜 `claude` 실행 파일을 `bin`에 둔다. 내용은 bash다.
+///
+/// macOS에서는 복사한 뒤 임시 서명(ad-hoc)으로 다시 서명한다 — `/bin/bash`는 운영체제가 보호하는 프로그램이라 다른 프로세스가 환경을
+/// 읽을 수 없어, 심볼릭 링크로 띄우면 데몬이 계정·대화를 알아내지 못한다. 보호 표시가 붙은 채 복사하면 실행 즉시 끝나므로
+/// 다시 서명해 일반 프로그램으로 만든다.
+#[cfg(unix)]
+fn install_fake_claude(bin: &std::path::Path) {
+    #[cfg(target_os = "macos")]
+    {
+        let fake = bin.join("claude");
+        std::fs::copy("/bin/bash", &fake).unwrap();
+        let signed = std::process::Command::new("codesign").args(["--force", "-s", "-"]).arg(&fake).output().unwrap();
+        assert!(signed.status.success(), "{}", String::from_utf8_lossy(&signed.stderr));
+    }
+    #[cfg(not(target_os = "macos"))]
+    std::os::unix::fs::symlink("/bin/bash", bin.join("claude")).unwrap();
+}
+
+/// 프로세스가 쓰는 실제 메모리 바이트(Linux는 RSS, macOS는 `ps`의 RSS, Windows는 작업 집합).
 fn memory_bytes(pid: u32) -> u64 {
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
+    let bytes = {
+        let output =
+            std::process::Command::new("ps").args(["-o", "rss=", "-p", &pid.to_string()]).output().expect("run ps");
+        let n_kib: u64 = String::from_utf8_lossy(&output.stdout).trim().parse().expect("ps rss KiB");
+        n_kib * 1024
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
     let bytes = {
         let status = std::fs::read_to_string(format!("/proc/{pid}/status")).expect("read /proc status");
         let line = status.lines().find(|line| line.starts_with("VmRSS:")).expect("VmRSS line");
@@ -1277,7 +1302,7 @@ fn test_c_d37_an_agent_named_program_gets_a_state_and_a_finish_is_announced_once
     // 가짜 claude 프로세스 자체가 sleep이 되어 기록을 쓰기 직전의 조사가 앞쪽 프로그램을 sleep으로 읽는다.
     let bin = daemon.home.path().join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    std::os::unix::fs::symlink("/bin/bash", bin.join("claude")).unwrap();
+    install_fake_claude(&bin);
     type_line(&mut client, &format!("PATH={}:$PATH\r", bin.display()));
     type_line(
         &mut client,
@@ -1307,7 +1332,7 @@ fn test_c_a2_a_signal_the_agent_prints_rides_on_the_state_and_ends_when_the_agen
     // 에이전트 이름의 실행 파일(claude)이 OSC 7501로 입력 필요(권한)를 알리고 Enter를 기다린다.
     let bin = daemon.home.path().join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    std::os::unix::fs::symlink("/bin/bash", bin.join("claude")).unwrap();
+    install_fake_claude(&bin);
     type_line(&mut client, &format!("PATH={}:$PATH\r", bin.display()));
     type_line(
         &mut client,
@@ -1333,10 +1358,10 @@ fn test_c_d37_osc7501_query_is_answered_on_the_pty() {
     let daemon = TestDaemon::start();
     let (mut client, _) = daemon.connect_authenticated();
     client.new_terminal(None, 120, 24);
-    // 셸이 질의를 출력하면 데몬이 같은 시퀀스를 터미널 입력으로 돌려준다. 읽은 10바이트를 16진수로 찍어 확인한다.
+    // 셸이 질의를 출력하면 데몬이 같은 시퀀스를 터미널 입력으로 돌려준다. `read -n`은 줄바꿈이 없는 응답도 글자 수만큼 읽고, macOS의 bash 3.2에도 있다(`-N`은 없다). 읽은 10바이트를 16진수로 찍어 확인한다.
     type_line(
         &mut client,
-        "printf '\\033]7501;?\\033\\\\'; read -r -s -N 10 -t 8 reply; printf 'GOT:%s\\n' \"$(printf %s \"$reply\" | od -An -tx1 | tr -d ' \\n')\"\n",
+        "printf '\\033]7501;?\\033\\\\'; read -r -s -n 10 -t 8 reply; printf 'GOT:%s\\n' \"$(printf %s \"$reply\" | od -An -tx1 | tr -d ' \\n')\"\n",
     );
     let output = String::from_utf8_lossy(&client.collect_until("GOT:1b5d373530313b3f1b5c")).into_owned();
     assert!(output.contains("GOT:1b5d373530313b3f1b5c"), "{output}");

@@ -1,13 +1,16 @@
 //! 터미널 셸의 현재 폴더·앞쪽 프로그램·환경을 운영체제에서 읽는 곳.
 //!
-//! 운영체제마다 읽는 방법이 다르다: Linux는 `/proc`, Windows는 프로세스 목록과 명령줄 조회, Windows의 WSL 터미널은 WSL 안의 `/proc`.
-//! 어느 쪽도 자식 프로세스를 상주시키지 않는다. 읽는 일은 비싸므로 호출자(`activity::tick`)가 필요한 터미널만 모아 한 번에 묻는다.
+//! 운영체제마다 읽는 방법이 다르다: Linux는 `/proc`, macOS는 `ps` 두 번(앞쪽 프로세스 찾기)과 libc 조회(폴더·명령줄·환경·시작 시각),
+//! Windows는 프로세스 목록과 명령줄 조회, Windows의 WSL 터미널은 WSL 안의 `/proc`.
+//! 어느 쪽도 자식 프로세스를 상주시키지 않는다(macOS의 `ps`는 조회 때만 잠깐 실행하고 끝난다). 읽는 일은 비싸므로 호출자(`activity::tick`)가 필요한 터미널만 모아 한 번에 묻는다.
 use std::collections::BTreeMap;
 
 use paddock_core::agent_account::{AccountEnv, Runtime};
 
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
@@ -49,7 +52,7 @@ pub struct Reading {
     /// 앞쪽 프로세스의 시작 시각(ms, 1970년 기준). 알 수 없으면 None. WSL은 시계가 어긋날 수 있어 알리지 않는다.
     pub started_at: Option<u64>,
     /// 앞쪽 프로세스가 같은 프로세스인지 비교하는 표지. 같은 환경에서 읽은 값끼리만 비교한다:
-    /// Linux·Windows 네이티브는 `started_at`과 같고, WSL은 부팅 뒤 시작 tick이다. 알 수 없으면 None.
+    /// Linux·macOS·Windows 네이티브는 `started_at`과 같고, WSL은 부팅 뒤 시작 tick이다. 알 수 없으면 None.
     pub start_mark: Option<u64>,
     /// WSL 안에서 읽은 앞쪽 프로세스의 Claude sessions 기록 본문. 읽지 못했으면 None.
     pub session_record: Option<String>,
@@ -64,7 +67,7 @@ pub trait Probe: Send + Sync {
     ) -> BTreeMap<u32, Reading>;
 }
 
-/// 이 운영체제의 조사기. 아직 지원하지 않는 운영체제(macOS)는 아무것도 읽지 못한다.
+/// 이 운영체제의 조사기. Linux·macOS·Windows 밖의 운영체제는 아무것도 읽지 못한다.
 pub struct SystemProbe;
 
 impl Probe for SystemProbe {
@@ -74,9 +77,11 @@ impl Probe for SystemProbe {
     ) -> BTreeMap<u32, Reading> {
         #[cfg(target_os = "linux")]
         let readings = linux::read(targets);
+        #[cfg(target_os = "macos")]
+        let readings = macos::read(targets);
         #[cfg(windows)]
         let readings = windows::read(targets);
-        #[cfg(not(any(target_os = "linux", windows)))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
         let readings = {
             let _ = targets;
             BTreeMap::new()

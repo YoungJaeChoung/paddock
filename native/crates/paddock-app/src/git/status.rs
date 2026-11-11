@@ -299,10 +299,11 @@ mod tests {
 
     #[test]
     fn test_c_d53_git_env_disables_prompts() {
+        // BSD `printenv`(macOS)는 이름을 하나만 받아 변수마다 따로 부른다.
         let _home = TempHome::new();
         let repo = TestRepo::new();
         let target = target_of(&repo.root());
-        let args = strings(&["-c", "alias.e=!printenv GIT_TERMINAL_PROMPT GIT_OPTIONAL_LOCKS", "e"]);
+        let args = strings(&["-c", "alias.e=!printenv GIT_TERMINAL_PROMPT; printenv GIT_OPTIONAL_LOCKS", "e"]);
         let output = runner::run(&target, &repo.root(), &args, Some(runner::TIME_LIMIT)).unwrap();
         assert_eq!(output.code, Some(0), "{}", output.stderr);
         assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "0\n0\n");
