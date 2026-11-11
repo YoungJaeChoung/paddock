@@ -10,8 +10,16 @@ pub const TERMINAL_FONT_CANDIDATES: [&str; 8] =
     ["Consolas", "Cascadia Mono", "JetBrains Mono", "D2Coding", "Menlo", "SF Mono", "Fira Code", "DejaVu Sans Mono"];
 
 /// 창 틀 글꼴 후보. 이 컴퓨터에 설치된 것만 고를 수 있다.
-pub const INTERFACE_FONT_CANDIDATES: [&str; 7] =
-    ["Segoe UI", "Inter", "Noto Sans", "Noto Sans CJK KR", "Malgun Gothic", "Apple SD Gothic Neo", "Arial"];
+pub const INTERFACE_FONT_CANDIDATES: [&str; 8] = [
+    "Segoe UI",
+    "Inter",
+    "Noto Sans",
+    "Noto Sans CJK KR",
+    "Malgun Gothic",
+    "Apple SD Gothic Neo",
+    "Helvetica Neue",
+    "Arial",
+];
 
 /// 쓰는 데몬이 앱의 것과 실행 파일만 다를 때(`outdated`) 패널 맨 아래에 보이는 안내. 아니면 None이다.
 ///

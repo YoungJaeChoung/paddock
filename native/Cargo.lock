@@ -4936,6 +4936,7 @@ dependencies = [
  "chrono",
  "grep-matcher",
  "grep-regex",
+ "libc",
  "serde",
  "serde_json",
  "unicode-properties",

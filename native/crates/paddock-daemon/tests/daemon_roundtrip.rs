@@ -165,7 +165,16 @@ impl TestDaemon {
         args: &[&str],
         env: &[(&str, &str)],
     ) -> Child {
-        Command::new(daemon_exe())
+        Self::command_in(home, args, env).spawn().expect("start daemon")
+    }
+
+    fn command_in(
+        home: &Path,
+        args: &[&str],
+        env: &[(&str, &str)],
+    ) -> Command {
+        let mut command = Command::new(daemon_exe());
+        command
             .args(args)
             .envs(env.iter().copied())
             .env("HOME", home)
@@ -176,9 +185,32 @@ impl TestDaemon {
             .env_remove("CODEX_HOME")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("start daemon")
+            .stderr(Stdio::null());
+        command
+    }
+
+    #[cfg(unix)]
+    /// 신호를 모두 막고 SIGTERM·SIGINT·SIGQUIT를 무시하는 상태로 데몬을 띄운다. 이런 설정을 가진 실행기(앱·작업 관리자)가
+    /// 데몬을 띄워도 설정이 이어지지 않아야 한다.
+    fn start_with_blocked_and_ignored_signals() -> Self {
+        use std::os::unix::process::CommandExt;
+        let home = tempfile::tempdir().expect("temp home");
+        let mut command = Self::command_in(home.path(), &[], &[]);
+        // SAFETY: 실행 직전 자식 안에서 신호 설정 호출만 한다.
+        unsafe {
+            command.pre_exec(|| {
+                let mut all: libc::sigset_t = std::mem::zeroed();
+                libc::sigfillset(&mut all);
+                libc::sigprocmask(libc::SIG_SETMASK, &all, std::ptr::null_mut());
+                for signal in [libc::SIGTERM, libc::SIGINT, libc::SIGQUIT] {
+                    libc::signal(signal, libc::SIG_IGN);
+                }
+                Ok(())
+            });
+        }
+        let daemon = Self { child: command.spawn().expect("start daemon"), home };
+        daemon.wait_for_info();
+        daemon
     }
 
     /// 같은 홈 폴더를 쓰는 데몬을 하나 더 띄운다.
@@ -1352,6 +1384,29 @@ fn test_c_a2_a_signal_the_agent_prints_rides_on_the_state_and_ends_when_the_agen
         state.program.as_deref() == Some("bash") && state.signal.is_none()
     });
     assert!(back.is_some(), "the signal must end with the agent: {seen:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_a_daemon_started_with_blocked_and_ignored_signals_and_its_shell_still_end_on_sigterm() {
+    let mut daemon = TestDaemon::start_with_blocked_and_ignored_signals();
+    let (mut client, _) = daemon.connect_authenticated();
+    client.new_terminal(None, 100, 24);
+    // 데몬이 띄운 셸 안의 프로그램도 SIGTERM을 받아 끝나야 한다: 신호로 끝난 종료 코드는 128 + 15다.
+    // 대화형 bash는 `$!`를 기록 확장으로 읽으므로 먼저 끈다. 띄운 직후에는 자식이 아직 SIGTERM을 무시하는 셸 상태라 신호가 사라지므로 잠깐 기다린다.
+    type_line(&mut client, "set +H\n");
+    type_line(&mut client, "sleep 60 & sleep 0.5; kill -TERM $!; wait $!; echo EXIT''=$?\n");
+    let output = String::from_utf8_lossy(&client.collect_until("EXIT=143")).into_owned();
+    assert!(output.contains("EXIT=143"), "{output}");
+    // SAFETY: 자식 프로세스 번호와 신호만 넘긴다.
+    unsafe { libc::kill(daemon.child.id() as i32, libc::SIGTERM) };
+    let end = Instant::now() + Duration::from_secs(5);
+    let mut status = None;
+    while status.is_none() && Instant::now() < end {
+        status = daemon.child.try_wait().unwrap();
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert!(status.is_some(), "the daemon ignored SIGTERM");
 }
 
 #[cfg(unix)]

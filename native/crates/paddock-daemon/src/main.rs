@@ -52,6 +52,8 @@ const LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(100);
 const IDLE_CHECK_INTERVAL: Duration = Duration::from_millis(500);
 
 fn main() -> ExitCode {
+    #[cfg(unix)]
+    reset_inherited_signal_state();
     install_panic_log();
     clear_inherited_session_markers();
     let breakaway_denied = std::env::args().any(|arg| arg == "--breakaway-denied");
@@ -60,6 +62,26 @@ fn main() -> ExitCode {
         Err(error) => {
             log::event(&format!("daemon could not start: {error}"));
             ExitCode::from(2)
+        }
+    }
+}
+
+/// 데몬을 띄운 쪽에서 물려받은 신호 설정을 비워, 어떤 실행기에서 떠도 종료 신호(SIGTERM·SIGINT·SIGQUIT)에 끝나게 한다.
+///
+/// 신호를 막은 상태(마스크)와 무시 설정은 실행 파일을 바꿔도 이어진다. 데몬이 그것을 그대로 두면 데몬도, 데몬이 띄우는
+/// 셸과 그 안의 프로그램도 종료 신호에 반응하지 않아 멈춘 데몬을 끝내거나 에이전트를 멈추는 요청(SIGTERM)이 듣지 않는다.
+/// SIGPIPE는 일부러 건드리지 않는다 — 러스트가 무시로 둬 연결이 끊긴 소켓에 쓰면 프로세스가 죽는 대신 오류가 돌아오며,
+/// 데몬이 띄우는 프로세스에는 러스트가 SIGPIPE를 기본값으로 돌려 준다. SIGHUP도 그대로 둔다 — 데몬은 창을 띄운
+/// 터미널이 닫혀도 살아 있어야 한다.
+#[cfg(unix)]
+fn reset_inherited_signal_state() {
+    // SAFETY: 빈 집합으로 마스크를 바꾸고 신호 두세 개의 처리를 기본값으로 돌릴 뿐이며, 시작 직후 스레드가 하나일 때 부른다.
+    unsafe {
+        let mut empty: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut empty);
+        libc::sigprocmask(libc::SIG_SETMASK, &empty, std::ptr::null_mut());
+        for signal in [libc::SIGTERM, libc::SIGINT, libc::SIGQUIT] {
+            libc::signal(signal, libc::SIG_DFL);
         }
     }
 }
