@@ -8,7 +8,7 @@ fn is_word_char(ch: char) -> bool {
     ch.is_alphanumeric() || ch == '_'
 }
 
-/// `offset`이 놓인 단어의 범위. 단어 위나 바로 끝(오른쪽 끝)에 있을 때만 있고, 공백·기호 사이면 None이다.
+/// `offset`이 놓인 단어의 범위. 단어 위나 바로 끝(오른쪽 끝)에 있을 때만 있고, 공백·기호 사이거나 `offset`이 글자 경계가 아니면 None이다.
 ///
 /// Examples
 /// --------
@@ -23,8 +23,9 @@ pub fn word_at(
     offset: usize,
 ) -> Option<Range<usize>> {
     let offset = offset.min(text.len());
+    let (before, after) = (text.get(..offset)?, text.get(offset..)?);
     let mut start = offset;
-    for (index, ch) in text[..offset].char_indices().rev() {
+    for (index, ch) in before.char_indices().rev() {
         if is_word_char(ch) {
             start = index;
         } else {
@@ -32,7 +33,7 @@ pub fn word_at(
         }
     }
     let mut end = offset;
-    for (index, ch) in text[offset..].char_indices() {
+    for (index, ch) in after.char_indices() {
         if is_word_char(ch) {
             end = offset + index + ch.len_utf8();
         } else {
@@ -56,6 +57,7 @@ pub struct OccurrenceTrail {
 
 /// 선택 `selected`와 같은 글자가 다음으로 나오는 범위. 직전 기록 `trail`이 지금 선택·글과 맞으면 그 기록의 마지막 자리 뒤부터,
 /// 아니면 `selected` 뒤부터 찾는다. 끝까지 없으면 글 처음부터 앞쪽에서 다시 찾는다(이미 고른 자리가 나올 수 있다).
+/// 이미 고른 자리에 맞닿는 일치는 건너뛴다: 편집기는 맞닿은 선택을 하나로 합치므로 더해도 커서가 늘지 않는다.
 /// 같은 글자가 없거나 `selected`가 비었으면 None이다. 단어 경계는 따지지 않는다(고른 글자 그대로 찾는다).
 ///
 /// Examples
@@ -65,6 +67,7 @@ pub struct OccurrenceTrail {
 /// | `ab ab ab`     | `0..2`   | 없음                | `3..5`   |
 /// | `ab ab ab`     | `0..2`   | `3..5`              | `6..8`   |
 /// | `ab ab ab`     | `6..8`   | 없음                | `0..2`   |
+/// | `abab ab`      | `0..2`   | 없음                | `5..7`   |
 /// | `ab cd`        | `0..2`   | 없음                | None     |
 pub fn next_occurrence(
     text: &str,
@@ -75,9 +78,40 @@ pub fn next_occurrence(
     let anchor = trail
         .filter(|trail| trail.selected == selected && trail.text_len == text.len())
         .map_or(selected.clone(), |trail| trail.added.clone());
-    let after = text.get(anchor.end..).and_then(|rest| rest.find(needle)).map(|index| anchor.end + index);
-    let before = text.get(..anchor.start).and_then(|rest| rest.find(needle));
+    // 뒤쪽: 마지막 자리 바로 뒤에 붙은 일치는 건너뛰고 그다음 일치를 쓴다.
+    let mut from = anchor.end;
+    let mut after = None;
+    while let Some(index) = text.get(from..).and_then(|rest| rest.find(needle)) {
+        let start = from + index;
+        if start == anchor.end {
+            from = start + needle.len();
+        } else {
+            after = Some(start);
+            break;
+        }
+    }
+    // 앞쪽(끝까지 없을 때): 글 처음부터 처음 고른 자리 앞까지. 처음 고른 자리에 맞닿는 일치는 건너뛴다.
+    let mut from = 0;
+    let mut before = None;
+    while let Some(index) = text.get(from..selected.start).and_then(|rest| rest.find(needle)) {
+        let start = from + index;
+        if start + needle.len() == selected.start {
+            from = start + needle.len();
+        } else {
+            before = Some(start);
+            break;
+        }
+    }
     after.or(before).map(|start| start..start + needle.len())
+}
+
+/// `offset`이 놓인 줄 번호(0부터).
+pub fn line_of(
+    text: &str,
+    offset: usize,
+) -> usize {
+    let end = offset.min(text.len());
+    text.as_bytes()[..end].iter().filter(|&&byte| byte == b'\n').count()
 }
 
 #[cfg(test)]
@@ -92,6 +126,8 @@ mod tests {
         assert_eq!(word_at("foo  bar", 4), None);
         assert_eq!(word_at("", 0), None);
         assert_eq!(word_at("a_b1.c", 2), Some(0..4));
+        // 글자 경계가 아닌 위치는 단어가 없는 것으로 본다(한글은 한 글자가 3바이트).
+        assert_eq!(word_at("가나", 1), None);
     }
 
     #[test]
@@ -109,6 +145,30 @@ mod tests {
         assert_eq!(next_occurrence("ab cd", 0..2, None), None);
         assert_eq!(next_occurrence("ab ab", 2..2, None), None);
         assert_eq!(next_occurrence("가나 가나", 0..6, None), Some(7..13));
+    }
+
+    #[test]
+    fn test_matches_touching_a_chosen_place_are_skipped_because_the_editor_would_merge_them() {
+        assert_eq!(next_occurrence("abab ab", 0..2, None), Some(5..7));
+        // 앞쪽으로 돌아갈 때도 처음 고른 자리에 맞닿는 일치는 건너뛴다.
+        assert_eq!(next_occurrence("ab ab abab", 8..10, None), Some(0..2));
+        assert_eq!(next_occurrence("abab", 2..4, None), None);
+    }
+
+    #[test]
+    fn test_esc_clears_the_trail_so_the_next_press_starts_again_after_the_selection() {
+        let text = "ab ab ab ab ab";
+        let trail = OccurrenceTrail { selected: 0..2, added: 6..8, text_len: text.len() };
+        // 기록이 남아 있으면 마지막 자리 뒤에서 이어 가지만, Esc로 기록을 비우면 처음 선택 뒤에서 다시 시작한다.
+        assert_eq!(next_occurrence(text, 0..2, Some(&trail)), Some(9..11));
+        assert_eq!(next_occurrence(text, 0..2, None), Some(3..5));
+    }
+
+    #[test]
+    fn test_line_numbers_count_newlines_before_the_offset() {
+        assert_eq!(line_of("a\nb\nc", 0), 0);
+        assert_eq!(line_of("a\nb\nc", 2), 1);
+        assert_eq!(line_of("a\nb\nc", 100), 2);
     }
 
     #[test]

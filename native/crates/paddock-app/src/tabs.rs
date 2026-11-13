@@ -543,7 +543,10 @@ fn image_zoom_actions_row(
 }
 
 /// PDF 탭이 활성일 때 보이는 `−`·`+` 배율 단추와 `Open with default app`.
-fn pdf_actions_row(cx: &mut Context<WorkWindow>) -> gpui_kit::Stateful<Div> {
+fn pdf_actions_row(
+    is_fit: bool,
+    cx: &mut Context<WorkWindow>,
+) -> gpui_kit::Stateful<Div> {
     let zoom_button = |id: &'static str, glyph: &'static str| {
         glyph_button(id, glyph, pdf_view::ZOOM_BUTTON_WIDTH, pdf_view::ZOOM_BUTTON_HEIGHT, pdf_view::ZOOM_BUTTON_RADIUS)
     };
@@ -563,8 +566,8 @@ fn pdf_actions_row(cx: &mut Context<WorkWindow>) -> gpui_kit::Stateful<Div> {
             MouseButton::Left,
             cx.listener(|this, _event: &MouseDownEvent, window, cx| this.zoom_pdf(Some(true), window, cx)),
         ))
-        .child(
-            div()
+        .child({
+            let fit = div()
                 .id("pdf-zoom-fit")
                 .flex_none()
                 .h(zpx(pdf_view::OPEN_BUTTON_HEIGHT))
@@ -573,15 +576,17 @@ fn pdf_actions_row(cx: &mut Context<WorkWindow>) -> gpui_kit::Stateful<Div> {
                 .items_center()
                 .rounded(zpx(pdf_view::OPEN_BUTTON_RADIUS))
                 .text_size(zpx(pdf_view::OPEN_BUTTON_TEXT_SIZE))
-                .text_color(hsla(colors().fg_muted))
+                .text_color(hsla(if is_fit { colors().fg_strong } else { colors().fg_muted }))
                 .cursor_pointer()
                 .hover(|style| style.bg(hsla(colors().hover_bg)).text_color(hsla(colors().fg_strong)))
                 .child("Fit")
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|this, _event: &MouseDownEvent, window, cx| this.zoom_pdf(None, window, cx)),
-                ),
-        )
+                );
+            // 칸 폭 맞춤 상태이면 눌린 모양(이미지 Fit·1:1 단추와 같은 배경)이다.
+            if is_fit { fit.bg(hsla(colors().selected_bg)) } else { fit }
+        })
         .child(
             div()
                 .id("pdf-open-default")
@@ -1050,7 +1055,12 @@ pub fn tab_bar(
                         .filter(|_| file_active)
                         .map(|view| markdown_view_actions_row(view, cx)),
                 )
-                .children((selected_kind == Some(FileKind::Pdf)).then(|| pdf_actions_row(cx)))
+                .children(
+                    window_view
+                        .selected_pdf_is_fit(cx)
+                        .filter(|_| file_active)
+                        .map(|is_fit| pdf_actions_row(is_fit, cx)),
+                )
                 .children(
                     window_view
                         .selected_image_zoom(cx)

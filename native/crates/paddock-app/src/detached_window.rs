@@ -16,8 +16,7 @@ use gpui_kit::{
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render,
     Styled, WeakEntity, Window, canvas, div, px,
 };
-use paddock_core::app_shortcut::file_shortcut;
-use paddock_core::app_shortcut::{AppShortcut, app_shortcut};
+use paddock_core::app_shortcut::{AppShortcut, app_shortcut, file_shortcut, preview_shortcut};
 use paddock_core::file_kind::file_name_of;
 use paddock_core::key_encoding::{KeyInput, ShortcutScheme};
 use paddock_core::tab_drop::{HINT_MOVE_BACK, HINT_MOVE_BACK_FILE};
@@ -467,6 +466,47 @@ impl DetachedWindow {
         cx.notify();
     }
 
+    /// 이 창이 파일 창이면 그 파일의 열쇠.
+    fn file_key(&self) -> Option<String> {
+        match &self.body {
+            DetachedBody::File { key } => Some(key.clone()),
+            DetachedBody::Terminal { .. } => None,
+        }
+    }
+
+    /// 파일 창에서 눌린 키가 파일·미리보기 단축키이면 본 창이 이 파일을 "지금 파일"로 두고 실행한다. 처리했으면 true다.
+    fn run_file_key(
+        &mut self,
+        key: &str,
+        keystroke: &gpui_kit::Keystroke,
+        key_name: &str,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let modifiers = keystroke.modifiers;
+        let input = KeyInput {
+            key: key_name,
+            key_char: keystroke.key_char.as_deref(),
+            control: modifiers.control,
+            shift: modifiers.shift,
+            alt: modifiers.alt,
+            command: modifiers.platform,
+        };
+        let mut handled = false;
+        if let Some(zoom) = preview_shortcut(&input, ShortcutScheme::NATIVE) {
+            handled =
+                self.with_main(cx, |work, _, main_cx| work.zoom_detached_pdf(key, zoom, main_cx)).unwrap_or(false);
+        }
+        if !handled && let Some(shortcut) = file_shortcut(&input, ShortcutScheme::NATIVE) {
+            // 묻기 창은 본 창에 열린다.
+            handled = self
+                .with_main(cx, |work, main_window, main_cx| {
+                    work.run_detached_file_shortcut(key, shortcut, main_window, main_cx)
+                })
+                .unwrap_or(false);
+        }
+        handled
+    }
+
     /// 창 전체가 받는 키: 메뉴가 열려 있으면 Esc로 닫고, `Ctrl+Shift+W`(macOS는 Cmd+W)는 이 터미널 닫기를 요청한다. 나머지는 터미널이 받는다.
     fn on_capture_key(
         &mut self,
@@ -491,30 +531,12 @@ impl DetachedWindow {
                 cx.notify();
             }
             cx.stop_propagation();
-        } else if let DetachedBody::File { key } = &self.body
+        } else if let Some(key) = self.file_key()
             && ShortcutScheme::NATIVE.accepts_command_key(modifiers.platform)
-            && let Some(shortcut) = file_shortcut(
-                &KeyInput {
-                    key: &key_name,
-                    key_char: event.keystroke.key_char.as_deref(),
-                    control: modifiers.control,
-                    shift: modifiers.shift,
-                    alt: modifiers.alt,
-                    command: modifiers.platform,
-                },
-                ShortcutScheme::NATIVE,
-            )
+            && self.run_file_key(&key, &event.keystroke, &key_name, cx)
         {
-            // 저장·줄로 가기·검토 메모: 본 창이 이 파일을 "지금 파일"로 두고 실행한다(묻기 창은 본 창에 열린다).
-            let key = key.clone();
-            let handled = self
-                .with_main(cx, |work, main_window, main_cx| {
-                    work.run_detached_file_shortcut(&key, shortcut, main_window, main_cx)
-                })
-                .unwrap_or(false);
-            if handled {
-                cx.stop_propagation();
-            }
+            // 저장·줄로 가기·검토 메모·다음 같은 글자·PDF 배율: 처리했으면 키를 거둔다. 처리하지 못했으면(편집기 없는 창의 Cmd+D 등) 다음 단축키로 이어 간다.
+            cx.stop_propagation();
         } else if ShortcutScheme::NATIVE.accepts_command_key(modifiers.platform)
             && let Some(shortcut) = app_shortcut(
                 &KeyInput {

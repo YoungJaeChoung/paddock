@@ -268,7 +268,7 @@ impl WorkWindow {
                 true
             }
             FileShortcut::GoToLine if has_editor => self.begin_go_to_line(window, cx),
-            FileShortcut::SelectNextOccurrence if has_editor => self.select_next_occurrence(cx),
+            FileShortcut::SelectNextOccurrence => self.select_next_occurrence(None, cx),
             FileShortcut::AddReviewNote => {
                 self.begin_review_note(window, cx);
                 true

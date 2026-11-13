@@ -567,6 +567,14 @@ impl WorkWindow {
             }
         })
         .detach();
+        // Esc는 편집기가 키 연결로 먼저 받아 여러 커서를 하나로 줄이고 키 처리기에는 닿지 않는다. 그래서 키가 처리된 뒤 알려 주는 관찰자에서
+        // "다음 같은 글자" 기록을 비운다(분리 창의 편집기 키도 여기로 온다).
+        cx.observe_keystrokes(|this, event, _window, _cx| {
+            if event.keystroke.key == "escape" {
+                this.forget_occurrence_trails();
+            }
+        })
+        .detach();
         this.start_setup();
         this
     }

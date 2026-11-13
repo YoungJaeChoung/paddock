@@ -4,16 +4,17 @@
 //! 디스크에 쓰는 일은 `WriteService`의 `Save` 명령 하나로 들어가고, 결과는 `pump_writes`가 `finish_save`로 넘긴다.
 use std::time::{Duration, Instant};
 
-use gpui_kit::component::input::{InputEvent, InputState};
+use gpui_kit::component::input::{EditorState, InputEvent, InputState, Position};
 use gpui_kit::{AppContext, Context, Window};
 use paddock_core::file_kind::{FileKind, file_name_of};
 use paddock_core::file_pane::FileTab;
+use paddock_core::markdown_view::View;
 use paddock_core::text_file::encode_for_save;
 use paddock_core::unsaved::{
     RENAME_PENDING_TEXT, SAVED_SHOWN_SECONDS, changed_while_saving_text, quit_save_blocked_text, save_failed_text,
     saved_before_close_text, stays_unsaved_after_save,
 };
-use paddock_core::word_occurrence::{OccurrenceTrail, next_occurrence, word_at};
+use paddock_core::word_occurrence::{OccurrenceTrail, line_of, next_occurrence, word_at};
 
 use crate::files::open::file_stamp;
 use crate::files::ops::SaveOutcome;
@@ -304,7 +305,7 @@ impl WorkWindow {
                 true
             }
             Some(FileShortcut::GoToLine) if has_editor => self.begin_go_to_line(window, cx),
-            Some(FileShortcut::SelectNextOccurrence) if has_editor => self.select_next_occurrence(cx),
+            Some(FileShortcut::SelectNextOccurrence) => self.select_next_occurrence(Some(window), cx),
             // 파일 탭이 활성이면(편집기든 변경 비교든) 이 키는 앱이 가져간다. 고른 곳이 없으면 상태 줄에 알린다.
             Some(FileShortcut::AddReviewNote) if self.file_active() || self.detached_file_context.is_some() => {
                 self.begin_review_note(window, cx);
@@ -314,26 +315,49 @@ impl WorkWindow {
         }
     }
 
-    /// 활성 편집기에서 고른 글자와 같은 글자를 다음 자리에서 하나 더 골라 커서를 늘린다(Cmd·Ctrl+D). 고른 것이 없으면 커서 아래 단어를 고른다.
-    /// 편집기가 없으면 false, 있으면(더 고를 곳이 없어도) 키를 가져갔으므로 true다.
+    /// 보이는 편집기가 있는 텍스트 본문: 텍스트 파일, 그리고 Markdown을 File·Both로 보는 동안의 원문. Preview로 보는 Markdown의 숨은 편집기는 없는 것으로 본다.
+    fn visible_text_body_of(
+        &self,
+        path: &str,
+    ) -> Option<&TextBody> {
+        match self.file_views.get(path) {
+            Some(FileContent::Text(body)) => Some(body),
+            Some(FileContent::Markdown(body)) if body.view != View::Preview => body.source.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// 활성 편집기에서 고른 글자와 같은 글자를 다음 자리에서 하나 더 골라 커서를 늘린다(Cmd·Ctrl+D). 고른 것이 없으면 커서 아래 단어를 더 고른다(다른 커서는 그대로다).
+    /// 편집기가 보이고(`window`가 있으면 포커스도 쥐고) 있을 때만 키를 가져가 true를 돌려준다. 아니면 false라서 키가 다른 단축키(오른쪽 분할)로 간다.
+    /// 분리 창에서 불린 경우 `window`는 None이다(분리 창의 포커스는 본 창이 모른다).
     pub(crate) fn select_next_occurrence(
         &mut self,
+        window: Option<&Window>,
         cx: &mut Context<Self>,
     ) -> bool {
-        let body = self.active_file_path().and_then(|path| self.text_body_of(&path));
+        let path = self.active_file_path();
+        let body = path.and_then(|path| self.visible_text_body_of(&path)).filter(|body| {
+            window.is_none_or(|window| gpui_kit::Focusable::focus_handle(&body.editor, cx).is_focused(window))
+        });
         if let Some(body) = body {
             body.editor.update(cx, |state, cx| {
                 let text = state.value().to_string();
                 let selected = state.selected_range();
+                // 접힌 블록 안의 자리는 먼저 펴서 숨은 줄에 커서가 생기지 않게 한다.
+                let add = |range: std::ops::Range<usize>, state: &mut EditorState, cx: &mut Context<EditorState>| {
+                    let line = u32::try_from(line_of(&text, range.start)).unwrap_or(0);
+                    state.unfold_at(Position::new(line, 0), cx);
+                    state.add_selection(range, cx);
+                };
                 if selected.is_empty() {
                     if let Some(word) = word_at(&text, selected.start) {
-                        state.set_selected_range(word, cx);
+                        add(word, state, cx);
                     }
                     *body.occurrence_trail.borrow_mut() = None;
                 } else {
                     let trail = body.occurrence_trail.borrow().clone();
                     if let Some(next) = next_occurrence(&text, selected.clone(), trail.as_ref()) {
-                        state.add_selection(next.clone(), cx);
+                        add(next.clone(), state, cx);
                         *body.occurrence_trail.borrow_mut() =
                             Some(OccurrenceTrail { selected, added: next, text_len: text.len() });
                     }
@@ -341,6 +365,20 @@ impl WorkWindow {
             });
         }
         body.is_some()
+    }
+
+    /// 열어 둔 모든 편집기의 "다음 같은 글자" 기록을 비운다. Esc는 추가한 커서를 하나로 줄이지만 처음 선택은 그대로라서, 기록이 남아 있으면 다음 Cmd+D가 옛 자리 뒤에서 이어진다.
+    pub(crate) fn forget_occurrence_trails(&self) {
+        for content in self.file_views.values() {
+            let body = match content {
+                FileContent::Text(body) => Some(body),
+                FileContent::Markdown(body) => body.source.as_ref(),
+                _ => None,
+            };
+            if let Some(body) = body {
+                body.occurrence_trail.borrow_mut().take();
+            }
+        }
     }
 
     /// 묶음·폴더(`key`)의 열린 파일 탭 중 저장하지 않은 것의 수.

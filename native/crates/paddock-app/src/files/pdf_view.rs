@@ -10,6 +10,7 @@ use gpui_kit::{
     Context, InteractiveElement, IntoElement, ObjectFit, ParentElement, Pixels, Render, RenderImage, ScrollHandle,
     ScrollWheelEvent, Size, StatefulInteractiveElement, Styled, StyledImage, Window, canvas, div, img, point, px,
 };
+use paddock_core::app_shortcut::PreviewShortcut;
 use paddock_core::pdf_view::{
     CACHE_PAGES, PAGE_GAP, PageSlot, fit_percent, is_current_document, is_still_wanted, page_pixels, page_text,
     pages_to_drop, pages_to_hold, should_request, visible_pages, zoom_in, zoom_out,
@@ -148,6 +149,19 @@ impl PdfView {
     ) {
         self.chosen_percent = Some(zoom_out(self.percent()));
         cx.notify();
+    }
+
+    /// 배율 단축키 하나를 실행한다.
+    pub fn apply_shortcut(
+        &mut self,
+        shortcut: PreviewShortcut,
+        cx: &mut Context<Self>,
+    ) {
+        match shortcut {
+            PreviewShortcut::ZoomIn => self.zoom_in(cx),
+            PreviewShortcut::ZoomOut => self.zoom_out(cx),
+            PreviewShortcut::ZoomFit => self.zoom_fit(cx),
+        }
     }
 
     /// 칸 폭 맞춤으로 되돌린다.
