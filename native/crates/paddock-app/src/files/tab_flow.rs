@@ -631,6 +631,29 @@ impl WorkWindow {
         }
     }
 
+    /// PDF 탭이 활성일 때만 앱이 가져가는 배율 키(Cmd·Ctrl + `=`·`-`·`0`)를 실행한다. 가져갔으면 true다.
+    /// 터미널이 활성이거나 선택한 파일 탭이 PDF가 아니면 false라서 키가 그대로 터미널 글꼴 크기 단축키나 터미널로 간다.
+    pub(crate) fn run_preview_shortcut(
+        &mut self,
+        shortcut: Option<paddock_core::app_shortcut::PreviewShortcut>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        use paddock_core::app_shortcut::PreviewShortcut;
+        let on_pdf = self.file_active() && self.selected_file_kind() == Some(FileKind::Pdf);
+        let step = match shortcut {
+            Some(PreviewShortcut::ZoomIn) => Some(Some(true)),
+            Some(PreviewShortcut::ZoomOut) => Some(Some(false)),
+            Some(PreviewShortcut::ZoomFit) => Some(None),
+            None => None,
+        };
+        let handled = on_pdf && step.is_some();
+        if let (true, Some(step)) = (on_pdf, step) {
+            self.zoom_pdf(step, window, cx);
+        }
+        handled
+    }
+
     /// 탭 줄의 `Open with default app`: 선택한 PDF 파일을 기본 앱에 맡긴다.
     pub(crate) fn open_active_file_with_default_app(
         &mut self,

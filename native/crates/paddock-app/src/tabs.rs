@@ -521,6 +521,25 @@ fn pdf_actions_row(cx: &mut Context<WorkWindow>) -> gpui_kit::Stateful<Div> {
         ))
         .child(
             div()
+                .id("pdf-zoom-fit")
+                .flex_none()
+                .h(zpx(pdf_view::OPEN_BUTTON_HEIGHT))
+                .px(zpx(pdf_view::OPEN_BUTTON_PADDING_X))
+                .flex()
+                .items_center()
+                .rounded(zpx(pdf_view::OPEN_BUTTON_RADIUS))
+                .text_size(zpx(pdf_view::OPEN_BUTTON_TEXT_SIZE))
+                .text_color(hsla(colors().fg_muted))
+                .cursor_pointer()
+                .hover(|style| style.bg(hsla(colors().hover_bg)).text_color(hsla(colors().fg_strong)))
+                .child("Fit")
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _event: &MouseDownEvent, window, cx| this.zoom_pdf(None, window, cx)),
+                ),
+        )
+        .child(
+            div()
                 .id("pdf-open-default")
                 .flex_none()
                 .h(zpx(pdf_view::OPEN_BUTTON_HEIGHT))

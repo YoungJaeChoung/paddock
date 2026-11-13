@@ -203,6 +203,49 @@ pub fn file_shortcut(
     result
 }
 
+/// PDF 탭이 활성일 때만 앱이 가져가는 배율 키. 터미널이 활성이면 같은 키가 터미널 글꼴 크기(macOS Cmd+= · Cmd+-)나 셸로 가므로 `app_shortcut`에 넣지 않는다.
+/// Windows·Linux는 Ctrl+=·Ctrl+-·Ctrl+0, macOS는 Cmd+=·Cmd+-·Cmd+0이다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PreviewShortcut {
+    /// 한 단계 크게(`=`·`+`).
+    ZoomIn,
+    /// 한 단계 작게(`-`).
+    ZoomOut,
+    /// 칸 폭 맞춤으로 되돌린다(`0`).
+    ZoomFit,
+}
+
+/// 키 누름이 PDF 배율 키이면 그 일을, 아니면 None을 돌려준다. Alt가 눌린 키는 아니다. `+`는 Shift+`=`이므로 `=`·`+`는 Shift를 따지지 않는다.
+///
+/// Examples
+/// --------
+/// | 체계    | 키                | 결과      |
+/// |---------|-------------------|-----------|
+/// | Ctrl    | Ctrl+=·Ctrl++     | `ZoomIn`  |
+/// | Ctrl    | Ctrl+-            | `ZoomOut` |
+/// | Ctrl    | Ctrl+0            | `ZoomFit` |
+/// | Ctrl    | Ctrl+Shift+0      | `None`    |
+/// | Ctrl    | Ctrl+Alt+=        | `None`    |
+/// | Command | Cmd+=·Cmd++       | `ZoomIn`  |
+/// | Command | Cmd+-             | `ZoomOut` |
+/// | Command | Cmd+0             | `ZoomFit` |
+/// | Command | Ctrl+=            | `None`(터미널로) |
+pub fn preview_shortcut(
+    input: &KeyInput<'_>,
+    scheme: ShortcutScheme,
+) -> Option<PreviewShortcut> {
+    let mut result = None;
+    if scheme.primary(input) && !input.alt {
+        result = match (input.key, input.shift) {
+            ("=" | "+", _) => Some(PreviewShortcut::ZoomIn),
+            ("-", _) => Some(PreviewShortcut::ZoomOut),
+            ("0", false) => Some(PreviewShortcut::ZoomFit),
+            _ => None,
+        };
+    }
+    result
+}
+
 /// 키 누름이 터미널(PTY)에 보낼 바이트. 앱 단축키는 보내지 않으므로 None이다.
 ///
 /// 터미널 보기의 키 처리는 `encode_key`가 아니라 이 함수만 불러, 단축키가 어떤 경로로도 PTY에 닿지 않게 한다.
@@ -630,5 +673,29 @@ mod tests {
         assert!(!makes_text(&KeyInput { command: true, ..typed("a", "a") }, false, MAC));
         assert!(!makes_text(&typed("a", "\u{1}"), false, MAC));
         assert!(!makes_text(&KeyInput { key_char: None, ..typed("left", "") }, false, MAC));
+    }
+
+    #[test]
+    fn test_preview_zoom_keys_use_the_primary_modifier_and_leave_other_combinations_alone() {
+        let command = |key: &'static str, shift: bool| KeyInput { command: true, ..press(key, false, shift) };
+        let alt = |key: &'static str| KeyInput { alt: true, ..press(key, true, false) };
+        let table = [
+            (press("=", true, false), ShortcutScheme::Ctrl, Some(PreviewShortcut::ZoomIn)),
+            (press("+", true, true), ShortcutScheme::Ctrl, Some(PreviewShortcut::ZoomIn)),
+            (press("-", true, false), ShortcutScheme::Ctrl, Some(PreviewShortcut::ZoomOut)),
+            (press("0", true, false), ShortcutScheme::Ctrl, Some(PreviewShortcut::ZoomFit)),
+            (press("0", true, true), ShortcutScheme::Ctrl, None),
+            (alt("="), ShortcutScheme::Ctrl, None),
+            (press("=", false, false), ShortcutScheme::Ctrl, None),
+            (command("=", false), ShortcutScheme::Command, Some(PreviewShortcut::ZoomIn)),
+            (command("+", true), ShortcutScheme::Command, Some(PreviewShortcut::ZoomIn)),
+            (command("-", false), ShortcutScheme::Command, Some(PreviewShortcut::ZoomOut)),
+            (command("0", false), ShortcutScheme::Command, Some(PreviewShortcut::ZoomFit)),
+            // macOS에서 Ctrl 조합은 터미널로 간다.
+            (press("=", true, false), ShortcutScheme::Command, None),
+        ];
+        for (input, scheme, expected) in table {
+            assert_eq!(preview_shortcut(&input, scheme), expected, "{input:?} {scheme:?}");
+        }
     }
 }

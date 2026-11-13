@@ -17,7 +17,7 @@ use gpui_kit::{
     ScrollHandle, Styled, Window, div, px,
 };
 use paddock_core::agent_account::Runtime;
-use paddock_core::app_shortcut::{AppShortcut, app_shortcut, file_shortcut};
+use paddock_core::app_shortcut::{AppShortcut, app_shortcut, file_shortcut, preview_shortcut};
 use paddock_core::entry_name::{EntryNameCheck, validate_entry_name};
 use paddock_core::file_tree::{files_folder, initial_selection};
 #[cfg(feature = "automation")]
@@ -2545,6 +2545,8 @@ impl WorkWindow {
             if self.list_key_pressed(key, list_modifiers, window, cx)
                 || self.tab_bar_key_pressed(key, modifiers.control || modifiers.platform, modifiers.alt, window, cx)
                 || self.run_file_shortcut(file_shortcut(&input, scheme), window, cx)
+                // PDF 탭이 활성이면 Cmd·Ctrl + `=`·`-`·`0`은 터미널 글꼴 크기 키보다 먼저 PDF 배율로 간다.
+                || self.run_preview_shortcut(preview_shortcut(&input, scheme), window, cx)
             {
                 cx.stop_propagation();
             } else if let Some(shortcut) = app_shortcut(&input, scheme) {

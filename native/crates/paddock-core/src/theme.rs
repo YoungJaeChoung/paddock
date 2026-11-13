@@ -573,8 +573,8 @@ pub mod pdf_view {
     pub const ZOOM_BUTTON_WIDTH: f32 = 24.0;
     pub const ZOOM_BUTTON_HEIGHT: f32 = 22.0;
     pub const ZOOM_BUTTON_RADIUS: f32 = 5.0;
-    /// 탭 줄 오른쪽 구역에서 `−`·`+`·`Open with default app` 몫으로 비워 두는 폭.
-    pub const ACTIONS_RESERVED_WIDTH: f32 = 220.0;
+    /// 탭 줄 오른쪽 구역에서 `−`·`+`·`Fit`·`Open with default app` 몫으로 비워 두는 폭.
+    pub const ACTIONS_RESERVED_WIDTH: f32 = 260.0;
     /// `Open with default app` 글자 단추.
     pub const OPEN_BUTTON_HEIGHT: f32 = 22.0;
     pub const OPEN_BUTTON_PADDING_X: f32 = 8.0;
