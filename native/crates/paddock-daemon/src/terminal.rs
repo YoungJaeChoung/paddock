@@ -366,6 +366,7 @@ impl Terminal {
             log::event(&format!("terminal {} taken over: connection {previous_id} replaced by {conn_id}", self.id));
         }
         // 링 스냅샷 전송과 수신자 등록을 같은 잠금 안에서 해서 재생 뒤 실시간 출력 사이에 빠짐·중복이 없다.
+        live.watchers.retain(|(id, _)| *id != conn_id);
         live.client = Some((conn_id, outbox.clone()));
         if cols != 0 && rows != 0 && (live.cols != cols || live.rows != rows) {
             self.resize_locked(&mut live, conn_id, cols, rows);
@@ -375,15 +376,23 @@ impl Terminal {
     }
 
     /// 이 연결이 주 연결을 밀어내지 않고 함께 보는 구경 연결이 되도록 등록하고, `attach`와 같은 순서로 재생한다.
-    /// 터미널 크기는 바꾸지 않는다(`ATTACHED`의 크기가 지금 크기다). 구경 연결 수가 `MAX_WATCHERS`에 차 있으면 등록하지 않고 `false`다.
+    /// 터미널 크기는 바꾸지 않는다(`ATTACHED`의 크기가 지금 크기다).
+    ///
+    /// 이 연결이 이미 이 터미널의 주 연결이나 구경 연결이면 먼저 그 자리를 비워 수신자 목록에 두 번 남지 않는다.
+    /// 다른 구경 연결이 `MAX_WATCHERS`개 차 있으면 아무것도 바꾸지 않고 `false`를 돌려준다.
     pub fn watch(
         &self,
         conn_id: u64,
         outbox: &Outbox,
     ) -> bool {
         let mut live = lock(&self.live);
-        let admitted = live.watchers.len() < MAX_WATCHERS;
+        let n_others = live.watchers.iter().filter(|(id, _)| *id != conn_id).count();
+        let admitted = n_others < MAX_WATCHERS;
         if admitted {
+            live.watchers.retain(|(id, _)| *id != conn_id);
+            if matches!(&live.client, Some((id, _)) if *id == conn_id) {
+                live.client = None;
+            }
             // 링 스냅샷 전송과 수신자 등록을 같은 잠금 안에서 해서 재생 뒤 실시간 출력 사이에 빠짐·중복이 없다.
             live.watchers.push((conn_id, outbox.clone()));
             log::event(&format!("terminal {} watched by connection {conn_id}", self.id));

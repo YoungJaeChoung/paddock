@@ -7,6 +7,7 @@ use std::time::Instant;
 use paddock_core::file_pane::FilePanes;
 use paddock_core::layout_model::Layout;
 use paddock_core::work_model::WorkState;
+use paddock_protocol::message::TerminalInfo;
 
 use crate::app_log;
 use crate::daemon_client::{DaemonConnection, Ensure, Policy, ensure};
@@ -72,6 +73,17 @@ pub fn open_workspace(
     }
 }
 
+/// 목록에서 셸이 아직 살아 있는 터미널의 번호. 끝난 터미널은 구경 연결이 남아 목록에 있을 수 있지만 탭으로 되살리지 않는다.
+///
+/// Examples
+/// --------
+/// | 목록                         | 결과   |
+/// |------------------------------|--------|
+/// | 1(살아 있음), 2(끝남)        | {1}    |
+fn live_terminal_ids(listed: &[TerminalInfo]) -> HashSet<u32> {
+    listed.iter().filter(|terminal| terminal.alive).map(|terminal| terminal.id).collect()
+}
+
 /// 이미 연결된 데몬에서 터미널들을 되살린다.
 pub fn restore_terminals(
     daemon_exe: &Path,
@@ -82,7 +94,7 @@ pub fn restore_terminals(
     let daemon_outdated = connection.outdated;
     let daemon_id = connection.daemon_id.clone();
     let listed = list_terminals(&connection)?.terminals;
-    let live_ids: HashSet<u32> = listed.iter().map(|terminal| terminal.id).collect();
+    let live_ids = live_terminal_ids(&listed);
     let mut state = state_store::load(&live_ids, &daemon_id);
 
     // 처음 연결은 첫 터미널에 쓰고, 나머지는 터미널마다 새 연결을 연다.
@@ -253,6 +265,23 @@ mod tests {
 
     fn open(exe: &Path) -> Restored {
         ready(open_workspace(exe, Policy::ReplaceIfIdle, Instant::now()).unwrap())
+    }
+
+    #[test]
+    fn test_an_ended_terminal_left_in_the_list_is_not_restored() {
+        let info = |id: u32, alive: bool| TerminalInfo {
+            id,
+            pid: 5,
+            cols: 80,
+            rows: 24,
+            alive,
+            shell: SHELL.to_string(),
+            exit_code: None,
+            state: None,
+            account: None,
+        };
+        let ids = live_terminal_ids(&[info(1, true), info(2, false)]);
+        assert_eq!(ids, HashSet::from([1]));
     }
 
     #[test]

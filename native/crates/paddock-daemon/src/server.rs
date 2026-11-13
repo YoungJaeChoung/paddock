@@ -275,15 +275,21 @@ impl Session {
         self.attached = Some(terminal);
     }
 
-    /// 연결의 대상을 `terminal`로 바꾸고 구경 연결로 붙는다. 이전 대상이 있으면 그쪽 수신자는 비운다. 구경 연결 수가 차 있으면 `ERR`로 답하고 붙지 않는다.
+    /// 연결의 대상을 `terminal`로 바꾸고 구경 연결로 붙는다. 붙는 데 성공하면 이전 대상의 수신자는 비운다.
+    /// 구경 연결 수가 차 있으면 `ERR`로 답하고 이전 묶임을 그대로 둔다.
     fn watch_to(
         &mut self,
         terminal: Arc<Terminal>,
         ctx: &Context,
     ) {
-        self.release(ctx);
         if terminal.watch(self.conn_id, &self.outbox) {
-            self.attached = Some(terminal);
+            // 같은 터미널이면 `watch`가 이미 자리를 옮겼으므로 떼지 않는다.
+            if let Some(previous) = self.attached.replace(terminal.clone())
+                && previous.id != terminal.id
+                && previous.detach(self.conn_id)
+            {
+                ctx.registry.remove(previous.id);
+            }
         } else {
             self.reply_error("Too many watchers");
         }

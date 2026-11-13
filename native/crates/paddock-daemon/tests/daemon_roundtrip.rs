@@ -2062,6 +2062,30 @@ fn kinds_until_quiet(
     kinds
 }
 
+/// 큰 출력이 지나가는 연결에서 끝 표지가 올 때까지 읽고, 그동안 받은 `RESYNC` 수를 돌려준다.
+fn read_until_marker_counting_resyncs(client: &Client) -> usize {
+    let mut tail = Vec::new();
+    let mut n_resyncs = 0;
+    let end = Instant::now() + FLOOD_WAIT;
+    while !String::from_utf8_lossy(&tail).contains(MARKER) {
+        let left = end.checked_duration_since(Instant::now()).expect("timed out waiting for the marker");
+        let frame = client.next(left).expect("connection ended");
+        match frame.kind {
+            kind::RESYNC => n_resyncs += 1,
+            kind::OUTPUT | kind::REPLAY => {
+                tail.extend_from_slice(&frame.payload);
+                // 훑는 범위를 새로 받은 바이트와 그 앞 몇 바이트로 줄인다.
+                let keep = frame.payload.len() + MARKER.len();
+                if tail.len() > keep {
+                    tail.drain(..tail.len() - keep);
+                }
+            }
+            _ => {}
+        }
+    }
+    n_resyncs
+}
+
 #[test]
 fn test_a_watcher_joins_without_detaching_the_primary_and_both_get_the_same_output() {
     let daemon = TestDaemon::start();
@@ -2135,25 +2159,7 @@ fn test_only_the_slow_watcher_is_resynced() {
     // 구경만 소켓을 읽지 않는다. 주 연결은 큰 출력이 끝나는 표지까지 읽는다.
     watcher.set_paused(true);
     type_line(&mut primary, &dump_file_command(&file));
-    let mut stream_tail = Vec::new();
-    let mut n_primary_resyncs = 0;
-    let end = Instant::now() + FLOOD_WAIT;
-    while !String::from_utf8_lossy(&stream_tail).contains(MARKER) {
-        let left = end.checked_duration_since(Instant::now()).expect("timed out waiting for the marker");
-        let frame = primary.next(left).expect("primary connection ended");
-        match frame.kind {
-            kind::RESYNC => n_primary_resyncs += 1,
-            kind::OUTPUT | kind::REPLAY => {
-                stream_tail.extend_from_slice(&frame.payload);
-                // 훑는 범위를 새로 받은 바이트와 그 앞 몇 바이트로 줄인다.
-                let keep = frame.payload.len() + MARKER.len();
-                if stream_tail.len() > keep {
-                    stream_tail.drain(..stream_tail.len() - keep);
-                }
-            }
-            _ => {}
-        }
-    }
+    let n_primary_resyncs = read_until_marker_counting_resyncs(&primary);
     assert_eq!(n_primary_resyncs, 0, "a prompt reader is never resynced");
 
     watcher.set_paused(false);
@@ -2239,4 +2245,108 @@ fn test_a_connection_of_the_previous_version_is_handshake_only_and_cannot_watch(
     old_app.send(Frame::new(kind::SHUTDOWN, Vec::new()));
     old_app.expect(kind::STATUS);
     assert!(daemon.wait_for_exit(Duration::from_secs(5)));
+}
+
+#[test]
+fn test_only_the_slow_primary_is_resynced() {
+    let daemon = TestDaemon::start();
+    let work = tempfile::tempdir().expect("work dir");
+    let file = write_big_file(work.path(), 32);
+    let (mut primary, _) = daemon.connect_authenticated();
+    let attached = primary.new_terminal(None, 100, 30);
+    let (mut watcher, _) = daemon.connect_authenticated();
+    watcher.watch(attached.id);
+    primary.collect_until_quiet(Vec::new(), Duration::from_millis(700));
+    watcher.collect_until_quiet(Vec::new(), Duration::from_millis(700));
+
+    primary.set_paused(true);
+    type_line(&mut primary, &dump_file_command(&file));
+    assert_eq!(read_until_marker_counting_resyncs(&watcher), 0, "a prompt reader is never resynced");
+    primary.set_paused(false);
+    primary.expect(kind::RESYNC);
+}
+
+#[test]
+fn test_attach_that_changes_the_size_tells_the_watcher_and_the_same_size_does_not() {
+    let daemon = TestDaemon::start();
+    let (mut primary, _) = daemon.connect_authenticated();
+    let attached = primary.new_terminal(None, 80, 24);
+    let (mut watcher, _) = daemon.connect_authenticated();
+    watcher.watch(attached.id);
+    let (mut taker, _) = daemon.connect_authenticated();
+    taker.send(Frame::json(kind::ATTACH, &Attach { id: attached.id, cols: 60, rows: 20 }));
+    taker.expect(kind::ATTACHED);
+    let resized: Resized = watcher.expect(kind::RESIZED).parse_json().expect("resized json");
+    assert_eq!((resized.cols, resized.rows), (60, 20));
+
+    // 같은 크기를 다시 보내면 알림이 없다.
+    taker.send(Frame::json(kind::RESIZE, &Resize { cols: 60, rows: 20 }));
+    let kinds = kinds_until_quiet(&watcher, Duration::from_millis(500));
+    assert!(!kinds.contains(&kind::RESIZED), "an unchanged size is not announced: {kinds:?}");
+}
+
+#[test]
+fn test_another_attach_takes_over_the_primary_but_the_watcher_keeps_receiving() {
+    let daemon = TestDaemon::start();
+    let (mut first, _) = daemon.connect_authenticated();
+    let attached = first.new_terminal(None, 80, 24);
+    let (mut watcher, _) = daemon.connect_authenticated();
+    watcher.watch(attached.id);
+    let (mut second, _) = daemon.connect_authenticated();
+    second.send(Frame::json(kind::ATTACH, &Attach { id: attached.id, cols: 0, rows: 0 }));
+    second.expect(kind::ATTACHED);
+    first.expect(kind::DETACHED);
+
+    type_line(&mut second, ECHO_MARKER);
+    assert!(String::from_utf8_lossy(&watcher.collect_until(MARKER)).contains(MARKER));
+    let kinds = kinds_until_quiet(&watcher, Duration::from_millis(500));
+    assert!(!kinds.contains(&kind::DETACHED), "a takeover does not detach a watcher: {kinds:?}");
+}
+
+/// 연결 하나가 터미널에 두 번 묶여도 출력은 한 번만 받는지: `rebind`가 묶임을 바꾼 뒤 표지를 치고, 표지가 몇 번 나오는지 센다.
+fn count_markers_after_rebinding(rebind: impl FnOnce(&mut Client, u32)) -> usize {
+    let daemon = TestDaemon::start();
+    let (mut client, _) = daemon.connect_authenticated();
+    let attached = client.new_terminal(None, 80, 24);
+    rebind(&mut client, attached.id);
+    client.collect_until_quiet(Vec::new(), Duration::from_millis(500));
+    type_line(&mut client, ECHO_MARKER);
+    let bytes = client.collect_until(MARKER);
+    let bytes = client.collect_until_quiet(bytes, Duration::from_millis(500));
+    String::from_utf8_lossy(&bytes).matches(MARKER).count()
+}
+
+#[test]
+fn test_a_connection_rebinding_to_the_same_terminal_is_not_listed_twice() {
+    let n_after_watch_then_attach = count_markers_after_rebinding(|client, id| {
+        client.watch(id);
+        client.send(Frame::json(kind::ATTACH, &Attach { id, cols: 0, rows: 0 }));
+        client.expect(kind::ATTACHED);
+    });
+    assert_eq!(n_after_watch_then_attach, 1);
+    let n_after_attach_then_watch = count_markers_after_rebinding(|client, id| {
+        client.watch(id);
+    });
+    assert_eq!(n_after_attach_then_watch, 1);
+}
+
+#[test]
+fn test_a_refused_watch_keeps_the_earlier_binding() {
+    let daemon = TestDaemon::start();
+    let (mut owner, _) = daemon.connect_authenticated();
+    let crowded = owner.new_terminal(None, 80, 24);
+    let mut watchers = Vec::new();
+    for _ in 0..MAX_WATCHERS {
+        let (mut watcher, _) = daemon.connect_authenticated();
+        watcher.watch(crowded.id);
+        watchers.push(watcher);
+    }
+    let (mut client, _) = daemon.connect_authenticated();
+    client.new_terminal(None, 80, 24);
+    client.send(Frame::json(kind::WATCH, &Watch { id: crowded.id }));
+    assert_eq!(client.expect(kind::ERR).as_text(), "Too many watchers");
+
+    // 거절된 뒤에도 이 연결은 자기 터미널에 묶여 있어 입력이 그 셸에서 돌아온다.
+    type_line(&mut client, ECHO_MARKER);
+    assert!(String::from_utf8_lossy(&client.collect_until(MARKER)).contains(MARKER));
 }
