@@ -153,6 +153,9 @@ pub enum FileShortcut {
     Save,
     /// 줄 번호를 물어 그 줄로 간다(Ctrl+G).
     GoToLine,
+    /// 고른 글자와 같은 글자(고른 것이 없으면 커서 아래 단어)를 다음 자리에서 하나 더 골라 커서를 늘린다(Ctrl+D).
+    /// macOS의 Cmd+D는 `app_shortcut`에서 오른쪽 분할이지만, 편집기가 있는 파일 탭이 활성이면 이 키가 먼저 받는다.
+    SelectNextOccurrence,
     /// 고른 줄에 검토 메모를 남긴다(Ctrl+Alt+M). Windows·Linux에서 Alt가 든 앱 키는 이것 하나뿐이다.
     AddReviewNote,
 }
@@ -166,12 +169,14 @@ pub enum FileShortcut {
 /// |---------|----------|--------------------|
 /// | Ctrl    | Ctrl+S   | `Save`             |
 /// | Ctrl    | Ctrl+G   | `GoToLine`         |
+/// | Ctrl    | Ctrl+D   | `SelectNextOccurrence` |
 /// | Ctrl    | Ctrl+Alt+M | `AddReviewNote`  |
 /// | Ctrl    | Ctrl+Alt+S | `None`           |
 /// | Ctrl    | Ctrl+Shift+S | `None`         |
 /// | Ctrl    | Ctrl+F   | `None`(편집기 부품이 받음) |
 /// | Command | Cmd+S    | `Save`             |
 /// | Command | Cmd+G    | `GoToLine`         |
+/// | Command | Cmd+D    | `SelectNextOccurrence` |
 /// | Command | Cmd+Shift+M | `AddReviewNote` |
 /// | Command | Ctrl+S   | `None`(터미널로)   |
 pub fn file_shortcut(
@@ -184,6 +189,7 @@ pub fn file_shortcut(
             result = match (input.control && !input.shift && !input.command, input.alt, input.key) {
                 (true, false, "s") => Some(FileShortcut::Save),
                 (true, false, "g") => Some(FileShortcut::GoToLine),
+                (true, false, "d") => Some(FileShortcut::SelectNextOccurrence),
                 // AltGr(= Ctrl+Alt)로 글자를 만드는 배열에서 Ctrl+Alt+M은 글자 입력이다: 글자가 들어 있으면 단축키로 보지 않는다.
                 (true, true, "m") if input.key_char.is_none_or(str::is_empty) => Some(FileShortcut::AddReviewNote),
                 _ => None,
@@ -194,11 +200,55 @@ pub fn file_shortcut(
                 result = match (input.key, input.shift) {
                     ("s", false) => Some(FileShortcut::Save),
                     ("g", false) => Some(FileShortcut::GoToLine),
+                    ("d", false) => Some(FileShortcut::SelectNextOccurrence),
                     ("m", true) => Some(FileShortcut::AddReviewNote),
                     _ => None,
                 };
             }
         }
+    }
+    result
+}
+
+/// PDF 탭이 활성일 때만 앱이 가져가는 배율 키. 터미널이 활성이면 같은 키가 터미널 글꼴 크기(macOS Cmd+= · Cmd+-)나 셸로 가므로 `app_shortcut`에 넣지 않는다.
+/// Windows·Linux는 Ctrl+=·Ctrl+-·Ctrl+0, macOS는 Cmd+=·Cmd+-·Cmd+0이다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PreviewShortcut {
+    /// 한 단계 크게(`=`·`+`).
+    ZoomIn,
+    /// 한 단계 작게(`-`).
+    ZoomOut,
+    /// 칸 폭 맞춤으로 되돌린다(`0`).
+    ZoomFit,
+}
+
+/// 키 누름이 PDF 배율 키이면 그 일을, 아니면 None을 돌려준다. Alt가 눌린 키는 아니다. `+`는 Shift+`=`이므로 `=`·`+`는 Shift를 따지지 않는다.
+///
+/// Examples
+/// --------
+/// | 체계    | 키                | 결과      |
+/// |---------|-------------------|-----------|
+/// | Ctrl    | Ctrl+=·Ctrl++     | `ZoomIn`  |
+/// | Ctrl    | Ctrl+-            | `ZoomOut` |
+/// | Ctrl    | Ctrl+0            | `ZoomFit` |
+/// | Ctrl    | Ctrl+Shift+0      | `None`    |
+/// | Ctrl    | Ctrl+Alt+=        | `None`    |
+/// | Command | Cmd+=·Cmd++       | `ZoomIn`  |
+/// | Command | Cmd+-             | `ZoomOut` |
+/// | Command | Cmd+0             | `ZoomFit` |
+/// | Command | Ctrl+=            | `None`(터미널로) |
+pub fn preview_shortcut(
+    input: &KeyInput<'_>,
+    scheme: ShortcutScheme,
+) -> Option<PreviewShortcut> {
+    let mut result = None;
+    if scheme.primary(input) && !input.alt {
+        result = match (input.key, input.shift) {
+            ("=" | "+", _) => Some(PreviewShortcut::ZoomIn),
+            ("-", _) => Some(PreviewShortcut::ZoomOut),
+            ("0", false) => Some(PreviewShortcut::ZoomFit),
+            _ => None,
+        };
     }
     result
 }
@@ -408,6 +458,11 @@ mod tests {
     fn test_c_edit_8_save_and_go_to_line_are_file_keys_that_still_reach_the_pty() {
         assert_eq!(file_shortcut(&press("s", true, false), ShortcutScheme::Ctrl), Some(FileShortcut::Save));
         assert_eq!(file_shortcut(&press("g", true, false), ShortcutScheme::Ctrl), Some(FileShortcut::GoToLine));
+        assert_eq!(
+            file_shortcut(&press("d", true, false), ShortcutScheme::Ctrl),
+            Some(FileShortcut::SelectNextOccurrence)
+        );
+        assert_eq!(file_shortcut(&press("d", true, true), ShortcutScheme::Ctrl), None);
         assert_eq!(file_shortcut(&press("s", true, true), ShortcutScheme::Ctrl), None);
         // Ctrl+Alt+M은 검토 메모, 다른 Alt 조합은 앱 키가 아니다. 터미널 활성이면 셸로 간다(ESC + 0x0d).
         let alt = |key: &'static str| KeyInput {
@@ -552,6 +607,9 @@ mod tests {
     #[test]
     fn test_macos_file_keys_are_cmd_s_cmd_g_and_cmd_shift_m() {
         assert_eq!(file_shortcut(&cmd("s", false), MAC), Some(FileShortcut::Save));
+        assert_eq!(file_shortcut(&cmd("d", false), MAC), Some(FileShortcut::SelectNextOccurrence));
+        // Cmd+Shift+D는 아래 분할이라 편집기가 가져가지 않는다.
+        assert_eq!(file_shortcut(&cmd("d", true), MAC), None);
         assert_eq!(file_shortcut(&cmd("g", false), MAC), Some(FileShortcut::GoToLine));
         assert_eq!(file_shortcut(&cmd("m", true), MAC), Some(FileShortcut::AddReviewNote));
         assert_eq!(file_shortcut(&cmd("s", true), MAC), None);
@@ -630,5 +688,29 @@ mod tests {
         assert!(!makes_text(&KeyInput { command: true, ..typed("a", "a") }, false, MAC));
         assert!(!makes_text(&typed("a", "\u{1}"), false, MAC));
         assert!(!makes_text(&KeyInput { key_char: None, ..typed("left", "") }, false, MAC));
+    }
+
+    #[test]
+    fn test_preview_zoom_keys_use_the_primary_modifier_and_leave_other_combinations_alone() {
+        let command = |key: &'static str, shift: bool| KeyInput { command: true, ..press(key, false, shift) };
+        let alt = |key: &'static str| KeyInput { alt: true, ..press(key, true, false) };
+        let table = [
+            (press("=", true, false), ShortcutScheme::Ctrl, Some(PreviewShortcut::ZoomIn)),
+            (press("+", true, true), ShortcutScheme::Ctrl, Some(PreviewShortcut::ZoomIn)),
+            (press("-", true, false), ShortcutScheme::Ctrl, Some(PreviewShortcut::ZoomOut)),
+            (press("0", true, false), ShortcutScheme::Ctrl, Some(PreviewShortcut::ZoomFit)),
+            (press("0", true, true), ShortcutScheme::Ctrl, None),
+            (alt("="), ShortcutScheme::Ctrl, None),
+            (press("=", false, false), ShortcutScheme::Ctrl, None),
+            (command("=", false), ShortcutScheme::Command, Some(PreviewShortcut::ZoomIn)),
+            (command("+", true), ShortcutScheme::Command, Some(PreviewShortcut::ZoomIn)),
+            (command("-", false), ShortcutScheme::Command, Some(PreviewShortcut::ZoomOut)),
+            (command("0", false), ShortcutScheme::Command, Some(PreviewShortcut::ZoomFit)),
+            // macOS에서 Ctrl 조합은 터미널로 간다.
+            (press("=", true, false), ShortcutScheme::Command, None),
+        ];
+        for (input, scheme, expected) in table {
+            assert_eq!(preview_shortcut(&input, scheme), expected, "{input:?} {scheme:?}");
+        }
     }
 }

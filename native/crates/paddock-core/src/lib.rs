@@ -59,6 +59,7 @@ pub mod unsaved;
 pub mod usage_model;
 pub mod usage_scopes;
 pub mod window_point;
+pub mod word_occurrence;
 pub mod work_model;
 pub mod worktree;
 pub mod wsl_claude_launcher;

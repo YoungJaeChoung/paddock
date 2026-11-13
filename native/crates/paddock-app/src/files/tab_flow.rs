@@ -5,9 +5,11 @@
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
-use gpui_kit::{AppContext, Context, Window};
+use gpui_kit::{App, AppContext, Context, Window};
+use paddock_core::app_shortcut::PreviewShortcut;
 use paddock_core::file_kind::{FileKind, kind_of};
 use paddock_core::file_pane::{file_key, tab_key};
+use paddock_core::image_view::Zoom as ImageZoom;
 use paddock_core::markdown_view::{View, image_root_for};
 use paddock_core::paths::is_inside;
 use paddock_core::pen_paths::is_pen_file;
@@ -628,6 +630,83 @@ impl WorkWindow {
                 None => view.zoom_fit(cx),
             });
             self.activate_file(window, cx);
+        }
+    }
+
+    /// PDF 탭이 활성일 때만 앱이 가져가는 배율 키(Cmd·Ctrl + `=`·`-`·`0`)를 실행한다. 가져갔으면 true다.
+    /// 터미널이 활성이거나 선택한 파일 탭이 PDF가 아니면 false라서 키가 그대로 터미널 글꼴 크기 단축키나 터미널로 간다.
+    pub(crate) fn run_preview_shortcut(
+        &mut self,
+        shortcut: Option<paddock_core::app_shortcut::PreviewShortcut>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let on_pdf = self.file_active() && self.selected_file_kind() == Some(FileKind::Pdf);
+        let view = match (on_pdf, shortcut, self.selected_file_key().and_then(|key| self.file_views.get(&key))) {
+            (true, Some(_), Some(FileContent::Pdf(view))) => Some(view.clone()),
+            _ => None,
+        };
+        if let (Some(view), Some(shortcut)) = (&view, shortcut) {
+            view.update(cx, |view, cx| view.apply_shortcut(shortcut, cx));
+            self.activate_file(window, cx);
+        }
+        view.is_some()
+    }
+
+    /// 탭 줄의 `Fit`·`1:1`: 선택한 이미지 탭의 보기 방식을 정한다. 이미 그 방식이면 아무 일 없다.
+    pub(crate) fn set_image_zoom(
+        &mut self,
+        zoom: ImageZoom,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(FileContent::Image(view)) = self.selected_file_key().and_then(|key| self.file_views.get(&key)) {
+            view.update(cx, |view, cx| {
+                if view.zoom() != zoom {
+                    view.toggle_zoom(cx);
+                }
+            });
+            self.activate_file(window, cx);
+        }
+    }
+
+    /// 선택한 파일 탭이 PDF이면 칸 폭 맞춤 상태인지(고른 배율이 없는지).
+    pub(crate) fn selected_pdf_is_fit(
+        &self,
+        cx: &App,
+    ) -> Option<bool> {
+        match self.selected_file_key().and_then(|key| self.file_views.get(&key)) {
+            Some(FileContent::Pdf(view)) => Some(view.read(cx).is_fit()),
+            _ => None,
+        }
+    }
+
+    /// 분리 창의 PDF 탭 `key`에 배율 키를 적용한다. 그 창이 PDF가 아니면 false다.
+    pub(crate) fn zoom_detached_pdf(
+        &mut self,
+        key: &str,
+        shortcut: PreviewShortcut,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let tab = self.workspace.detached_file(key).map(|detached| detached.tab.clone());
+        let view = match tab.filter(|tab| tab.kind == FileKind::Pdf).and_then(|tab| self.file_views.get(&tab.path)) {
+            Some(FileContent::Pdf(view)) => Some(view.clone()),
+            _ => None,
+        };
+        if let Some(view) = &view {
+            view.update(cx, |view, cx| view.apply_shortcut(shortcut, cx));
+        }
+        view.is_some()
+    }
+
+    /// 선택한 파일 탭이 이미지(SVG 포함)이면 지금의 보기 방식.
+    pub(crate) fn selected_image_zoom(
+        &self,
+        cx: &App,
+    ) -> Option<ImageZoom> {
+        match self.selected_file_key().and_then(|key| self.file_views.get(&key)) {
+            Some(FileContent::Image(view)) => Some(view.read(cx).zoom()),
+            _ => None,
         }
     }
 

@@ -552,8 +552,10 @@ pub mod markdown_view_actions {
     pub const BUTTON_TEXT_SIZE: f32 = 11.0;
 }
 
-/// 이미지 탭: 칸 둘레 여백과 아래 상태 줄.
+/// 이미지 탭: 칸 둘레 여백, 아래 상태 줄, 탭 줄 오른쪽 `Fit`·`1:1` 단추 묶음.
 pub mod image_view {
+    /// 탭 줄 오른쪽 구역에서 `Fit`·`1:1` 묶음 몫으로 비워 두는 폭(두 단추 글자 폭 + 바깥 여백). 단추 모양은 `markdown_view_actions`와 같다.
+    pub const ACTIONS_RESERVED_WIDTH: f32 = 90.0;
     pub const PADDING: f32 = 16.0;
     pub const STATUS_HEIGHT: f32 = 22.0;
     pub const STATUS_PADDING_X: f32 = 12.0;
@@ -573,8 +575,8 @@ pub mod pdf_view {
     pub const ZOOM_BUTTON_WIDTH: f32 = 24.0;
     pub const ZOOM_BUTTON_HEIGHT: f32 = 22.0;
     pub const ZOOM_BUTTON_RADIUS: f32 = 5.0;
-    /// 탭 줄 오른쪽 구역에서 `−`·`+`·`Open with default app` 몫으로 비워 두는 폭.
-    pub const ACTIONS_RESERVED_WIDTH: f32 = 220.0;
+    /// 탭 줄 오른쪽 구역에서 `−`·`+`·`Fit`·`Open with default app` 몫으로 비워 두는 폭.
+    pub const ACTIONS_RESERVED_WIDTH: f32 = 260.0;
     /// `Open with default app` 글자 단추.
     pub const OPEN_BUTTON_HEIGHT: f32 = 22.0;
     pub const OPEN_BUTTON_PADDING_X: f32 = 8.0;

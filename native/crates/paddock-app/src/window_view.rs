@@ -17,7 +17,7 @@ use gpui_kit::{
     ScrollHandle, Styled, Window, div, px,
 };
 use paddock_core::agent_account::Runtime;
-use paddock_core::app_shortcut::{AppShortcut, app_shortcut, file_shortcut};
+use paddock_core::app_shortcut::{AppShortcut, app_shortcut, file_shortcut, preview_shortcut};
 use paddock_core::entry_name::{EntryNameCheck, validate_entry_name};
 use paddock_core::file_tree::{files_folder, initial_selection};
 #[cfg(feature = "automation")]
@@ -564,6 +564,14 @@ impl WorkWindow {
         cx.observe_window_activation(window, |this, window, cx| {
             if !window.is_window_active() {
                 this.reset_tab_drag(window, cx);
+            }
+        })
+        .detach();
+        // Esc는 편집기가 키 연결로 먼저 받아 여러 커서를 하나로 줄이고 키 처리기에는 닿지 않는다. 그래서 키가 처리된 뒤 알려 주는 관찰자에서
+        // "다음 같은 글자" 기록을 비운다(분리 창의 편집기 키도 여기로 온다).
+        cx.observe_keystrokes(|this, event, _window, _cx| {
+            if event.keystroke.key == "escape" {
+                this.forget_occurrence_trails();
             }
         })
         .detach();
@@ -2545,6 +2553,8 @@ impl WorkWindow {
             if self.list_key_pressed(key, list_modifiers, window, cx)
                 || self.tab_bar_key_pressed(key, modifiers.control || modifiers.platform, modifiers.alt, window, cx)
                 || self.run_file_shortcut(file_shortcut(&input, scheme), window, cx)
+                // PDF 탭이 활성이면 Cmd·Ctrl + `=`·`-`·`0`은 터미널 글꼴 크기 키보다 먼저 PDF 배율로 간다.
+                || self.run_preview_shortcut(preview_shortcut(&input, scheme), window, cx)
             {
                 cx.stop_propagation();
             } else if let Some(shortcut) = app_shortcut(&input, scheme) {

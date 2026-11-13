@@ -11,12 +11,13 @@ use gpui_kit::{
 };
 use paddock_core::file_kind::FileKind;
 use paddock_core::file_pane::tab_labels;
+use paddock_core::image_view::Zoom as ImageZoom;
 use paddock_core::layout_model::{Layout, Orientation};
 use paddock_core::markdown_view::View;
 use paddock_core::pane_columns::{Column, column_spans, columns_with_file, scroll_step_offset, tab_columns};
 use paddock_core::theme::{
-    account_picker, branch_button, editor, external_editor_button, file_tab, markdown_view_actions, pdf_view,
-    sidebar_toggle, split_buttons, tab, tab_detached, tab_overflow, text,
+    account_picker, branch_button, editor, external_editor_button, file_tab, image_view, markdown_view_actions,
+    pdf_view, sidebar_toggle, split_buttons, tab, tab_detached, tab_overflow, text,
 };
 
 use crate::chrome::{unseen_dot, zpx};
@@ -498,8 +499,54 @@ fn markdown_view_actions_row(
     row
 }
 
+/// 이미지 탭이 활성일 때 보이는 `Fit`·`1:1` 단추 묶음. 지금 보는 방식의 단추가 눌린 모양이다(Markdown 보기 단추와 같은 모양).
+fn image_zoom_actions_row(
+    current: ImageZoom,
+    cx: &mut Context<WorkWindow>,
+) -> gpui_kit::Stateful<Div> {
+    let palette = colors();
+    let mut row = div()
+        .id("image-zoom-actions")
+        .flex_none()
+        .self_center()
+        .flex()
+        .flex_row()
+        .gap(zpx(markdown_view_actions::GAP))
+        .mr(zpx(markdown_view_actions::MARGIN_RIGHT))
+        .mb(zpx(tab::ADD_MARGIN_BOTTOM))
+        .p(zpx(markdown_view_actions::PADDING))
+        .border_1()
+        .border_color(hsla(palette.border_subtle))
+        .rounded(zpx(markdown_view_actions::RADIUS));
+    for (index, (zoom, label)) in [(ImageZoom::Fit, "Fit"), (ImageZoom::Actual, "1:1")].into_iter().enumerate() {
+        let pressed = zoom == current;
+        let button = div()
+            .id(("image-zoom", index))
+            .flex_none()
+            .h(zpx(markdown_view_actions::BUTTON_HEIGHT))
+            .px(zpx(markdown_view_actions::BUTTON_PADDING_X))
+            .flex()
+            .items_center()
+            .rounded(zpx(markdown_view_actions::BUTTON_RADIUS))
+            .text_size(zpx(markdown_view_actions::BUTTON_TEXT_SIZE))
+            .text_color(hsla(if pressed { palette.fg_strong } else { palette.fg_muted }))
+            .cursor_pointer()
+            .hover(|style| style.bg(hsla(colors().hover_bg)).text_color(hsla(colors().fg_strong)))
+            .child(label)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _event: &MouseDownEvent, window, cx| this.set_image_zoom(zoom, window, cx)),
+            );
+        row = row.child(if pressed { button.bg(hsla(palette.selected_bg)) } else { button });
+    }
+    row
+}
+
 /// PDF 탭이 활성일 때 보이는 `−`·`+` 배율 단추와 `Open with default app`.
-fn pdf_actions_row(cx: &mut Context<WorkWindow>) -> gpui_kit::Stateful<Div> {
+fn pdf_actions_row(
+    is_fit: bool,
+    cx: &mut Context<WorkWindow>,
+) -> gpui_kit::Stateful<Div> {
     let zoom_button = |id: &'static str, glyph: &'static str| {
         glyph_button(id, glyph, pdf_view::ZOOM_BUTTON_WIDTH, pdf_view::ZOOM_BUTTON_HEIGHT, pdf_view::ZOOM_BUTTON_RADIUS)
     };
@@ -519,6 +566,27 @@ fn pdf_actions_row(cx: &mut Context<WorkWindow>) -> gpui_kit::Stateful<Div> {
             MouseButton::Left,
             cx.listener(|this, _event: &MouseDownEvent, window, cx| this.zoom_pdf(Some(true), window, cx)),
         ))
+        .child({
+            let fit = div()
+                .id("pdf-zoom-fit")
+                .flex_none()
+                .h(zpx(pdf_view::OPEN_BUTTON_HEIGHT))
+                .px(zpx(pdf_view::OPEN_BUTTON_PADDING_X))
+                .flex()
+                .items_center()
+                .rounded(zpx(pdf_view::OPEN_BUTTON_RADIUS))
+                .text_size(zpx(pdf_view::OPEN_BUTTON_TEXT_SIZE))
+                .text_color(hsla(if is_fit { colors().fg_strong } else { colors().fg_muted }))
+                .cursor_pointer()
+                .hover(|style| style.bg(hsla(colors().hover_bg)).text_color(hsla(colors().fg_strong)))
+                .child("Fit")
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _event: &MouseDownEvent, window, cx| this.zoom_pdf(None, window, cx)),
+                );
+            // 칸 폭 맞춤 상태이면 눌린 모양(이미지 Fit·1:1 단추와 같은 배경)이다.
+            if is_fit { fit.bg(hsla(colors().selected_bg)) } else { fit }
+        })
         .child(
             div()
                 .id("pdf-open-default")
@@ -843,6 +911,7 @@ pub fn tab_bar(
     let view_actions_width = match selected_kind {
         Some(FileKind::Markdown) => markdown_view_actions::RESERVED_WIDTH + split_buttons::GAP,
         Some(FileKind::Pdf) => pdf_view::ACTIONS_RESERVED_WIDTH + split_buttons::GAP,
+        Some(FileKind::Image | FileKind::Svg) => image_view::ACTIONS_RESERVED_WIDTH + split_buttons::GAP,
         _ => 0.0,
     };
     let branch = window_view.git.branch_label();
@@ -986,7 +1055,18 @@ pub fn tab_bar(
                         .filter(|_| file_active)
                         .map(|view| markdown_view_actions_row(view, cx)),
                 )
-                .children((selected_kind == Some(FileKind::Pdf)).then(|| pdf_actions_row(cx)))
+                .children(
+                    window_view
+                        .selected_pdf_is_fit(cx)
+                        .filter(|_| file_active)
+                        .map(|is_fit| pdf_actions_row(is_fit, cx)),
+                )
+                .children(
+                    window_view
+                        .selected_image_zoom(cx)
+                        .filter(|_| file_active)
+                        .map(|zoom| image_zoom_actions_row(zoom, cx)),
+                )
                 .children(editor_active.then(|| external_editor_action(cx)))
                 .children(branch.map(branch_label_button))
                 .child(account_picker_button(window_view, cx))

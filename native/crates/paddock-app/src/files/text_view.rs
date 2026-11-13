@@ -1,6 +1,8 @@
 //! 텍스트 보기: 편집기(줄 번호 거터 + 구문 강조). 고칠 수 있는 파일이면 글자를 고칠 수 있고, 저장은 앱이 `encoded`로 BOM·줄바꿈을 되살려 쓴다.
 //!
 //! 편집기 부품이 색을 앱 테마에서 읽으므로, 강조 색과 바탕·글자·줄 번호 색은 `highlight_theme`가 만든 테마를 부품 테마에 얹어 쓴다.
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui_kit::component::highlighter::HighlightTheme;
@@ -9,6 +11,7 @@ use gpui_kit::{AppContext, Context, Entity, IntoElement, ParentElement, Styled, 
 use paddock_core::file_kind::{extension_of, highlight_language_of};
 use paddock_core::text_file::Encoded;
 use paddock_core::theme::{Colors, Mode, file_view};
+use paddock_core::word_occurrence::OccurrenceTrail;
 use serde_json::json;
 
 use crate::chrome::zpx;
@@ -56,8 +59,13 @@ pub struct TextBody {
     pub encoded: Encoded,
     /// 글자를 고칠 수 있는가. 텍스트·Markdown 원문이 아니거나 UTF-8이 아닌 바이트를 바꿔 읽은 파일이면 읽기 전용이다.
     pub editable: bool,
+    /// 직전 "다음 같은 글자 선택 추가"(Cmd·Ctrl+D)의 기록. 편집기가 처음 고른 선택만 읽게 해 주므로 마지막으로 더한 자리를 여기에 기억한다.
+    /// 편집이 일어나면 비워야 하므로 변경 구독도 같은 기록을 쥔다.
+    pub occurrence_trail: Rc<RefCell<Option<OccurrenceTrail>>>,
     /// 편집기의 글자 변경을 창에 알리는 구독(없애면 알림이 끊긴다).
     _changes: Subscription,
+    /// 찾기 패널이 열릴 때 접힌 블록을 모두 펴는 구독. 부품의 다음·이전 일치 이동이 접힌 줄 안을 펴지 않아서, 일치가 보이지 않는 줄에 숨는 일을 막는다.
+    _unfold_on_search: Subscription,
 }
 
 impl TextBody {
@@ -130,7 +138,7 @@ pub fn highlight_theme(
     serde_json::from_value::<HighlightTheme>(theme).ok().map(Arc::new)
 }
 
-/// 읽은 텍스트로 편집기를 만든다. 확장자에 맞는 문법이 있고 파일이 `HIGHLIGHT_LIMIT` 이하이면 강조하고, 줄 번호를 보이며, 긴 줄은 줄바꿈 없이 가로로 스크롤한다.
+/// 읽은 텍스트로 편집기를 만든다. 확장자에 맞는 문법이 있고 파일이 `HIGHLIGHT_LIMIT` 이하이면 강조하고, 줄 번호와 코드 접기 단추(문법이 있는 언어만)를 보이며, 긴 줄은 줄바꿈 없이 가로로 스크롤한다.
 /// `editable`이 참이면 글자를 고칠 수 있고, 고치면 창에 그 파일이 저장되지 않은 상태가 됐다고 알린다. 찾기·바꾸기 패널은 항상 쓸 수 있다.
 pub fn build_text(
     file: TextFile,
@@ -146,20 +154,31 @@ pub fn build_text(
             .language(language)
             .line_number(true)
             .soft_wrap(false)
-            .folding(false)
+            .folding(true)
             .auto_close(false)
             .smart_indent(false)
             .searchable(true)
             .default_value(text)
     });
     // 변경 알림은 편집기 자신으로 파일을 찾는다: 이름이 바뀐 파일의 편집기는 새 경로 밑으로 옮겨 가므로 만들 때의 경로를 쥐고 있으면 안 된다.
+    let occurrence_trail = Rc::new(RefCell::new(None));
+    let trail_for_changes = occurrence_trail.clone();
     let _changes = cx.subscribe_in(&editor, window, move |this: &mut WorkWindow, editor, event: &InputEvent, _, cx| {
         if matches!(event, InputEvent::Change) {
+            // 글이 고쳐지면 "다음 같은 글자" 기록의 위치가 낡는다(같은 길이로 고쳐도).
+            trail_for_changes.borrow_mut().take();
             this.note_edited(editor.entity_id(), cx);
         }
     });
+    let seen_search_revision = Cell::new(0_u64);
+    let _unfold_on_search = cx.observe(&editor, move |_this: &mut WorkWindow, editor, cx| {
+        let revision = editor.read(cx).search_activation_revision();
+        if revision != seen_search_revision.replace(revision) && editor.read(cx).search_session().is_active() {
+            editor.update(cx, unfold_all);
+        }
+    });
     super::review_notes::route_context_menu(&editor, cx);
-    TextBody { editor, n_lines, language, size, encoded, editable, _changes }
+    TextBody { editor, n_lines, language, size, encoded, editable, occurrence_trail, _changes, _unfold_on_search }
 }
 
 /// 텍스트 보기 그리기. 읽기 전용 보기는 키를 쳐도 내용이 바뀌지 않는다.
@@ -179,6 +198,17 @@ pub fn text_view_of(
         .child(Editor::new(editor).readonly(!editable).appearance(false).bordered(false).h(gpui_kit::relative(1.0)))
 }
 
+/// 접힌 블록을 모두 편다. 접기 단추로 다시 접을 수 있다.
+pub fn unfold_all(
+    state: &mut EditorState,
+    cx: &mut Context<EditorState>,
+) {
+    let starts: Vec<usize> = state.display_map().folded_ranges().iter().map(|fold| fold.start_line).collect();
+    for start_line in starts {
+        state.unfold_at(Position::new(u32::try_from(start_line + 1).unwrap_or(0), 0), cx);
+    }
+}
+
 /// 목표 줄 위에 남기는 줄 수. 일치 줄이 화면 맨 위에 붙지 않고 앞뒤 맥락과 함께 보이게 한다.
 const CONTEXT_LINES_ABOVE: usize = 3;
 
@@ -193,8 +223,11 @@ pub fn scroll_to_line(
     let line_height = body.editor.read(cx).line_height();
     if let Some(line_height) = line_height {
         let position = Position::new(u32::try_from(line.saturating_sub(1)).unwrap_or(0), 0);
-        let n_rows_above = line.saturating_sub(1 + CONTEXT_LINES_ABOVE);
         body.editor.update(cx, |state, cx| {
+            // 목표 줄이 접힌 블록 안이면 먼저 펴고, 스크롤은 접힌 줄을 뺀 표시 줄 번호 기준으로 잡는다.
+            state.unfold_at(position, cx);
+            let row = state.display_map().buffer_line_to_display_row(line.saturating_sub(1));
+            let n_rows_above = row.saturating_sub(CONTEXT_LINES_ABOVE);
             state.set_cursor_position(position, window, cx);
             state.set_scroll_offset(gpui_kit::point(Default::default(), -(line_height * n_rows_above as f32)), cx);
         });
