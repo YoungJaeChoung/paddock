@@ -1,7 +1,6 @@
-# Message shape of protocol version 2. The tests in src/message.rs compare it with the current shape.
+# Message shape of protocol version 3. The tests in src/message.rs compare it with the current shape.
 # How to change it (raise the version or record a compatible change): see the comment on PROTOCOL_VERSION.
-# compatible-changes: 2026-11-09 - TerminalState.signal added (serde(default) optional field, daemon -> app only): an older app ignores the unknown field and an older daemon never sends it, so it reads as None. The handshake frames are untouched.
-version: 2
+version: 3
 
 [handshake kinds]
 HELLO 1
@@ -41,6 +40,7 @@ BYE 10
 MEMORY_REQUEST 11
 STOP_AGENT 12
 CHECK_IDLE 13
+WATCH 14
 HELLO_OK 101
 ERR 102
 LIST_REPLY 103
@@ -56,6 +56,7 @@ TERMINAL_STATE 112
 MEMORY_REPORT 113
 STOP_AGENT_REPLY 114
 CHECK_IDLE_REPLY 115
+RESIZED 116
 
 [messages]
 New {
@@ -101,7 +102,14 @@ Attach {
   "cols": 80,
   "rows": 24
 }
+Watch {
+  "id": 3
+}
 Resize {
+  "cols": 80,
+  "rows": 24
+}
+Resized {
   "cols": 80,
   "rows": 24
 }

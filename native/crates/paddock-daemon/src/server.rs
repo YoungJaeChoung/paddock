@@ -8,7 +8,7 @@ use paddock_core::account_session::SessionIdentity;
 use paddock_protocol::frame::Frame;
 use paddock_protocol::message::{
     Attach, CheckIdle, CheckIdleReply, Hello, HelloError, HelloOk, Kill, List, New, Resize, Status, StopAgent,
-    StopAgentReply, kind,
+    StopAgentReply, Watch, kind,
 };
 use paddock_protocol::peer::{PeerCredentials, PeerRole, UserId, require_same_user};
 
@@ -62,7 +62,7 @@ pub fn exit_daemon(ctx: &Context) -> ! {
 ///
 /// 인사를 마친 연결은 열려 있는 동안 레지스트리에 연결로 세어져, 터미널이 없어도 데몬이 유휴 종료하지 않게 붙든다.
 ///
-/// 한 연결은 한 번에 터미널 하나만 다룬다. `NEW`나 `ATTACH`가 성공하면 그 터미널이 연결의 대상이 되고,
+/// 한 연결은 한 번에 터미널 하나만 다룬다. `NEW`·`ATTACH`·`WATCH`가 성공하면 그 터미널이 연결의 대상이 되고,
 /// `INPUT`·`RESIZE`는 그 대상에게 간다.
 pub fn serve(
     stream: Stream,
@@ -180,6 +180,7 @@ impl Session {
             }
             kind::NEW => self.on_new(&frame, ctx),
             kind::ATTACH => self.on_attach(&frame, ctx),
+            kind::WATCH => self.on_watch(&frame, ctx),
             kind::INPUT => {
                 if let Some(terminal) = &self.attached {
                     terminal.input(frame.payload);
@@ -187,7 +188,7 @@ impl Session {
             }
             kind::RESIZE => {
                 if let (Some(terminal), Ok(resize)) = (&self.attached, frame.parse_json::<Resize>()) {
-                    terminal.resize(resize.cols, resize.rows);
+                    terminal.resize(self.conn_id, resize.cols, resize.rows);
                 }
             }
             kind::LIST => self.reply_list(ctx),
@@ -274,6 +275,20 @@ impl Session {
         self.attached = Some(terminal);
     }
 
+    /// 연결의 대상을 `terminal`로 바꾸고 구경 연결로 붙는다. 이전 대상이 있으면 그쪽 수신자는 비운다. 구경 연결 수가 차 있으면 `ERR`로 답하고 붙지 않는다.
+    fn watch_to(
+        &mut self,
+        terminal: Arc<Terminal>,
+        ctx: &Context,
+    ) {
+        self.release(ctx);
+        if terminal.watch(self.conn_id, &self.outbox) {
+            self.attached = Some(terminal);
+        } else {
+            self.reply_error("Too many watchers");
+        }
+    }
+
     /// 대상 터미널에서 이 연결을 떼고, 셸이 이미 끝난 터미널이면 목록에서 뺀다.
     fn release(
         &mut self,
@@ -312,6 +327,20 @@ impl Session {
         match frame.parse_json::<Attach>() {
             Ok(request) => match ctx.registry.get(request.id) {
                 Some(terminal) => self.attach_to(terminal, request.cols, request.rows, ctx),
+                None => self.reply_error("No such terminal"),
+            },
+            Err(_) => self.reply_error("Malformed request"),
+        }
+    }
+
+    fn on_watch(
+        &mut self,
+        frame: &Frame,
+        ctx: &Context,
+    ) {
+        match frame.parse_json::<Watch>() {
+            Ok(request) => match ctx.registry.get(request.id) {
+                Some(terminal) => self.watch_to(terminal, ctx),
                 None => self.reply_error("No such terminal"),
             },
             Err(_) => self.reply_error("Malformed request"),

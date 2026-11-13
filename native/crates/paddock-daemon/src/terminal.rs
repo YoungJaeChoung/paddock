@@ -12,7 +12,7 @@ use paddock_core::terminal_history::{HistoryInput, HistoryLimits, HistoryRecord,
 use paddock_core::wsl_probe::{MARKER, forwarded_wslenv};
 use paddock_protocol::frame::Frame;
 use paddock_protocol::message::{
-    Attached, CheckIdleReply, Launch, New, StopAgent, StopAgentReply, TerminalInfo, TerminalState, kind,
+    Attached, CheckIdleReply, Launch, New, Resized, StopAgent, StopAgentReply, TerminalInfo, TerminalState, kind,
 };
 use paddock_protocol::shared_config::config_dir;
 
@@ -29,6 +29,10 @@ pub const RING_BYTES: usize = 1 << 20;
 /// 재생 프레임 하나에 담는 바이트 수.
 const REPLAY_CHUNK_BYTES: usize = 64 * 1024;
 
+/// 터미널 하나에 동시에 붙을 수 있는 구경 연결 수의 상한. 구경 연결마다 보내기 통로가 최대 2 MiB를 쌓으므로
+/// 터미널 하나가 쥘 수 있는 메모리를 묶어 두는 값이다.
+pub const MAX_WATCHERS: usize = 8;
+
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
@@ -38,8 +42,10 @@ struct Live {
     cols: u16,
     rows: u16,
     ring: ReplayRing,
-    /// 지금 이 터미널의 출력을 받는 연결(번호와 보내기 통로). 한 번에 하나다.
+    /// 지금 이 터미널의 출력을 이어받은 주 연결(번호와 보내기 통로). 한 번에 하나다.
     client: Option<(u64, Outbox)>,
+    /// 주 연결을 밀어내지 않고 함께 출력을 받는 구경 연결들(번호와 보내기 통로). 최대 `MAX_WATCHERS`개다.
+    watchers: Vec<(u64, Outbox)>,
     alive: bool,
     /// 셸이 끝난 뒤 그 종료 코드. 살아 있거나 코드를 알 수 없으면 None.
     exit_code: Option<i32>,
@@ -54,7 +60,13 @@ struct Live {
 }
 
 impl Live {
+    /// 출력·상태·종료를 받는 모든 연결: 주 연결, 그다음 구경 연결들.
+    fn receivers(&self) -> impl Iterator<Item = &(u64, Outbox)> {
+        self.client.iter().chain(self.watchers.iter())
+    }
+
     /// 이 연결에 링 전체를 다시 보낸다: `RESYNC` → `REPLAY`(0개 이상) → `REPLAY_END` → (셸이 이미 끝났다면) `EXITED`.
+    /// 보내기 통로가 넘친 그 연결에만 일어나고, 다른 수신자의 흐름은 건드리지 않는다.
     ///
     /// 보내기 통로가 넘쳐 버린 출력이 있을 때 연결을 따라잡게 하는 용도다. 링 스냅샷 전송과 수신자 등록이 같은 잠금 안에서
     /// 이뤄지므로, 재생 뒤 실시간 출력 사이에 빠짐·중복이 없다.
@@ -62,8 +74,7 @@ impl Live {
         &self,
         conn_id: u64,
     ) {
-        if let Some((id, outbox)) = &self.client
-            && *id == conn_id
+        if let Some((_, outbox)) = self.receivers().find(|(id, _)| *id == conn_id)
             && outbox.take_overflow()
         {
             outbox.send(Frame::new(kind::RESYNC, Vec::new()));
@@ -86,13 +97,55 @@ impl Live {
         }
     }
 
-    /// 앞쪽 연결에 `state`를 알린다. 붙은 연결이 없으면 알릴 곳이 없다.
+    /// 모든 수신자에게 `state`를 알린다. 붙은 연결이 없으면 알릴 곳이 없다.
     fn send_state(
         &self,
         state: &TerminalState,
     ) {
-        if let Some((_, outbox)) = &self.client {
+        for (_, outbox) in self.receivers() {
             outbox.send(Frame::json(kind::TERMINAL_STATE, state));
+        }
+    }
+
+    /// 모든 수신자에게 새 출력을 보낸다. 상한을 넘겨 출력이 버려진 연결은, 그 순간 밀린 프레임이 이미 비었다면
+    /// 훅이 불릴 기회가 없으므로 여기서 바로 다시 맞춘다. 그 연결만 다시 맞추고 나머지는 그대로 이어진다.
+    fn send_output(
+        &self,
+        data: &[u8],
+    ) {
+        for (conn_id, outbox) in self.receivers() {
+            if !outbox.send_output(Frame::new(kind::OUTPUT, data.to_vec())) && outbox.is_drained() {
+                self.resync_if_overflowed(*conn_id);
+            }
+        }
+    }
+
+    /// 모든 수신자에게 셸이 끝났음을 알린다.
+    fn send_exited(
+        &self,
+        text: &str,
+    ) {
+        for (_, outbox) in self.receivers() {
+            outbox.send(Frame::text(kind::EXITED, text));
+        }
+    }
+
+    /// 크기를 `cols`×`rows`로 바꾸고 `changed_by` 연결을 뺀 수신자에게 `RESIZED`로 알린다. 크기가 그대로면 알리지 않는다.
+    /// 호출자가 셸(PTY)의 크기를 맞춘다.
+    fn set_size(
+        &mut self,
+        cols: u16,
+        rows: u16,
+        changed_by: u64,
+    ) {
+        if self.cols != cols || self.rows != rows {
+            self.cols = cols;
+            self.rows = rows;
+            for (conn_id, outbox) in self.receivers() {
+                if *conn_id != changed_by {
+                    outbox.send(Frame::json(kind::RESIZED, &Resized { cols, rows }));
+                }
+            }
         }
     }
 }
@@ -188,6 +241,7 @@ impl Terminal {
             rows: request.rows,
             ring: ReplayRing::new(RING_BYTES),
             client: None,
+            watchers: Vec::new(),
             alive: true,
             exit_code: None,
             tracker: Tracker::opened_by(account.as_ref()),
@@ -252,14 +306,8 @@ impl Terminal {
                 if query_seen && let Some(pty) = on_data_reply.get() {
                     pty.send(PtyMsg::Input(QUERY_REPLY.to_vec()));
                 }
-                if let Some((conn_id, outbox)) = &live.client {
-                    // 클라이언트가 읽지 못해 상한을 넘으면 이 출력은 버린다(링에 있다). 그 순간 밀린 프레임이 이미 비었다면
-                    // 훅이 불릴 기회가 없으므로 여기서 바로 다시 맞춘다.
-                    if !outbox.send_output(Frame::new(kind::OUTPUT, data.to_vec())) && outbox.is_drained() {
-                        let conn_id = *conn_id;
-                        live.resync_if_overflowed(conn_id);
-                    }
-                }
+                // 클라이언트가 읽지 못해 상한을 넘으면 그 연결에는 이 출력을 버린다(링에 있다).
+                live.send_output(data);
             },
             move |exit_code| {
                 let mut live = lock(&on_exit_live);
@@ -271,13 +319,11 @@ impl Terminal {
                 if !on_exit_history.is_stopping() {
                     on_exit_history.remove(id);
                 }
-                let has_client = live.client.is_some();
-                if let Some((_, outbox)) = &live.client {
-                    outbox.send(Frame::text(kind::EXITED, &text));
-                }
+                let has_receiver = live.receivers().next().is_some();
+                live.send_exited(&text);
                 drop(live);
-                // 붙은 연결이 없으면 알릴 곳이 없으므로 바로 목록에서 뺀다. 붙은 연결이 있으면 그 연결이 끊길 때 뺀다.
-                if !has_client {
+                // 붙은 연결이 없으면 알릴 곳이 없으므로 바로 목록에서 뺀다. 붙은 연결이 있으면 마지막 연결이 끊길 때 뺀다.
+                if !has_receiver {
                     on_exit_registry.remove(id);
                 }
             },
@@ -299,12 +345,12 @@ impl Terminal {
         Ok(terminal)
     }
 
-    /// 이 연결이 출력을 받도록 등록하고, 링에 담긴 출력을 처음부터 재생한다.
+    /// 이 연결이 출력을 이어받는 주 연결이 되도록 등록하고, 링에 담긴 출력을 처음부터 재생한다.
     ///
     /// 보내는 순서는 `ATTACHED` → `REPLAY`(0개 이상) → `REPLAY_END` → (셸이 이미 끝났다면) `EXITED`이고, 그 뒤에 실시간 `OUTPUT`이 이어진다.
-    /// `cols`가 0이면 "지금 크기를 유지"라는 뜻이다. 재접속하는 앱은 데몬의 크기로 격자를 만든다.
+    /// `cols`가 0이면 "지금 크기를 유지"라는 뜻이다. 재접속하는 앱은 데몬의 크기로 격자를 만든다. 크기가 바뀌면 구경 연결에 `RESIZED`로 알린다.
     ///
-    /// 출력을 받는 연결은 하나라서, 다른 연결이 받고 있었다면 그 연결은 `DETACHED`를 받고 출력에서 밀려난다.
+    /// 주 연결은 하나라서, 다른 연결이 받고 있었다면 그 연결은 `DETACHED`를 받고 출력에서 밀려난다. 구경 연결은 밀려나지 않는다.
     pub fn attach(
         &self,
         conn_id: u64,
@@ -321,6 +367,40 @@ impl Terminal {
         }
         // 링 스냅샷 전송과 수신자 등록을 같은 잠금 안에서 해서 재생 뒤 실시간 출력 사이에 빠짐·중복이 없다.
         live.client = Some((conn_id, outbox.clone()));
+        if cols != 0 && rows != 0 && (live.cols != cols || live.rows != rows) {
+            self.resize_locked(&mut live, conn_id, cols, rows);
+        }
+        log::event(&format!("terminal {} attached by connection {conn_id}", self.id));
+        self.introduce(&mut live, conn_id, outbox);
+    }
+
+    /// 이 연결이 주 연결을 밀어내지 않고 함께 보는 구경 연결이 되도록 등록하고, `attach`와 같은 순서로 재생한다.
+    /// 터미널 크기는 바꾸지 않는다(`ATTACHED`의 크기가 지금 크기다). 구경 연결 수가 `MAX_WATCHERS`에 차 있으면 등록하지 않고 `false`다.
+    pub fn watch(
+        &self,
+        conn_id: u64,
+        outbox: &Outbox,
+    ) -> bool {
+        let mut live = lock(&self.live);
+        let admitted = live.watchers.len() < MAX_WATCHERS;
+        if admitted {
+            // 링 스냅샷 전송과 수신자 등록을 같은 잠금 안에서 해서 재생 뒤 실시간 출력 사이에 빠짐·중복이 없다.
+            live.watchers.push((conn_id, outbox.clone()));
+            log::event(&format!("terminal {} watched by connection {conn_id}", self.id));
+            self.introduce(&mut live, conn_id, outbox);
+        } else {
+            log::event(&format!("terminal {}: connection {conn_id} refused, {MAX_WATCHERS} watchers already", self.id));
+        }
+        admitted
+    }
+
+    /// 새 수신자 하나에게 현재 상태를 알린다: `ATTACHED` → 재생 → 현재 `TERMINAL_STATE`. `attach`와 `watch`가 같은 잠금 안에서 부른다.
+    fn introduce(
+        &self,
+        live: &mut Live,
+        conn_id: u64,
+        outbox: &Outbox,
+    ) {
         let weak_live: Weak<Mutex<Live>> = Arc::downgrade(&self.live);
         // 이 연결이 밀린 출력을 모두 쓰고 나면, 버려진 출력이 있었을 때 링을 다시 보낸다.
         outbox.set_drained_hook(move || {
@@ -328,12 +408,6 @@ impl Terminal {
                 lock(&live).resync_if_overflowed(conn_id);
             }
         });
-        if cols != 0 && rows != 0 && (live.cols != cols || live.rows != rows) {
-            live.cols = cols;
-            live.rows = rows;
-            self.pty.send(PtyMsg::Resize(cols, rows));
-        }
-        log::event(&format!("terminal {} attached by connection {conn_id}", self.id));
         let attached = Attached { id: self.id, pid: self.pty.pid, cols: live.cols, rows: live.rows, alive: live.alive };
         outbox.send(Frame::json(kind::ATTACHED, &attached));
         live.send_replay(outbox);
@@ -507,18 +581,29 @@ impl Terminal {
         }
     }
 
-    /// 크기를 바꾼다. 0이 든 크기는 무시한다.
+    /// `conn_id` 연결이 크기를 바꾼다. 0이 든 크기는 무시한다. 크기가 달라졌으면 그 연결을 뺀 수신자에게 `RESIZED`로 알린다.
     pub fn resize(
         &self,
+        conn_id: u64,
         cols: u16,
         rows: u16,
     ) {
         if cols != 0 && rows != 0 {
             let mut live = lock(&self.live);
-            live.cols = cols;
-            live.rows = rows;
-            self.pty.send(PtyMsg::Resize(cols, rows));
+            self.resize_locked(&mut live, conn_id, cols, rows);
         }
+    }
+
+    /// 잠금을 쥔 채 크기를 바꾸고 셸(PTY)에 알린다. `attach`와 `resize`가 함께 쓴다.
+    fn resize_locked(
+        &self,
+        live: &mut Live,
+        conn_id: u64,
+        cols: u16,
+        rows: u16,
+    ) {
+        live.set_size(cols, rows, conn_id);
+        self.pty.send(PtyMsg::Resize(cols, rows));
     }
 
     /// 셸 프로세스를 끝낸다. 목록에서 빼는 일은 호출자가 한다.
@@ -527,7 +612,8 @@ impl Terminal {
         self.pty.send(PtyMsg::Shutdown);
     }
 
-    /// 연결이 끊겼을 때 이 연결이 붙어 있었다면 수신자를 비운다. 셸이 이미 끝난 터미널이면 `true`를 돌려 호출자가 목록에서 빼게 한다.
+    /// 연결이 끊겼을 때 이 연결이 주 연결이나 구경 연결이었다면 수신자에서 뺀다. 셸이 이미 끝났고 수신자가 모두 떠난 터미널이면 `true`를 돌려
+    /// 호출자가 목록에서 빼게 한다.
     pub fn detach(
         &self,
         conn_id: u64,
@@ -536,7 +622,8 @@ impl Terminal {
         if matches!(&live.client, Some((id, _)) if *id == conn_id) {
             live.client = None;
         }
-        !live.alive && live.client.is_none()
+        live.watchers.retain(|(id, _)| *id != conn_id);
+        !live.alive && live.receivers().next().is_none()
     }
 
     fn info(&self) -> TerminalInfo {
