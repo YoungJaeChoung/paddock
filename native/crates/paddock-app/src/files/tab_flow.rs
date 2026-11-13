@@ -5,9 +5,10 @@
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
-use gpui_kit::{AppContext, Context, Window};
+use gpui_kit::{App, AppContext, Context, Window};
 use paddock_core::file_kind::{FileKind, kind_of};
 use paddock_core::file_pane::{file_key, tab_key};
+use paddock_core::image_view::Zoom as ImageZoom;
 use paddock_core::markdown_view::{View, image_root_for};
 use paddock_core::paths::is_inside;
 use paddock_core::pen_paths::is_pen_file;
@@ -652,6 +653,34 @@ impl WorkWindow {
             self.zoom_pdf(step, window, cx);
         }
         handled
+    }
+
+    /// 탭 줄의 `Fit`·`1:1`: 선택한 이미지 탭의 보기 방식을 정한다. 이미 그 방식이면 아무 일 없다.
+    pub(crate) fn set_image_zoom(
+        &mut self,
+        zoom: ImageZoom,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(FileContent::Image(view)) = self.selected_file_key().and_then(|key| self.file_views.get(&key)) {
+            view.update(cx, |view, cx| {
+                if view.zoom() != zoom {
+                    view.toggle_zoom(cx);
+                }
+            });
+            self.activate_file(window, cx);
+        }
+    }
+
+    /// 선택한 파일 탭이 이미지(SVG 포함)이면 지금의 보기 방식.
+    pub(crate) fn selected_image_zoom(
+        &self,
+        cx: &App,
+    ) -> Option<ImageZoom> {
+        match self.selected_file_key().and_then(|key| self.file_views.get(&key)) {
+            Some(FileContent::Image(view)) => Some(view.read(cx).zoom()),
+            _ => None,
+        }
     }
 
     /// 탭 줄의 `Open with default app`: 선택한 PDF 파일을 기본 앱에 맡긴다.
