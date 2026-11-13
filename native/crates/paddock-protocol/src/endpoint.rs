@@ -19,26 +19,44 @@ const SOCKET_PATH_MAX: usize = 100;
 /// Unix는 `$XDG_RUNTIME_DIR/paddock/daemon.sock`, 그 폴더가 없으면 `~/.paddock/native/run/daemon.sock`이다.
 /// 이 경로가 소켓 주소 길이 한도(`SOCKET_PATH_MAX`)를 넘으면 `/tmp/paddock-<uid>/daemon.sock`을 쓰고, 그것도 넘으면 오류다.
 pub fn endpoint_name() -> io::Result<String> {
+    named_endpoint("paddock", "daemon.sock")
+}
+
+/// 이 사용자의 원격 게이트웨이 제어 엔드포인트 이름. 앱이 게이트웨이에 상태를 묻고 페어링 창을 열 때 접속한다.
+///
+/// 데몬 엔드포인트(`endpoint_name`)와 폴더·해시 규칙은 같고 이름만 다르다: Windows는 `\\.\pipe\paddock-remote-<해시>`, Unix는 `remote.sock`.
+/// 만들고 접속하는 방법(`create_listener`·`connect_verified`)도 데몬 엔드포인트와 같다.
+pub fn remote_control_endpoint_name() -> io::Result<String> {
+    named_endpoint("paddock-remote", "remote.sock")
+}
+
+/// 엔드포인트 이름을 정한다. `pipe_prefix`는 Windows 파이프 이름의 앞부분, `socket_file`은 Unix 소켓 파일 이름이다.
+fn named_endpoint(
+    pipe_prefix: &str,
+    socket_file: &str,
+) -> io::Result<String> {
     #[cfg(windows)]
     let name = {
         use sha2::{Digest, Sha256};
+        let _ = socket_file;
         let sid = crate::windows_security::current_user_sid()?;
         let hash: String = Sha256::digest(sid.as_bytes()).iter().take(8).map(|byte| format!("{byte:02x}")).collect();
-        Ok(format!(r"\\.\pipe\paddock-{hash}"))
+        Ok(format!(r"\\.\pipe\{pipe_prefix}-{hash}"))
     };
     #[cfg(unix)]
     let name = {
+        let _ = pipe_prefix;
         let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from).filter(|dir| dir.is_dir());
         let fallback_dir = std::path::PathBuf::from(format!("/tmp/paddock-{}", unsafe { libc::geteuid() }));
-        socket_path(runtime_dir.as_deref(), &crate::daemon_info::native_dir(), &fallback_dir)
+        socket_path_named(runtime_dir.as_deref(), &crate::daemon_info::native_dir(), &fallback_dir, socket_file)
     };
     name
 }
 
-/// Unix 소켓 파일 경로를 정한다. 파일 시스템도 환경 변수도 건드리지 않는 계산이다.
+/// Unix 소켓 파일(`file_name`, 데몬은 `daemon.sock`) 경로를 정한다. 파일 시스템도 환경 변수도 건드리지 않는 계산이다.
 ///
-/// 런타임 폴더(`<runtime_dir>/paddock`)가 있으면 그 아래, 없으면 `<native_dir>/run` 아래의 `daemon.sock`이 우선이다.
-/// 그 경로가 `SOCKET_PATH_MAX`를 넘으면 `<fallback_dir>/daemon.sock`을 쓰고, 그것도 넘으면 오류다.
+/// 런타임 폴더(`<runtime_dir>/paddock`)가 있으면 그 아래, 없으면 `<native_dir>/run` 아래의 `file_name`이 우선이다.
+/// 그 경로가 `SOCKET_PATH_MAX`를 넘으면 `<fallback_dir>/<file_name>`을 쓰고, 그것도 넘으면 오류다.
 ///
 /// Examples
 /// --------
@@ -48,17 +66,18 @@ pub fn endpoint_name() -> io::Result<String> {
 /// | 없음        | 짧음            | `<native_dir>/run/daemon.sock`    |
 /// | 없음        | 한도 초과       | `<fallback_dir>/daemon.sock`      |
 #[cfg(unix)]
-fn socket_path(
+fn socket_path_named(
     runtime_dir: Option<&std::path::Path>,
     native_dir: &std::path::Path,
     fallback_dir: &std::path::Path,
+    file_name: &str,
 ) -> io::Result<String> {
     let dir = match runtime_dir {
         Some(dir) => dir.join("paddock"),
         None => native_dir.join("run"),
     };
-    let primary = dir.join("daemon.sock").to_string_lossy().into_owned();
-    let fallback = fallback_dir.join("daemon.sock").to_string_lossy().into_owned();
+    let primary = dir.join(file_name).to_string_lossy().into_owned();
+    let fallback = fallback_dir.join(file_name).to_string_lossy().into_owned();
     if primary.len() <= SOCKET_PATH_MAX {
         Ok(primary)
     } else if fallback.len() <= SOCKET_PATH_MAX {
@@ -217,6 +236,18 @@ mod tests {
         assert!(first.ends_with("/.paddock/native/run/daemon.sock"), "{first}");
     }
 
+    #[test]
+    fn test_remote_control_endpoint_is_stable_and_differs_from_the_daemon_endpoint() {
+        let _home = TempHome::new();
+        let remote = remote_control_endpoint_name().unwrap();
+        assert_eq!(remote, remote_control_endpoint_name().unwrap());
+        assert_ne!(remote, endpoint_name().unwrap());
+        #[cfg(windows)]
+        assert!(remote.starts_with(r"\\.\pipe\paddock-remote-"), "{remote}");
+        #[cfg(unix)]
+        assert!(remote.ends_with("/.paddock/native/run/remote.sock"), "{remote}");
+    }
+
     #[cfg(unix)]
     #[test]
     fn test_unix_endpoint_prefers_runtime_dir() {
@@ -305,7 +336,7 @@ mod tests {
         let long_native = home.dir.path().join("h".repeat(100)).join(".paddock").join("native");
         // 실제 /tmp 폴더가 아니라 임시 폴더 아래를 대체 위치로 쓴다.
         let fallback_dir = home.dir.path().join("short");
-        let name = socket_path(None, &long_native, &fallback_dir).unwrap();
+        let name = socket_path_named(None, &long_native, &fallback_dir, "daemon.sock").unwrap();
         // sun_path 한도(Linux 108, macOS 104) 안이어야 접속할 수 있다.
         assert!(name.len() <= SOCKET_PATH_MAX, "{name}");
         assert_eq!(name, fallback_dir.join("daemon.sock").to_string_lossy());
@@ -321,13 +352,20 @@ mod tests {
         let short_native = Path::new("/home/a/.paddock/native");
         let fallback = Path::new("/tmp/paddock-1000");
         assert_eq!(
-            socket_path(Some(Path::new("/run/user/1000")), short_native, fallback).unwrap(),
+            socket_path_named(Some(Path::new("/run/user/1000")), short_native, fallback, "daemon.sock").unwrap(),
             "/run/user/1000/paddock/daemon.sock"
         );
-        assert_eq!(socket_path(None, short_native, fallback).unwrap(), "/home/a/.paddock/native/run/daemon.sock");
+        assert_eq!(
+            socket_path_named(None, short_native, fallback, "daemon.sock").unwrap(),
+            "/home/a/.paddock/native/run/daemon.sock"
+        );
         let long_native = Path::new("/home").join("h".repeat(120));
-        assert_eq!(socket_path(None, &long_native, fallback).unwrap(), "/tmp/paddock-1000/daemon.sock");
-        let error = socket_path(None, &long_native, &Path::new("/tmp").join("p".repeat(120))).unwrap_err();
+        assert_eq!(
+            socket_path_named(None, &long_native, fallback, "daemon.sock").unwrap(),
+            "/tmp/paddock-1000/daemon.sock"
+        );
+        let error =
+            socket_path_named(None, &long_native, &Path::new("/tmp").join("p".repeat(120)), "daemon.sock").unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
     }
 

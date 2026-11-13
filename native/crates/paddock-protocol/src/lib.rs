@@ -1,5 +1,5 @@
 //! Paddock 앱과 터미널 데몬 사이의 연결 계약: 프레임, 메시지,
-//! `daemon.json`, 단일 실행 잠금, 엔드포인트 이름, 데몬 지문, 상대 사용자 확인.
+//! `daemon.json`, 단일 실행 잠금, 엔드포인트 이름, 데몬 지문, 상대 사용자 확인, 앱↔원격 게이트웨이 제어 메시지.
 //!
 //! 이 크레이트의 운영체제 호출은 연결 계약에 필요한 것(파일 권한, 엔드포인트 생성, 상대 자격)에 한정한다.
 //! 그래서 앱과 데몬이 같은 규칙을 쓰게 된다.
@@ -11,6 +11,7 @@ pub mod fingerprint;
 pub mod frame;
 pub mod message;
 pub mod peer;
+pub mod remote_control;
 pub mod shared_config;
 #[cfg(windows)]
 pub mod windows_security;
