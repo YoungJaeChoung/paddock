@@ -26,7 +26,8 @@ use paddock_protocol::daemon_info::DaemonInfo;
 use paddock_protocol::endpoint;
 use paddock_protocol::frame::Frame;
 use paddock_protocol::message::{
-    Attach, Attached, Hello, HelloOk, Kill, Launch, List, New, PROTOCOL_VERSION, Status, TerminalState, kind,
+    Attach, Attached, Hello, HelloOk, Kill, Launch, List, New, PROTOCOL_VERSION, Resize, Resized, Status,
+    TerminalState, Watch, kind,
 };
 
 const WAIT: Duration = Duration::from_secs(15);
@@ -374,6 +375,15 @@ impl Client {
             env: Vec::new(),
         };
         self.send(Frame::json(kind::NEW, &request));
+        self.expect(kind::ATTACHED).parse_json().expect("attached json")
+    }
+
+    /// 이미 있는 터미널을 밀어내지 않고 구경하며 `ATTACHED`를 받는다.
+    fn watch(
+        &mut self,
+        id: u32,
+    ) -> Attached {
+        self.send(Frame::json(kind::WATCH, &Watch { id }));
         self.expect(kind::ATTACHED).parse_json().expect("attached json")
     }
 
@@ -2035,4 +2045,308 @@ fn test_c_d46_a_failed_start_logs_the_error_kind_but_not_the_folder_path() {
     let log = std::fs::read_to_string(daemon.log_path()).unwrap_or_default();
     assert!(log.contains("terminal start failed"), "{log}");
     assert!(!log.contains("private-project-folder-that-is-gone"), "the log must not carry folder paths: {log}");
+}
+
+/// 구경 연결 수의 상한. 데몬의 `MAX_WATCHERS`와 같아야 한다.
+const MAX_WATCHERS: usize = 8;
+
+/// 프레임이 `quiet` 동안 멎을 때까지 받은 프레임의 종류를 모두 돌려준다.
+fn kinds_until_quiet(
+    client: &Client,
+    quiet: Duration,
+) -> Vec<u8> {
+    let mut kinds = Vec::new();
+    while let Some(frame) = client.next(quiet) {
+        kinds.push(frame.kind);
+    }
+    kinds
+}
+
+/// 큰 출력이 지나가는 연결에서 끝 표지가 올 때까지 읽고, 그동안 받은 `RESYNC` 수를 돌려준다.
+fn read_until_marker_counting_resyncs(client: &Client) -> usize {
+    let mut tail = Vec::new();
+    let mut n_resyncs = 0;
+    let end = Instant::now() + FLOOD_WAIT;
+    while !String::from_utf8_lossy(&tail).contains(MARKER) {
+        let left = end.checked_duration_since(Instant::now()).expect("timed out waiting for the marker");
+        let frame = client.next(left).expect("connection ended");
+        match frame.kind {
+            kind::RESYNC => n_resyncs += 1,
+            kind::OUTPUT | kind::REPLAY => {
+                tail.extend_from_slice(&frame.payload);
+                // 훑는 범위를 새로 받은 바이트와 그 앞 몇 바이트로 줄인다.
+                let keep = frame.payload.len() + MARKER.len();
+                if tail.len() > keep {
+                    tail.drain(..tail.len() - keep);
+                }
+            }
+            _ => {}
+        }
+    }
+    n_resyncs
+}
+
+#[test]
+fn test_a_watcher_joins_without_detaching_the_primary_and_both_get_the_same_output() {
+    let daemon = TestDaemon::start();
+    let (mut primary, _) = daemon.connect_authenticated();
+    let attached = primary.new_terminal(None, 80, 24);
+    primary.collect_until_quiet(Vec::new(), Duration::from_millis(500));
+
+    let (mut watcher, _) = daemon.connect_authenticated();
+    let watching = watcher.watch(attached.id);
+    assert_eq!((watching.id, watching.cols, watching.rows), (attached.id, 80, 24), "watching keeps the size");
+
+    type_line(&mut primary, ECHO_MARKER);
+    let seen_by_primary = primary.collect_until(MARKER);
+    let seen_by_watcher = watcher.collect_until(MARKER);
+    assert!(String::from_utf8_lossy(&seen_by_primary).contains(MARKER));
+    assert!(String::from_utf8_lossy(&seen_by_watcher).contains(MARKER));
+
+    // 구경이 붙어도 주 연결은 밀려나지 않고 크기 알림도 받지 않는다.
+    let kinds = kinds_until_quiet(&primary, Duration::from_millis(500));
+    assert!(!kinds.contains(&kind::DETACHED), "a watcher must not detach the primary: {kinds:?}");
+    assert!(!kinds.contains(&kind::RESIZED), "watching must not resize the terminal: {kinds:?}");
+}
+
+#[test]
+fn test_a_watchers_input_reaches_the_shell() {
+    let daemon = TestDaemon::start();
+    let (mut primary, _) = daemon.connect_authenticated();
+    let attached = primary.new_terminal(None, 80, 24);
+    let (mut watcher, _) = daemon.connect_authenticated();
+    watcher.watch(attached.id);
+
+    type_line(&mut watcher, ECHO_MARKER);
+    assert!(String::from_utf8_lossy(&primary.collect_until(MARKER)).contains(MARKER));
+    assert!(String::from_utf8_lossy(&watcher.collect_until(MARKER)).contains(MARKER));
+}
+
+#[test]
+fn test_a_watchers_resize_reaches_the_primary_as_resized_and_not_back_to_the_watcher() {
+    let daemon = TestDaemon::start();
+    let (mut primary, _) = daemon.connect_authenticated();
+    let attached = primary.new_terminal(None, 80, 24);
+    let (mut watcher, _) = daemon.connect_authenticated();
+    watcher.watch(attached.id);
+
+    watcher.send(Frame::json(kind::RESIZE, &Resize { cols: 50, rows: 30 }));
+    let resized: Resized = primary.expect(kind::RESIZED).parse_json().expect("resized json");
+    assert_eq!((resized.cols, resized.rows), (50, 30));
+    let kinds = kinds_until_quiet(&watcher, Duration::from_millis(500));
+    assert!(!kinds.contains(&kind::RESIZED), "the connection that resized is not told: {kinds:?}");
+
+    // 주 연결이 다시 크기를 바꾸면 구경이 알림을 받고, 데몬이 가진 크기도 따라간다.
+    primary.send(Frame::json(kind::RESIZE, &Resize { cols: 100, rows: 40 }));
+    let resized: Resized = watcher.expect(kind::RESIZED).parse_json().expect("resized json");
+    assert_eq!((resized.cols, resized.rows), (100, 40));
+    let info = watcher.list().terminals.into_iter().find(|terminal| terminal.id == attached.id).expect("listed");
+    assert_eq!((info.cols, info.rows), (100, 40));
+}
+
+#[test]
+fn test_only_the_slow_watcher_is_resynced() {
+    let daemon = TestDaemon::start();
+    let work = tempfile::tempdir().expect("work dir");
+    let file = write_big_file(work.path(), 32);
+    let (mut primary, _) = daemon.connect_authenticated();
+    let attached = primary.new_terminal(None, 100, 30);
+    let (mut watcher, _) = daemon.connect_authenticated();
+    watcher.watch(attached.id);
+    primary.collect_until_quiet(Vec::new(), Duration::from_millis(700));
+    watcher.collect_until_quiet(Vec::new(), Duration::from_millis(700));
+
+    // 구경만 소켓을 읽지 않는다. 주 연결은 큰 출력이 끝나는 표지까지 읽는다.
+    watcher.set_paused(true);
+    type_line(&mut primary, &dump_file_command(&file));
+    let n_primary_resyncs = read_until_marker_counting_resyncs(&primary);
+    assert_eq!(n_primary_resyncs, 0, "a prompt reader is never resynced");
+
+    watcher.set_paused(false);
+    watcher.expect(kind::RESYNC);
+}
+
+#[test]
+fn test_a_finished_terminal_is_removed_when_the_last_receiver_leaves() {
+    let daemon = TestDaemon::start();
+    let (mut primary, _) = daemon.connect_authenticated();
+    let attached = primary.new_terminal(None, 80, 24);
+    let (mut watcher, _) = daemon.connect_authenticated();
+    watcher.watch(attached.id);
+    let (mut observer, _) = daemon.connect_authenticated();
+
+    #[cfg(unix)]
+    type_line(&mut primary, "exit 7\n");
+    #[cfg(windows)]
+    type_line(&mut primary, "exit 7\r\n");
+    assert_eq!(primary.expect(kind::EXITED).as_text(), "7");
+    assert_eq!(watcher.expect(kind::EXITED).as_text(), "7", "the end reaches every receiver");
+
+    // 주 연결이 떠나도 구경이 남아 있으면 종료 코드를 읽을 수 있게 목록에 남는다.
+    primary.disconnect();
+    thread::sleep(Duration::from_millis(500));
+    assert!(observer.list().terminals.iter().any(|terminal| terminal.id == attached.id), "a watcher still receives it");
+
+    // 마지막 수신자가 떠나면 지워진다.
+    watcher.disconnect();
+    let end = Instant::now() + WAIT;
+    let mut listed = true;
+    while listed && Instant::now() < end {
+        thread::sleep(Duration::from_millis(100));
+        listed = observer.list().terminals.iter().any(|terminal| terminal.id == attached.id);
+    }
+    assert!(!listed, "a finished terminal goes away with its last receiver");
+}
+
+#[test]
+fn test_watchers_beyond_the_limit_are_refused() {
+    let daemon = TestDaemon::start();
+    let (mut primary, _) = daemon.connect_authenticated();
+    let attached = primary.new_terminal(None, 80, 24);
+    let mut watchers = Vec::new();
+    for _ in 0..MAX_WATCHERS {
+        let (mut watcher, _) = daemon.connect_authenticated();
+        watcher.watch(attached.id);
+        watchers.push(watcher);
+    }
+    let (mut extra, _) = daemon.connect_authenticated();
+    extra.send(Frame::json(kind::WATCH, &Watch { id: attached.id }));
+    assert_eq!(extra.expect(kind::ERR).as_text(), "Too many watchers");
+
+    // 한 구경이 떠나면 자리가 난다.
+    watchers.pop().expect("a watcher").disconnect();
+    let end = Instant::now() + WAIT;
+    let mut joined = false;
+    while !joined && Instant::now() < end {
+        extra.send(Frame::json(kind::WATCH, &Watch { id: attached.id }));
+        let frame = extra.next(WAIT).expect("a reply");
+        joined = frame.kind == kind::ATTACHED;
+        if !joined {
+            thread::sleep(Duration::from_millis(100));
+        }
+    }
+    assert!(joined, "a freed slot admits a new watcher");
+}
+
+#[test]
+fn test_a_connection_of_the_previous_version_is_handshake_only_and_cannot_watch() {
+    let mut daemon = TestDaemon::start();
+    let (mut primary, _) = daemon.connect_authenticated();
+    let attached = primary.new_terminal(None, 80, 24);
+    let (mut old_app, hello_ok) = connect_with_another_version(&daemon, PROTOCOL_VERSION - 1);
+    assert_eq!(hello_ok.protocol_version, PROTOCOL_VERSION);
+
+    old_app.send(Frame::json(kind::WATCH, &Watch { id: attached.id }));
+    assert_eq!(old_app.expect(kind::ERR).as_text(), "Unsupported protocol version");
+    // 연결은 유지되어 이어서 상태를 묻고 끝낼 수 있다.
+    old_app.send(Frame::new(kind::STATUS_REQUEST, Vec::new()));
+    let status: Status = old_app.expect(kind::STATUS).parse_json().expect("status json");
+    assert_eq!(status.pid, daemon.pid());
+    old_app.send(Frame::new(kind::SHUTDOWN, Vec::new()));
+    old_app.expect(kind::STATUS);
+    assert!(daemon.wait_for_exit(Duration::from_secs(5)));
+}
+
+#[test]
+fn test_only_the_slow_primary_is_resynced() {
+    let daemon = TestDaemon::start();
+    let work = tempfile::tempdir().expect("work dir");
+    let file = write_big_file(work.path(), 32);
+    let (mut primary, _) = daemon.connect_authenticated();
+    let attached = primary.new_terminal(None, 100, 30);
+    let (mut watcher, _) = daemon.connect_authenticated();
+    watcher.watch(attached.id);
+    primary.collect_until_quiet(Vec::new(), Duration::from_millis(700));
+    watcher.collect_until_quiet(Vec::new(), Duration::from_millis(700));
+
+    primary.set_paused(true);
+    type_line(&mut primary, &dump_file_command(&file));
+    assert_eq!(read_until_marker_counting_resyncs(&watcher), 0, "a prompt reader is never resynced");
+    primary.set_paused(false);
+    primary.expect(kind::RESYNC);
+}
+
+#[test]
+fn test_attach_that_changes_the_size_tells_the_watcher_and_the_same_size_does_not() {
+    let daemon = TestDaemon::start();
+    let (mut primary, _) = daemon.connect_authenticated();
+    let attached = primary.new_terminal(None, 80, 24);
+    let (mut watcher, _) = daemon.connect_authenticated();
+    watcher.watch(attached.id);
+    let (mut taker, _) = daemon.connect_authenticated();
+    taker.send(Frame::json(kind::ATTACH, &Attach { id: attached.id, cols: 60, rows: 20 }));
+    taker.expect(kind::ATTACHED);
+    let resized: Resized = watcher.expect(kind::RESIZED).parse_json().expect("resized json");
+    assert_eq!((resized.cols, resized.rows), (60, 20));
+
+    // 같은 크기를 다시 보내면 알림이 없다.
+    taker.send(Frame::json(kind::RESIZE, &Resize { cols: 60, rows: 20 }));
+    let kinds = kinds_until_quiet(&watcher, Duration::from_millis(500));
+    assert!(!kinds.contains(&kind::RESIZED), "an unchanged size is not announced: {kinds:?}");
+}
+
+#[test]
+fn test_another_attach_takes_over_the_primary_but_the_watcher_keeps_receiving() {
+    let daemon = TestDaemon::start();
+    let (mut first, _) = daemon.connect_authenticated();
+    let attached = first.new_terminal(None, 80, 24);
+    let (mut watcher, _) = daemon.connect_authenticated();
+    watcher.watch(attached.id);
+    let (mut second, _) = daemon.connect_authenticated();
+    second.send(Frame::json(kind::ATTACH, &Attach { id: attached.id, cols: 0, rows: 0 }));
+    second.expect(kind::ATTACHED);
+    first.expect(kind::DETACHED);
+
+    type_line(&mut second, ECHO_MARKER);
+    assert!(String::from_utf8_lossy(&watcher.collect_until(MARKER)).contains(MARKER));
+    let kinds = kinds_until_quiet(&watcher, Duration::from_millis(500));
+    assert!(!kinds.contains(&kind::DETACHED), "a takeover does not detach a watcher: {kinds:?}");
+}
+
+/// 연결 하나가 터미널에 두 번 묶여도 출력은 한 번만 받는지: `rebind`가 묶임을 바꾼 뒤 표지를 치고, 표지가 몇 번 나오는지 센다.
+fn count_markers_after_rebinding(rebind: impl FnOnce(&mut Client, u32)) -> usize {
+    let daemon = TestDaemon::start();
+    let (mut client, _) = daemon.connect_authenticated();
+    let attached = client.new_terminal(None, 80, 24);
+    rebind(&mut client, attached.id);
+    client.collect_until_quiet(Vec::new(), Duration::from_millis(500));
+    type_line(&mut client, ECHO_MARKER);
+    let bytes = client.collect_until(MARKER);
+    let bytes = client.collect_until_quiet(bytes, Duration::from_millis(500));
+    String::from_utf8_lossy(&bytes).matches(MARKER).count()
+}
+
+#[test]
+fn test_a_connection_rebinding_to_the_same_terminal_is_not_listed_twice() {
+    let n_after_watch_then_attach = count_markers_after_rebinding(|client, id| {
+        client.watch(id);
+        client.send(Frame::json(kind::ATTACH, &Attach { id, cols: 0, rows: 0 }));
+        client.expect(kind::ATTACHED);
+    });
+    assert_eq!(n_after_watch_then_attach, 1);
+    let n_after_attach_then_watch = count_markers_after_rebinding(|client, id| {
+        client.watch(id);
+    });
+    assert_eq!(n_after_attach_then_watch, 1);
+}
+
+#[test]
+fn test_a_refused_watch_keeps_the_earlier_binding() {
+    let daemon = TestDaemon::start();
+    let (mut owner, _) = daemon.connect_authenticated();
+    let crowded = owner.new_terminal(None, 80, 24);
+    let mut watchers = Vec::new();
+    for _ in 0..MAX_WATCHERS {
+        let (mut watcher, _) = daemon.connect_authenticated();
+        watcher.watch(crowded.id);
+        watchers.push(watcher);
+    }
+    let (mut client, _) = daemon.connect_authenticated();
+    client.new_terminal(None, 80, 24);
+    client.send(Frame::json(kind::WATCH, &Watch { id: crowded.id }));
+    assert_eq!(client.expect(kind::ERR).as_text(), "Too many watchers");
+
+    // 거절된 뒤에도 이 연결은 자기 터미널에 묶여 있어 입력이 그 셸에서 돌아온다.
+    type_line(&mut client, ECHO_MARKER);
+    assert!(String::from_utf8_lossy(&client.collect_until(MARKER)).contains(MARKER));
 }

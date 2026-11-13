@@ -25,39 +25,45 @@ use serde::{Deserialize, Serialize};
 ///
 /// 모양은 `protocol-shape.v<버전>.txt`가 기록하고 시험이 지금 모양과 대조한다. 올리면 새 버전의 파일을 만들고 옛 파일은 지운다.
 /// 올리지 않는 변경은 같은 파일을 갱신하고 머리 `compatible-changes:` 줄에 날짜와 호환으로 보는 이유를 적는다.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// 프레임 종류 번호. 1~99는 앱 → 데몬, 100 이상은 데몬 → 앱이다.
 ///
-/// 연결은 한 번에 터미널 하나에 묶인다.
+/// 연결은 한 번에 터미널 하나에 묶인다. 묶이는 방식은 둘이다: 출력을 이어받는 주 연결(NEW·ATTACH)과 밀어내지 않고 함께 보는 구경 연결(WATCH).
 ///
 /// ```text
-/// 연결됨 ── HELLO(맞음) ──► 인사 마침(HELLO_OK) ── NEW 또는 ATTACH 성공(ATTACHED) ──► 터미널에 묶임
+/// 연결됨 ── HELLO(맞음) ──► 인사 마침(HELLO_OK) ── NEW·ATTACH·WATCH 성공(ATTACHED) ──► 터미널에 묶임
 ///   │ HELLO 틀림 → ERR 뒤 끊김                         │ INPUT·RESIZE는 묶인 터미널에만 적용
 ///   │ HELLO 아님 → 답 없이 끊김                        │ 묶인 터미널의 REPLAY → REPLAY_END → OUTPUT… → EXITED
-///                                                      │ NEW·ATTACH를 다시 보내면 새 터미널로 옮겨 묶임
+///                                                      │ NEW·ATTACH·WATCH를 다시 보내면 새 터미널로 옮겨 묶임
 ///                                                      │ 읽는 속도가 느리면 RESYNC → REPLAY… → REPLAY_END 로 화면 전체를 다시 받음
-///                                                      │ 다른 연결이 ATTACH하면 DETACHED 를 받고 출력이 끊김
+///                                                      │ 다른 연결이 ATTACH하면 주 연결은 DETACHED 를 받고 출력이 끊김(구경 연결은 그대로)
+///                                                      │ 다른 연결이 RESIZE로 크기를 바꾸면 RESIZED
 ///                                                      │ 묶인 터미널의 상태(폴더·프로그램·활동)가 바뀔 때마다 TERMINAL_STATE
 /// ```
 ///
 /// INPUT·RESIZE·OUTPUT에 터미널 번호가 없는 것은 이 묶임 때문이다. 앱은 터미널마다 연결을 하나씩 연다.
 ///
-/// 터미널의 출력을 받는 연결은 한 번에 하나다. 이미 다른 연결이 받는 터미널에 ATTACH하면 새 연결이 출력을 이어받고,
+/// 터미널의 출력을 이어받는 주 연결은 한 번에 하나다. 이미 다른 연결이 받는 터미널에 ATTACH하면 새 연결이 출력을 이어받고,
 /// 밀려난 연결은 `DETACHED`를 받는다. 밀려난 연결도 연결이 끊기기 전까지는 INPUT·RESIZE를 보낼 수 있고, 그 입력은 셸에 그대로 들어간다.
+///
+/// 구경 연결은 주 연결을 밀어내지 않고 같은 터미널의 출력·상태·종료를 함께 받는다. WATCH는 ATTACH와 같은 답(`ATTACHED` → 재생 → 현재 `TERMINAL_STATE`)을 받고,
+/// 터미널 크기를 바꾸지 않는다(`Attached`의 크기가 지금 크기다). 구경 연결도 INPUT·RESIZE를 보낼 수 있다. 크기를 바꾼 연결을 뺀 모든 수신자가
+/// 바뀐 크기를 `RESIZED`로 받는다. 구경 연결 수에는 상한이 있어 넘으면 `ERR`로 답한다. 보내지 못한 출력이 쌓여 `RESYNC`로 다시 맞추는 일은
+/// 연결마다 따로 일어난다. 터미널은 셸이 끝났고 수신자(주 연결·구경 연결)가 모두 떠난 뒤에야 목록에서 지워진다.
 ///
 /// 연결마다 보내지 못한 출력을 데몬 메모리에 쌓는 양에는 상한이 있다. 클라이언트가 소켓을 읽지 못해 상한을 넘으면
 /// 데몬은 그 연결에 OUTPUT을 보내지 않고 버린다(링에는 계속 쌓인다). 클라이언트가 다시 읽어 밀린 프레임이 비면
 /// 데몬이 `RESYNC` → `REPLAY`(0개 이상) → `REPLAY_END`로 링 전체를 다시 보낸다. 클라이언트는 `RESYNC`를 받으면
 /// 지금까지 쌓은 화면을 버리고 이어지는 `REPLAY`로 화면을 처음부터 다시 만들어야 한다.
-/// 요청마다 답이 있다: NEW·ATTACH는 `ATTACHED`, LIST·KILL은 `LIST_REPLY`, STATUS_REQUEST·SHUTDOWN은 `STATUS`,
+/// 요청마다 답이 있다: NEW·ATTACH·WATCH는 `ATTACHED`, LIST·KILL은 `LIST_REPLY`, STATUS_REQUEST·SHUTDOWN은 `STATUS`,
 /// 실패는 모두 `ERR`다. INPUT·RESIZE·BYE는 답이 없다.
 ///
 /// 토큰이 맞으면 앱의 프로토콜 버전이 데몬과 달라도 데몬은 `HELLO_OK`로 자기 버전을 알린다. 버전이 다른 연결은
 /// 인사만 받아들인 연결이라 STATUS_REQUEST·SHUTDOWN·BYE만 처리하고, 나머지 요청에는 `ERR`로 답하되 연결은 닫지 않는다
 /// (앱이 이어서 종료를 요청할 수 있게).
 ///
-/// `TERMINAL_STATE`는 요청 없이 데몬이 보내는 알림이다. 값이 바뀔 때만, 그리고 묶이는 순간 현재 값을 한 번 보낸다.
+/// `TERMINAL_STATE`·`RESIZED`는 요청 없이 데몬이 보내는 알림이다. `TERMINAL_STATE`는 값이 바뀔 때만, 그리고 묶이는 순간 현재 값을 한 번 보낸다.
 /// `finished`는 완료를 알리는 그 프레임에서만 참이다. 앱은 모르는 종류의 프레임을 버려야 하므로(새 알림을 더해도 옛 앱이 깨지지 않게)
 /// 프로토콜 버전은 올리지 않는다.
 ///
@@ -91,6 +97,8 @@ pub mod kind {
     pub const STOP_AGENT: u8 = 12;
     /// `CheckIdle` JSON. 터미널 앞쪽이 지금 셸 자신인지 다시 읽어 확인하라는 요청. `CHECK_IDLE_REPLY`로 답한다.
     pub const CHECK_IDLE: u8 = 13;
+    /// `Watch` JSON. 주 연결을 밀어내지 않고 터미널의 출력을 함께 보겠다는 요청. `ATTACHED`로 답한다.
+    pub const WATCH: u8 = 14;
 
     // -- 데몬 -> 앱 --
     /// `HelloOk` JSON.
@@ -124,6 +132,8 @@ pub mod kind {
     pub const STOP_AGENT_REPLY: u8 = 114;
     /// `CheckIdleReply` JSON. `CHECK_IDLE`의 답.
     pub const CHECK_IDLE_REPLY: u8 = 115;
+    /// `Resized` JSON. 다른 연결이 이 연결이 묶인 터미널의 크기를 바꿨다는 알림.
+    pub const RESIZED: u8 = 116;
 }
 
 /// 연결 맨 처음에 앱이 보내는 인사. 토큰은 `daemon.json`에서 읽은 값이다.
@@ -227,9 +237,22 @@ pub struct Attach {
     pub rows: u16,
 }
 
+/// 이미 있는 터미널을 밀어내지 않고 함께 보는 요청. 답은 `Attach`와 같은 `ATTACHED`이고 터미널 크기는 바뀌지 않는다.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Watch {
+    pub id: u32,
+}
+
 /// 붙어 있는 터미널의 크기 변경.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Resize {
+    pub cols: u16,
+    pub rows: u16,
+}
+
+/// 다른 연결이 바꾼 터미널의 새 크기. 크기를 바꾼 연결을 뺀 수신자가 받는다.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Resized {
     pub cols: u16,
     pub rows: u16,
 }
@@ -447,6 +470,8 @@ mod tests {
         });
         roundtrip(Attach { id: 3, cols: 100, rows: 30 });
         roundtrip(Resize { cols: 120, rows: 40 });
+        roundtrip(Resized { cols: 120, rows: 40 });
+        roundtrip(Watch { id: 3 });
         roundtrip(Kill { id: 7 });
         roundtrip(Attached { id: 1, pid: 99, cols: 80, rows: 24, alive: true });
         roundtrip(List {
@@ -550,6 +575,7 @@ mod tests {
         ("MEMORY_REQUEST", kind::MEMORY_REQUEST),
         ("STOP_AGENT", kind::STOP_AGENT),
         ("CHECK_IDLE", kind::CHECK_IDLE),
+        ("WATCH", kind::WATCH),
         ("HELLO_OK", kind::HELLO_OK),
         ("ERR", kind::ERR),
         ("LIST_REPLY", kind::LIST_REPLY),
@@ -565,13 +591,14 @@ mod tests {
         ("MEMORY_REPORT", kind::MEMORY_REPORT),
         ("STOP_AGENT_REPLY", kind::STOP_AGENT_REPLY),
         ("CHECK_IDLE_REPLY", kind::CHECK_IDLE_REPLY),
+        ("RESIZED", kind::RESIZED),
     ];
 
     /// 어떤 버전에서도 바뀌지 않는 인사·종료 틀의 종류 이름.
     const HANDSHAKE_KINDS: &[&str] = &["HELLO", "HELLO_OK", "ERR", "STATUS_REQUEST", "STATUS", "SHUTDOWN", "BYE"];
 
     /// 지금 버전의 모양 기록. 파일 이름의 버전이 `PROTOCOL_VERSION`과 다르면 `shape_matches_the_snapshot`이 실패한다.
-    const SHAPE_FILE: &str = include_str!("../protocol-shape.v2.txt");
+    const SHAPE_FILE: &str = include_str!("../protocol-shape.v3.txt");
 
     /// 인사·종료 틀의 기록. 버전이 올라도 이 파일은 바뀌지 않는다.
     const HANDSHAKE_FILE: &str = include_str!("../protocol-shape.handshake.txt");
@@ -654,7 +681,9 @@ mod tests {
             })
         );
         text += &format!("Attach {}\n", json_of(&Attach { id: 3, cols: 80, rows: 24 }));
+        text += &format!("Watch {}\n", json_of(&Watch { id: 3 }));
         text += &format!("Resize {}\n", json_of(&Resize { cols: 80, rows: 24 }));
+        text += &format!("Resized {}\n", json_of(&Resized { cols: 80, rows: 24 }));
         text += &format!("Kill {}\n", json_of(&Kill { id: 3 }));
         text += &format!("Attached {}\n", json_of(&Attached { id: 3, pid: 5, cols: 80, rows: 24, alive: true }));
         text += &format!("TerminalState {}\n", json_of(&state));

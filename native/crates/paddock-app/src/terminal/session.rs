@@ -594,6 +594,23 @@ mod tests {
     }
 
     #[test]
+    fn test_a_resized_notification_is_dropped_as_an_unknown_kind() {
+        let _home = TempHome::new();
+        let (grid, _) = grid_with_counter();
+        run_loop_over(
+            &grid,
+            vec![
+                Frame::new(kind::REPLAY, b"screen".to_vec()),
+                Frame::new(kind::REPLAY_END, vec![]),
+                Frame::json(kind::RESIZED, &paddock_protocol::message::Resized { cols: 50, rows: 30 }),
+                Frame::new(kind::OUTPUT, b" tail".to_vec()),
+            ],
+        );
+        assert_eq!(grid.visible_text()[0], "screen tail");
+        assert!(!grid.shared.detached.load(Ordering::Relaxed));
+    }
+
+    #[test]
     fn test_exited_keeps_the_exit_code_text() {
         let _home = TempHome::new();
         let (grid, _) = grid_with_counter();
