@@ -13,6 +13,7 @@ use paddock_core::unsaved::{
     RENAME_PENDING_TEXT, SAVED_SHOWN_SECONDS, changed_while_saving_text, quit_save_blocked_text, save_failed_text,
     saved_before_close_text, stays_unsaved_after_save,
 };
+use paddock_core::word_occurrence::{OccurrenceTrail, next_occurrence, word_at};
 
 use crate::files::open::file_stamp;
 use crate::files::ops::SaveOutcome;
@@ -303,6 +304,7 @@ impl WorkWindow {
                 true
             }
             Some(FileShortcut::GoToLine) if has_editor => self.begin_go_to_line(window, cx),
+            Some(FileShortcut::SelectNextOccurrence) if has_editor => self.select_next_occurrence(cx),
             // 파일 탭이 활성이면(편집기든 변경 비교든) 이 키는 앱이 가져간다. 고른 곳이 없으면 상태 줄에 알린다.
             Some(FileShortcut::AddReviewNote) if self.file_active() || self.detached_file_context.is_some() => {
                 self.begin_review_note(window, cx);
@@ -310,6 +312,35 @@ impl WorkWindow {
             }
             _ => false,
         }
+    }
+
+    /// 활성 편집기에서 고른 글자와 같은 글자를 다음 자리에서 하나 더 골라 커서를 늘린다(Cmd·Ctrl+D). 고른 것이 없으면 커서 아래 단어를 고른다.
+    /// 편집기가 없으면 false, 있으면(더 고를 곳이 없어도) 키를 가져갔으므로 true다.
+    pub(crate) fn select_next_occurrence(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let body = self.active_file_path().and_then(|path| self.text_body_of(&path));
+        if let Some(body) = body {
+            body.editor.update(cx, |state, cx| {
+                let text = state.value().to_string();
+                let selected = state.selected_range();
+                if selected.is_empty() {
+                    if let Some(word) = word_at(&text, selected.start) {
+                        state.set_selected_range(word, cx);
+                    }
+                    *body.occurrence_trail.borrow_mut() = None;
+                } else {
+                    let trail = body.occurrence_trail.borrow().clone();
+                    if let Some(next) = next_occurrence(&text, selected.clone(), trail.as_ref()) {
+                        state.add_selection(next.clone(), cx);
+                        *body.occurrence_trail.borrow_mut() =
+                            Some(OccurrenceTrail { selected, added: next, text_len: text.len() });
+                    }
+                }
+            });
+        }
+        body.is_some()
     }
 
     /// 묶음·폴더(`key`)의 열린 파일 탭 중 저장하지 않은 것의 수.

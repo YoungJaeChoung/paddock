@@ -1,6 +1,7 @@
 //! 텍스트 보기: 편집기(줄 번호 거터 + 구문 강조). 고칠 수 있는 파일이면 글자를 고칠 수 있고, 저장은 앱이 `encoded`로 BOM·줄바꿈을 되살려 쓴다.
 //!
 //! 편집기 부품이 색을 앱 테마에서 읽으므로, 강조 색과 바탕·글자·줄 번호 색은 `highlight_theme`가 만든 테마를 부품 테마에 얹어 쓴다.
+use std::cell::RefCell;
 use std::sync::Arc;
 
 use gpui_kit::component::highlighter::HighlightTheme;
@@ -9,6 +10,7 @@ use gpui_kit::{AppContext, Context, Entity, IntoElement, ParentElement, Styled, 
 use paddock_core::file_kind::{extension_of, highlight_language_of};
 use paddock_core::text_file::Encoded;
 use paddock_core::theme::{Colors, Mode, file_view};
+use paddock_core::word_occurrence::OccurrenceTrail;
 use serde_json::json;
 
 use crate::chrome::zpx;
@@ -56,6 +58,8 @@ pub struct TextBody {
     pub encoded: Encoded,
     /// 글자를 고칠 수 있는가. 텍스트·Markdown 원문이 아니거나 UTF-8이 아닌 바이트를 바꿔 읽은 파일이면 읽기 전용이다.
     pub editable: bool,
+    /// 직전 "다음 같은 글자 선택 추가"(Cmd·Ctrl+D)의 기록. 편집기가 처음 고른 선택만 읽게 해 주므로 마지막으로 더한 자리를 여기에 기억한다.
+    pub occurrence_trail: RefCell<Option<OccurrenceTrail>>,
     /// 편집기의 글자 변경을 창에 알리는 구독(없애면 알림이 끊긴다).
     _changes: Subscription,
 }
@@ -159,7 +163,7 @@ pub fn build_text(
         }
     });
     super::review_notes::route_context_menu(&editor, cx);
-    TextBody { editor, n_lines, language, size, encoded, editable, _changes }
+    TextBody { editor, n_lines, language, size, encoded, editable, occurrence_trail: RefCell::new(None), _changes }
 }
 
 /// 텍스트 보기 그리기. 읽기 전용 보기는 키를 쳐도 내용이 바뀌지 않는다.
