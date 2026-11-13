@@ -130,7 +130,7 @@ pub fn highlight_theme(
     serde_json::from_value::<HighlightTheme>(theme).ok().map(Arc::new)
 }
 
-/// 읽은 텍스트로 편집기를 만든다. 확장자에 맞는 문법이 있고 파일이 `HIGHLIGHT_LIMIT` 이하이면 강조하고, 줄 번호를 보이며, 긴 줄은 줄바꿈 없이 가로로 스크롤한다.
+/// 읽은 텍스트로 편집기를 만든다. 확장자에 맞는 문법이 있고 파일이 `HIGHLIGHT_LIMIT` 이하이면 강조하고, 줄 번호와 코드 접기 단추(문법이 있는 언어만)를 보이며, 긴 줄은 줄바꿈 없이 가로로 스크롤한다.
 /// `editable`이 참이면 글자를 고칠 수 있고, 고치면 창에 그 파일이 저장되지 않은 상태가 됐다고 알린다. 찾기·바꾸기 패널은 항상 쓸 수 있다.
 pub fn build_text(
     file: TextFile,
@@ -146,7 +146,7 @@ pub fn build_text(
             .language(language)
             .line_number(true)
             .soft_wrap(false)
-            .folding(false)
+            .folding(true)
             .auto_close(false)
             .smart_indent(false)
             .searchable(true)
