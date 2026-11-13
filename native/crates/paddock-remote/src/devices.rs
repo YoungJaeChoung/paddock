@@ -21,6 +21,9 @@ impl Lifetime {
     pub const IDLE_EXPIRY_SECS: u64 = 30 * 24 * 3600;
     /// 폐기한 기기의 표식을 남기는 시간(30일). 지나면 "알 수 없는 토큰"과 구별되지 않는다.
     pub const REVOKED_KEEP_SECS: u64 = 30 * 24 * 3600;
+    /// 쿠키의 브라우저 보관 기간(400일, 브라우저가 허용하는 최대 수준). 기기 만료는 서버의 `last_seen`이 정하므로 쿠키는 그보다 오래 둔다 —
+    /// 쿠키 쪽이 먼저 사라져 매일 쓰는 기기가 30일째에 버려지는 일을 막는다.
+    pub const COOKIE_MAX_AGE_SECS: u64 = 400 * 24 * 3600;
     /// 마지막 사용 시각을 파일에 다시 쓰는 최소 간격(1시간). 요청마다 파일을 쓰지 않으려는 값이다.
     pub const TOUCH_INTERVAL_SECS: u64 = 3600;
 }
@@ -36,7 +39,7 @@ impl DeviceCookie {
         format!(
             "{}={token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age={}",
             Self::NAME,
-            Lifetime::IDLE_EXPIRY_SECS
+            Lifetime::COOKIE_MAX_AGE_SECS
         )
     }
 }
@@ -240,6 +243,21 @@ impl Devices {
         Ok(name)
     }
 
+    /// 기기가 지금 폐기·만료되지 않았는가. 없는 기기는 `false`다.
+    pub fn is_active(
+        &self,
+        id: &str,
+        now: u64,
+    ) -> bool {
+        self.with_records(|records| {
+            records.iter().any(|record| {
+                record.id == id
+                    && record.revoked.is_none()
+                    && now.saturating_sub(record.last_seen) <= Lifetime::IDLE_EXPIRY_SECS
+            })
+        })
+    }
+
     /// 폐기·만료되지 않은 기기를 표시용으로 돌려준다.
     pub fn active(
         &self,
@@ -390,6 +408,24 @@ mod tests {
         assert!(devices.active(NOW + 2).is_empty());
         let reopened = Devices::open(path, NOW + 3).unwrap();
         assert_eq!(reopened.with_records(|records| classify(records, &token, NOW + 3)), TokenState::Revoked);
+    }
+
+    #[test]
+    fn test_is_active_follows_revocation_and_expiry() {
+        let dir = tempfile::tempdir().unwrap();
+        let devices = Devices::open(dir.path().join("devices.json"), NOW).unwrap();
+        let (info, _) = devices.add("Phone", NOW).unwrap();
+        assert!(devices.is_active(&info.id, NOW));
+        assert!(!devices.is_active(&info.id, NOW + Lifetime::IDLE_EXPIRY_SECS + 1));
+        assert!(!devices.is_active("missing", NOW));
+        devices.revoke(&info.id, NOW).unwrap();
+        assert!(!devices.is_active(&info.id, NOW));
+    }
+
+    #[test]
+    fn test_cookie_outlives_the_server_side_expiry() {
+        const { assert!(Lifetime::COOKIE_MAX_AGE_SECS > Lifetime::IDLE_EXPIRY_SECS) };
+        assert!(DeviceCookie::set_header("t").contains(&format!("Max-Age={}", Lifetime::COOKIE_MAX_AGE_SECS)));
     }
 
     #[test]

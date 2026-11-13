@@ -94,6 +94,7 @@ impl Gateway {
             n_devices: u32::try_from(self.devices.active(Self::now_secs()).len()).unwrap_or(u32::MAX),
             n_connections: u32::try_from(self.connections.count()).unwrap_or(u32::MAX),
             pairing_open: self.pairing.remaining(Instant::now()).is_some(),
+            pairing_closed_reason: self.pairing.last_closed(Instant::now()).map(|reason| reason.name().to_string()),
         }
     }
 
@@ -131,23 +132,23 @@ impl Gateway {
         let _ = self.stop.send(reason);
     }
 
-    /// 거부 한 건을 기록한다. 한 구간에 `MAX_LINES_PER_WINDOW`줄을 넘으면 세기만 하고, 다음 구간 첫 줄 앞에 몇 건을 건너뛰었는지 남긴다.
-    pub fn log_denial(
+    /// 요청이 쏟아져도 디스크가 차지 않게 거부·실패 계열 사건을 한 구간에 `MAX_LINES_PER_WINDOW`줄까지만 기록한다.
+    /// 넘는 사건은 세기만 하고, 다음 구간 첫 줄 앞에 몇 건을 건너뛰었는지 남긴다.
+    pub fn log_limited(
         &self,
-        route: &str,
-        reason: &str,
+        event: &Event<'_>,
     ) {
         let mut window = self.denial_window.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let now = Instant::now();
         if now.duration_since(window.started) >= DenialLogRule::WINDOW {
             if window.n_suppressed > 0 {
-                log::write(&Event::DenialsSuppressed { n_denials: window.n_suppressed });
+                log::write(&Event::DenialsSuppressed { n_events: window.n_suppressed });
             }
             *window = DenialWindow { started: now, n_written: 0, n_suppressed: 0 };
         }
         if window.n_written < DenialLogRule::MAX_LINES_PER_WINDOW {
             window.n_written += 1;
-            log::write(&Event::Denied { route, reason });
+            log::write(event);
         } else {
             window.n_suppressed += 1;
         }

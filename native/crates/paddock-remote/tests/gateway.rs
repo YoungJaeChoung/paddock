@@ -17,7 +17,9 @@ use paddock_protocol::endpoint::{connect_verified, create_listener};
 use paddock_protocol::frame::Frame;
 use paddock_protocol::message::{HelloOk, PROTOCOL_VERSION, kind as daemon_kind};
 use paddock_protocol::remote_control::{DevicesReply, GatewayStatus, PairingOpened, Revoke, kind};
+use paddock_remote::connections::ConnectionLimit;
 use paddock_remote::devices::{DeviceCookie, DeviceRecord, hash_token};
+use paddock_remote::pairing::PairingRule;
 use tungstenite::protocol::Role;
 use tungstenite::{Message, WebSocket};
 
@@ -394,7 +396,7 @@ fn test_static_page_and_security_headers() {
     assert_eq!(response.status, 200);
     assert!(response.body.contains("Paddock Remote"));
     for header in [
-        "Content-Security-Policy: default-src 'self'; frame-ancestors 'none'",
+        "Content-Security-Policy: default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
         "X-Content-Type-Options: nosniff",
         "Referrer-Policy: no-referrer",
     ] {
@@ -470,20 +472,25 @@ fn test_pairing_issues_a_cookie_once_and_the_device_can_open_a_websocket_until_r
 }
 
 #[test]
-fn test_window_closes_after_five_wrong_codes() {
+fn test_window_closes_after_the_failure_cap() {
     let home = new_home();
     let _daemon = FakeDaemon::start(home.path());
     let gateway = Gateway::start(home.path(), None);
     let opened = gateway.open_pairing();
-    for _ in 0..5 {
+    for _ in 0..PairingRule::MAX_FAILURES {
         assert_eq!(post_pair(gateway.port, &"f".repeat(32), &[]).status, 403);
     }
-    assert!(!gateway.status().pairing_open, "five failures close the window");
+    let status = gateway.status();
+    assert!(!status.pairing_open, "the failure cap closes the window");
+    assert_eq!(status.pairing_closed_reason.as_deref(), Some("too-many-failures"));
     let response = post_pair(gateway.port, &opened.code, &[]);
     assert_eq!(response.status, 403, "even the right code is refused afterwards");
     assert!(!response.head.contains("Set-Cookie"));
     assert!(gateway.devices().devices.is_empty());
-    assert!(gateway.log_text().contains("failures 5, window closed: true"));
+    assert!(gateway.log_text().contains("pairing failed"));
+    // 새 창을 열면 닫힌 이유가 지워진다.
+    gateway.open_pairing();
+    assert_eq!(gateway.status().pairing_closed_reason, None);
 }
 
 #[test]
@@ -653,4 +660,49 @@ fn test_gateway_does_not_start_without_a_daemon() {
     let output = Gateway::spawn(home.path(), &[]).wait_with_output().unwrap();
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stderr).contains("daemon is not running"));
+}
+
+/// 말없는 접속이 인증 전 한도를 채워도 이미 열린 WebSocket은 그 한도를 쓰지 않고, 자리는 첫 바이트 시간 뒤에 비워진다.
+#[test]
+fn test_idle_sockets_cannot_hold_the_pre_auth_slots_and_websockets_do_not_use_them() {
+    let home = new_home();
+    let _daemon = FakeDaemon::start(home.path());
+    let gateway = Gateway::start(home.path(), None);
+    let token = pair_device(&gateway);
+    // WebSocket 네 개가 열려 있어도(옛 구현은 이것이 같은 64자리를 썼다) 인증 전 접속 62개 + 정상 요청이 들어간다.
+    let mut sockets = Vec::new();
+    for _ in 0..ConnectionLimit::PER_DEVICE {
+        let (status, stream) = open_websocket(gateway.port, cookie_header(&token));
+        assert_eq!(status, 101);
+        sockets.push(stream);
+    }
+    let idle: Vec<TcpStream> = (0..62).map(|_| TcpStream::connect(("127.0.0.1", gateway.port)).unwrap()).collect();
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(get(gateway.port, "/", &[]).status, 200, "WebSockets must not count against the pre-auth limit");
+    // 아무것도 안 보낸 접속은 첫 바이트 시간(2초) 뒤에 408로 끊겨 자리가 빈다.
+    let started = Instant::now();
+    let mut first = idle.into_iter().next().unwrap();
+    first.set_read_timeout(Some(Duration::from_secs(6))).unwrap();
+    let mut answer = String::new();
+    let _ = first.read_to_string(&mut answer);
+    assert!(answer.starts_with("HTTP/1.1 408"), "{answer}");
+    assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
+    // 자리를 가득 채웠다 풀린 뒤에는 정상 요청이 다시 된다.
+    let full: Vec<TcpStream> = (0..64).map(|_| TcpStream::connect(("127.0.0.1", gateway.port)).unwrap()).collect();
+    std::thread::sleep(Duration::from_millis(3000));
+    assert_eq!(get(gateway.port, "/", &[]).status, 200);
+    drop(full);
+}
+
+/// 페어링 거부도 거부 기록과 같은 구간 한도를 받고, 기록 파일은 크기 상한 안에 머문다.
+#[test]
+fn test_rejected_pairing_requests_do_not_flood_the_log() {
+    let home = new_home();
+    let _daemon = FakeDaemon::start(home.path());
+    let gateway = Gateway::start(home.path(), None);
+    for _ in 0..200 {
+        assert_eq!(post_pair(gateway.port, &"0".repeat(32), &[]).status, 403);
+    }
+    let n_lines = gateway.log_text().lines().filter(|line| line.contains("pairing rejected")).count();
+    assert!(n_lines <= 20, "{n_lines} pairing-rejected lines for 200 requests");
 }

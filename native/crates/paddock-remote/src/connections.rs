@@ -4,11 +4,13 @@ use std::net::{Shutdown, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-/// 기기당 동시에 열 수 있는 WebSocket 수.
+/// 동시에 열 수 있는 WebSocket 수의 한도.
 pub struct ConnectionLimit;
 
 impl ConnectionLimit {
     pub const PER_DEVICE: usize = 4;
+    /// 모든 기기를 합쳐 동시에 열 수 있는 WebSocket 수. 인증 전 접속의 한도(`http::Limits`)와 따로 센다.
+    pub const TOTAL: usize = 32;
 }
 
 /// 연결 번호 → (기기 번호, 끊을 때 쓸 소켓 복사본).
@@ -28,7 +30,7 @@ pub struct ConnectionGuard {
 }
 
 impl Connections {
-    /// 연결을 목록에 올린다. 그 기기의 연결이 이미 `PER_DEVICE`개면 `None`이다.
+    /// 연결을 목록에 올린다. 그 기기의 연결이 이미 `PER_DEVICE`개이거나 전체가 `TOTAL`개면 `None`이다.
     pub fn register(
         &self,
         device_id: &str,
@@ -37,7 +39,7 @@ impl Connections {
         let copy = stream.try_clone().ok()?;
         let mut registry = self.registry.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let n_open = registry.values().filter(|(id, _)| id == device_id).count();
-        if n_open >= ConnectionLimit::PER_DEVICE {
+        if n_open >= ConnectionLimit::PER_DEVICE || registry.len() >= ConnectionLimit::TOTAL {
             None
         } else {
             let id = self.next_id.fetch_add(1, Ordering::Relaxed);

@@ -30,13 +30,17 @@ impl Limits {
     pub const HEADERS: usize = 48;
     /// 머리를 다 읽기까지 허용하는 시간.
     pub const HEAD_TIME: Duration = Duration::from_secs(5);
+    /// 접속 뒤 첫 바이트가 오기까지 허용하는 시간. 아무것도 안 보내고 자리만 쥐는 접속을 빨리 놓게 한다.
+    pub const FIRST_BYTE_TIME: Duration = Duration::from_secs(2);
     /// `POST /pair` 본문의 최대 바이트와 읽기 시간.
     pub const BODY_BYTES: usize = 2 * 1024;
     pub const BODY_TIME: Duration = Duration::from_secs(5);
     /// 응답을 쓰는 데 허용하는 시간.
     pub const WRITE_TIME: Duration = Duration::from_secs(10);
-    /// 동시에 처리하는 접속 수. 넘으면 새 접속을 바로 끊는다.
-    pub const CONNECTIONS: usize = 64;
+    /// 인증 전 단계(요청 머리를 읽고 게이트를 지나는 중)의 동시 접속 수. 넘으면 새 접속을 바로 끊는다.
+    /// WebSocket으로 승격한 접속은 이 수에서 빠지고 `Connections`의 한도(기기당·전체)를 따로 받는다 —
+    /// 열어 둔 WebSocket이나 말없는 접속이 정상 요청의 자리를 막지 못하게 한다.
+    pub const PRE_AUTH_CONNECTIONS: usize = 64;
 }
 
 /// 127.0.0.1에서 듣는 리스너를 연다. `port`가 0이면 운영체제가 빈 포트를 고른다.
@@ -77,18 +81,37 @@ pub fn serve(
     listener: TcpListener,
     gateway: Arc<Gateway>,
 ) {
-    let n_active = Arc::new(AtomicUsize::new(0));
+    let n_pre_auth = Arc::new(AtomicUsize::new(0));
     for stream in listener.incoming().flatten() {
-        if n_active.fetch_add(1, Ordering::SeqCst) >= Limits::CONNECTIONS {
-            n_active.fetch_sub(1, Ordering::SeqCst);
+        if n_pre_auth.fetch_add(1, Ordering::SeqCst) >= Limits::PRE_AUTH_CONNECTIONS {
+            n_pre_auth.fetch_sub(1, Ordering::SeqCst);
         } else {
             let gateway = gateway.clone();
-            let n_active = n_active.clone();
-            std::thread::spawn(move || {
-                handle(stream, &gateway);
-                n_active.fetch_sub(1, Ordering::SeqCst);
-            });
+            let slot = PreAuthSlot { n_pre_auth: n_pre_auth.clone(), is_held: true };
+            std::thread::spawn(move || handle(stream, &gateway, slot));
         }
+    }
+}
+
+/// 인증 전 접속 한 자리. 버리거나 `release`하면 자리가 빈다.
+struct PreAuthSlot {
+    n_pre_auth: Arc<AtomicUsize>,
+    is_held: bool,
+}
+
+impl PreAuthSlot {
+    /// 자리를 비운다(WebSocket으로 승격한 접속이 쓴다). 두 번 불러도 한 번만 비운다.
+    fn release(&mut self) {
+        if self.is_held {
+            self.is_held = false;
+            self.n_pre_auth.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+}
+
+impl Drop for PreAuthSlot {
+    fn drop(&mut self) {
+        self.release();
     }
 }
 
@@ -96,11 +119,12 @@ pub fn serve(
 fn handle(
     mut stream: TcpStream,
     gateway: &Gateway,
+    slot: PreAuthSlot,
 ) {
     let _ = stream.set_write_timeout(Some(Limits::WRITE_TIME));
     let _ = stream.set_nodelay(true);
     match read_request(&mut stream, Instant::now() + Limits::HEAD_TIME) {
-        Ok(request) => dispatch(stream, request, gateway),
+        Ok(request) => dispatch(stream, request, gateway, slot),
         Err(HeadError::Timeout) => respond_empty(&mut stream, 408),
         Err(HeadError::TooLarge) => respond_empty(&mut stream, 431),
         Err(HeadError::Malformed) => respond_empty(&mut stream, 400),
@@ -113,19 +137,21 @@ fn dispatch(
     mut stream: TcpStream,
     request: ParsedRequest,
     gateway: &Gateway,
+    slot: PreAuthSlot,
 ) {
     let verdict = gateway
         .devices
         .with_records(|records| gate::check(&request.head, &gateway.config, records, Gateway::now_secs()));
     match verdict {
         Err(denial) => {
-            gateway.log_denial(gate::route_of(&request.head).name(), &denial.reason());
+            gateway
+                .log_limited(&Event::Denied { route: gate::route_of(&request.head).name(), reason: &denial.reason() });
             respond_empty(&mut stream, denial.status());
         }
         Ok(admission) => match admission.route {
             Route::Static => respond(&mut stream, 200, Some("text/html; charset=utf-8"), INDEX_HTML, None),
             Route::Pair => pair(&mut stream, &request, gateway),
-            Route::WebSocket => upgrade(stream, &request, &admission, gateway),
+            Route::WebSocket => upgrade(stream, &request, &admission, gateway, slot),
             Route::Unknown => respond_empty(&mut stream, 404),
         },
     }
@@ -159,16 +185,16 @@ fn pair(
                         respond(stream, 200, Some("application/json"), br#"{"ok":true}"#, Some(&cookie));
                     }
                     Err(error) => {
-                        log::write(&Event::Stopped { reason: &format!("could not save device: {error}") });
+                        log::write(&Event::DeviceSaveFailed { error_kind: &format!("{:?}", error.kind()) });
                         respond_empty(stream, 500);
                     }
                 },
                 Submission::Wrong { n_failures, closed } => {
-                    log::write(&Event::PairingFailed { n_failures, closed });
+                    gateway.log_limited(&Event::PairingFailed { n_failures, closed });
                     respond(stream, 403, Some("application/json"), br#"{"error":"pairing failed"}"#, None);
                 }
                 Submission::NotOpen => {
-                    log::write(&Event::PairingRejectedNotOpen);
+                    gateway.log_limited(&Event::PairingRejectedNotOpen);
                     respond(stream, 403, Some("application/json"), br#"{"error":"pairing failed"}"#, None);
                 }
             },
@@ -214,16 +240,23 @@ fn read_body(
 }
 
 /// WebSocket으로 승격한다. 열린 연결 수 상한을 넘으면 429, 승격 헤더가 틀리면 400이다.
+///
+/// 연결을 목록에 올린 직후 기기가 아직 유효한지 다시 본다. 게이트를 지난 뒤 폐기가 끝났다면 목록에는 아직 없었던 이 연결이
+/// 폐기의 연결 끊기를 피해 갈 수 있기 때문이다(폐기는 기록을 바꾼 뒤 연결을 끊으므로, 올린 뒤의 재확인과 합치면 틈이 없다).
 fn upgrade(
     mut stream: TcpStream,
     request: &ParsedRequest,
     admission: &Admission,
     gateway: &Gateway,
+    mut slot: PreAuthSlot,
 ) {
     let key = request.websocket_key.as_deref().filter(|_| request.websocket_version.as_deref() == Some("13"));
     match (key, &admission.device) {
         (Some(key), Some((device_id, device_name))) => match gateway.connections.register(device_id, &stream) {
             None => respond_empty(&mut stream, 429),
+            Some(_guard) if !gateway.devices.is_active(device_id, Gateway::now_secs()) => {
+                respond_empty(&mut stream, 401)
+            }
             Some(_guard) => {
                 let _ = gateway.devices.touch(device_id, Gateway::now_secs());
                 let accept = tungstenite::handshake::derive_accept_key(key.as_bytes());
@@ -231,6 +264,7 @@ fn upgrade(
                     "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"
                 );
                 if stream.write_all(response.as_bytes()).is_ok() {
+                    slot.release();
                     let login = request.head.login.as_deref().unwrap_or("");
                     log::write(&Event::DeviceConnected { device: device_name, login });
                     websocket::run(stream, device_name);
@@ -252,6 +286,7 @@ fn read_request(
     stream: &mut TcpStream,
     deadline: Instant,
 ) -> Result<ParsedRequest, HeadError> {
+    let started = Instant::now();
     let mut buf: Vec<u8> = Vec::with_capacity(1024);
     let mut chunk = [0u8; 1024];
     loop {
@@ -263,7 +298,8 @@ fn read_request(
         if buf.len() >= Limits::HEAD_BYTES {
             break Err(HeadError::TooLarge);
         }
-        let Some(remaining) = deadline.checked_duration_since(Instant::now()).filter(|remaining| !remaining.is_zero())
+        let effective = if buf.is_empty() { deadline.min(started + Limits::FIRST_BYTE_TIME) } else { deadline };
+        let Some(remaining) = effective.checked_duration_since(Instant::now()).filter(|remaining| !remaining.is_zero())
         else {
             break Err(HeadError::Timeout);
         };
@@ -358,7 +394,7 @@ fn set_once(
 }
 
 /// 모든 응답에 붙는 보안 헤더. 외부 자원 0·프레임 삽입 금지·형식 추측 금지·참조 주소 미전송.
-const SECURITY_HEADERS: &str = "Content-Security-Policy: default-src 'self'; frame-ancestors 'none'\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nCache-Control: no-store\r\n";
+const SECURITY_HEADERS: &str = "Content-Security-Policy: default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nCache-Control: no-store\r\n";
 
 /// 본문 없는 응답을 보낸다.
 fn respond_empty(

@@ -50,6 +50,10 @@ pub struct GatewayStatus {
     pub n_connections: u32,
     /// 기기 승인 창이 열려 있는가.
     pub pairing_open: bool,
+    /// 가장 최근에 열었던 창이 닫힌 이유(`accepted`·`too-many-failures`·`expired`). 열려 있거나 연 적이 없으면 없다.
+    /// 앱은 `too-many-failures`를 보고 사용자에게 창을 다시 열자고 안내한다.
+    #[serde(default)]
+    pub pairing_closed_reason: Option<String>,
 }
 
 /// 새로 연 기기 승인 창. 코드는 이 응답으로만 나가고 디스크에는 닿지 않는다.
@@ -112,6 +116,7 @@ mod tests {
             n_devices: 2,
             n_connections: 1,
             pairing_open: false,
+            pairing_closed_reason: Some("expired".into()),
         };
         let frame = Frame::json(kind::STATUS_REPLY, &status);
         assert_eq!(frame.parse_json::<GatewayStatus>().unwrap(), status);
