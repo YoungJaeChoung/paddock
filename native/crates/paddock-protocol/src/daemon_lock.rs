@@ -24,8 +24,15 @@ impl DaemonLock {
     /// | 잠금을 쥔 쪽이 없음  | `Some` |
     /// | 다른 쪽이 쥐고 있음  | `None` |
     pub fn try_acquire() -> io::Result<Option<DaemonLock>> {
+        Self::try_acquire_named("daemon.lock")
+    }
+
+    /// `~/.paddock/native/<file_name>`을 잠금 파일로 삼아 `try_acquire`와 같은 규칙으로 잠금을 얻는다.
+    ///
+    /// 데몬 말고 단일 실행이 필요한 프로세스(원격 게이트웨이의 `remote.lock`)가 같은 방식을 쓰게 한다.
+    pub fn try_acquire_named(file_name: &str) -> io::Result<Option<DaemonLock>> {
         ensure_private_dir(&native_dir())?;
-        let path = native_dir().join("daemon.lock");
+        let path = native_dir().join(file_name);
         let usable = if path.exists() { Ok(true) } else { create_lock_file(&path) };
         usable
             .and_then(|usable| if usable { open_exclusive(&path) } else { Ok(None) })
@@ -109,6 +116,15 @@ mod tests {
             .open(&path)
             .unwrap();
         assert!(!create_lock_file(&path).unwrap());
+    }
+
+    #[test]
+    fn test_named_locks_are_independent_of_the_daemon_lock() {
+        let _home = TempHome::new();
+        let daemon = DaemonLock::try_acquire().unwrap();
+        let remote = DaemonLock::try_acquire_named("remote.lock").unwrap();
+        assert!(daemon.is_some() && remote.is_some(), "different lock files must not block each other");
+        assert!(DaemonLock::try_acquire_named("remote.lock").unwrap().is_none(), "same named lock must be exclusive");
     }
 
     #[test]

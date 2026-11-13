@@ -54,6 +54,9 @@ grep-regex = "0.1"
 grep-matcher = "0.1"
 ignore = "0.4"
 tracing = "0.1"
+# 원격 게이트웨이: 요청 머리 해석과 WebSocket 프레임. 비동기 런타임·TLS는 쓰지 않는다(TLS는 `tailscale serve`가 맡는다).
+httparse = "1"
+tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Security",
